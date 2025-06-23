@@ -1,0 +1,3 @@
+Running on input: ncbi_vector_long.tsv
+Dims: 353,300,250,200,150,100,50,1
+Output: out_353-300-250-200-150-100-50-1.bbnet
