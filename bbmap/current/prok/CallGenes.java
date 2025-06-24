@@ -4,15 +4,19 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.File;
 import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.util.HashSet;
-import java.util.zip.GZIPInputStream;
 import java.io.InputStreamReader;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.zip.GZIPInputStream;
+
 
 import dna.AminoAcid;
 import dna.Data;
@@ -38,6 +42,7 @@ import structures.ByteBuilder;
 import structures.ListNum;
 import tracker.ReadStats;
 import tracker.EntropyTracker;
+import prok.CallGenesHelper.ContigStats;
 
 /**
  * This is the executable class for gene-calling.
@@ -178,9 +183,6 @@ public class CallGenes extends ProkObject {
 			}
 			else if (arg.equalsIgnoreCase("seq")) { // Brandon: seq is to output the sequence of the gene, rather than one-hot
 				seq = true;
-			}
-			else if(a.equals("aminofeatures") || a.equals("aminofeat") || a.equals("aminof")) {
-					amino_features = Parse.parseBoolean(b);
 			}
 			else if(a.equals("outgff") || a.equals("gffout") || a.equals("outg") || a.equals("gff")){
 				outGff=b;
@@ -405,6 +407,32 @@ public class CallGenes extends ProkObject {
 	
 	/** Create read streams and process all data */
 	void process(Timer t){
+
+
+		try {
+        // We assume the first FNA file is the reference for all contigs.
+        // This is a typical use case.
+			if (fnaList != null && !fnaList.isEmpty()) {
+				String fastaFile = fnaList.get(0);
+				System.err.println("Reading FASTA file: " + fastaFile);
+				Map<String, String> contigSequences = CallGenesHelper.readFastaFile(fastaFile);
+				this.contigMetrics = CallGenesHelper.calculateContigMetrics(contigSequences);
+			}
+			} catch (IOException e) {
+				System.err.println("Error: Failed to read or process the FASTA file for contig metrics.");
+				e.printStackTrace();
+				// We can choose to exit or continue without the contig-level stats.
+				// For now, we'll just print the error and continue.
+				this.contigMetrics = new HashMap<>(); // Ensure it's not null
+		}
+			// Debugging output for contig IDs
+		    //System.err.println("--- Contig IDs found in FASTA map ---");
+			if(this.contigMetrics != null) {
+				for (String key : this.contigMetrics.keySet()) {
+					System.err.println("MAP KEY: '" + key + "'");
+				}
+			}
+			System.err.println("------------------------------------");
 		
 		final GeneModel pgm0=PGMTools.loadAndMerge(pgmList);
 		
@@ -425,46 +453,7 @@ public class CallGenes extends ProkObject {
 		//  Create a ByteStreamWriter for the vector output file
 		final ByteStreamWriter vectorOut=makeBSW(ffoutvector);
 
-		// Brandon: Header logic (Change here when necessary!)
-		if(vectorOut != null && !ml) {
-			final ByteBuilder headerBB = new ByteBuilder();
-			headerBB.append("#contig\tlog(length)/10\tstartScore\tmidScore\tendScore\tGC Ratio\tentropy");
-
-			if (amino_features) {
-				if (seq) {
-					headerBB.append("\tamino_acid_sequence");
-				} else {
-					final int terminalLength = 15;
-					final int blosumVectorLength = 24; // BLOSUM62 matrix has 24 entries per AA
-					// Add headers for N-terminus
-					for (int i = 0; i < terminalLength; i++) {
-						for (int j = 0; j < blosumVectorLength; j++) {
-							headerBB.append('\t').append("N_pos").append(i+1).append("_b").append(j);
-						}
-					}
-					// Add headers for C-terminus
-					for (int i = 0; i < terminalLength; i++) {
-						for (int j = 0; j < blosumVectorLength; j++) {
-							headerBB.append('\t').append("C_pos").append(i+1).append("_b").append(j);
-						}
-					}
-				}
-			} else {
-				if (seq) {
-					// Correct header for raw DNA sequence output
-					headerBB.append("\tdna_sequence");
-				} else {
-					// Headers for one-hot DNA output (unchanged)
-					headerBB.append("\toneHotStart\toneHotMid\toneHotStop");
-				}
-			}
-
-			if (geneKeySet != null) {
-				headerBB.append("\tMatch");
-			}
-			headerBB.nl();
-			vectorOut.addJob(headerBB);
-		}
+	
 			
 		//Turn off read validation in the input threads to increase speed
 		final boolean vic=Read.VALIDATE_IN_CONSTRUCTOR;
@@ -707,7 +696,7 @@ public class CallGenes extends ProkObject {
 		//Fill a list with ProcessThreads
 		ArrayList<ProcessThread> alpt=new ArrayList<ProcessThread>(threads);
 		for(int i=0; i<threads; i++){
-			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm, minLen, i));
+			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm, minLen, i, this.contigMetrics));
 		}
 		
 		//Start the threads
@@ -890,11 +879,14 @@ public class CallGenes extends ProkObject {
 	/** This class is static to prevent accidental writing to shared variables.
 	 * It is safe to remove the static modifier. */
 	private class ProcessThread extends Thread {
+
+		    final Map<String, ContigStats> contigMetrics; // Brandon 6/24/25
 		
 		//Constructor
 		ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
 				ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
-				final ByteStreamWriter vectorOut_, GeneModel pgm_, final int minLen, final int tid_){
+				final ByteStreamWriter vectorOut_, GeneModel pgm_, final int minLen, final int tid_,
+				final Map<String, ContigStats> contigMetrics_){
 			cris=cris_;
 			bsw=bsw_;
 			vectorOut=vectorOut_;
@@ -908,6 +900,7 @@ public class CallGenes extends ProkObject {
 					minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
 			// Brandon: add Entropy Tracker for new feature!
 			this.entropyTracker = new EntropyTracker(5,50,false); // k=5, window=50, isAmino=false
+			this.contigMetrics = contigMetrics_; // Hash table mapping contig names to their stats
 			
 		}
 		
@@ -953,202 +946,75 @@ public class CallGenes extends ProkObject {
 			}
 		}
 		
+		// Brandon: 6/24/25
+		/** Updated processList to handle CallGenesHelper.java */
 		void processList(ListNum<Read> ln){
-			//Grab the actual read list from the ListNum
-			final ArrayList<Read> reads=ln.list;
+			final ArrayList<Read> reads = ln.list;
+			final ByteBuilder gffBB = (bsw == null) ? null : new ByteBuilder();
+			final ByteBuilder vectorBB = (vectorOut == null) ? null : new ByteBuilder();
 
-//			System.err.println(reads.size());
-			
-			ArrayList<Orf> orfList=new ArrayList<Orf>();
+			// Loop through each contig (Read) in the list
+			for(int idx = 0; idx < reads.size(); idx++){
+				final Read r1 = reads.get(idx);
 
-			//Brandon // *** SOLUTION: Create a new ByteBuilder here to accumulate vector output for this batch ***
-    		final ByteBuilder vectorBB = (vectorOut == null) ? null : new ByteBuilder();
-    
-			
-			//Loop through each read in the list
-			for(int idx=0; idx<reads.size(); idx++){
-                Read r1=reads.get(idx);
-                Read r2=r1.mate;
+				//System.err.println("LOOKUP ID: '" + r1.id + "'"); // Debugging output for contig ID
+
+				readsInT += r1.pairCount();
+				basesInT += r1.length() + r1.mateLength();
 				
-				//Validate reads in worker threads
-				if(!r1.validated()){r1.validate(true);}
-				if(r2!=null && !r2.validated()){r2.validate(true);}
-
-				//Track the initial length for statistics
-				final int initialLength1=r1.length();
-				final int initialLength2=r1.mateLength();
-
-				//Increment counters
-				readsInT+=r1.pairCount();
-				basesInT+=initialLength1+initialLength2;
+				// This processes the contig and returns a list of gene candidates (Orfs)
+				ArrayList<Orf> orfList = processRead(r1);
+				if(orfList == null || orfList.isEmpty()){ continue; }
 				
-				if(r2!=null){
-					if(merge){
-						final int insert=BBMerge.findOverlapStrict(r1, r2, false);
-						if(insert>0){
-							r2.reverseComplement();
-							r1=r1.joinRead(insert);
-							r2=null;
-						}
-					}else if(ecco){
-						BBMerge.findOverlapStrict(r1, r2, true);
+				genesOutT += orfList.size();
+
+				// ---- Process the Orfs for THIS contig (r1) ----
+				for (Orf orf : orfList) {
+					
+					// --- A: Handle ML Vector Output ---
+					if (vectorOut != null) {
+						String featureVector = CallGenesHelper.generateFeatureVector(
+							orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
+							CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
+						);
+						vectorBB.append(featureVector).nl();
 					}
-				}
-				{
-					//Reads are processed in this block.
-					{
-						ArrayList<Orf> list=processRead(r1);
-						if(list!=null){orfList.addAll(list);}
-						// Brandon: Write vector output
-						if(vectorOut!=null && list!=null){
-                            for(Orf orf : list){
-								// 1. Get common numerical and identifying features first
-								int start = orf.start;
-								int stop = orf.stop;
-								String strand = (orf.strand == 1 ? "-" : "+");
-								
-								float startScore = orf.startScore;
-								float midScore = orf.kmerScore/(orf.length()>0?orf.length():1);
-								float endScore = orf.stopScore;
 
-								// 2. *** FIX: Correctly fetch the gene's DNA sequence, respecting the strand ***
-								byte[] geneSeq = fetchGeneSequence(orf, r1);
-
-								// 3. Calculate features based on the correct gene sequence
-								float gcGene = CallGenes.gcRatio(geneSeq, 0, geneSeq.length - 1);
-								float entropy = entropyTracker.averageEntropy(geneSeq, false);
-								
-								// 4. Ground truth matching
-								String key = (start+1) + "\t" + (stop+1) + "\t" + strand; 
-								String match = "0";
-								if (geneKeySet != null && geneKeySet.contains(key)) {
-									match = "1";
-									this.matchCount++;
-								} else if (geneKeySet != null && fuzzyGeneMatch(start, strand)) {
-									match = "0.5";
-									this.fuzzyCount++;
-								}
-
-								// 5. Build the output string, starting with common features
-								StringBuilder sb = new StringBuilder();
-								if(!ml){
-									sb.append(r1.id).append('\t');
-								}
-								sb.append(String.format(java.util.Locale.ROOT, "%.6f", Math.log(orf.length()) / 10.0)).append('\t')
-								.append(String.format(java.util.Locale.ROOT, "%.6f", startScore)).append('\t')
-								.append(String.format(java.util.Locale.ROOT, "%.6f", midScore)).append('\t')
-								.append(String.format(java.util.Locale.ROOT, "%.6f", endScore)).append('\t')
-								.append(String.format(java.util.Locale.ROOT, "%.6f", gcGene)).append('\t')
-								.append(String.format(java.util.Locale.ROOT, "%.6f", entropy));
-
-								// 6. This re-structured block now correctly handles all four flag combinations
-								if (amino_features) {
-									// This branch handles all "amino" modes.
-									byte[] aminoSeq = AminoAcid.toAAs(geneSeq, 0);
-
-									if (seq) {
-										// CASE 1: amino=true AND seq=true -> Output raw amino acid characters.
-										sb.append('\t').append(new String(aminoSeq));
-									} else {
-										// CASE 2: amino=true AND seq=false -> Output one-hot encoded amino acids.
-										final int terminalLength = 15;
-
-										// Get BLOSUM vectors for the N-terminus
-										String blosumNTerminus = aminoToBlosumString(aminoSeq, terminalLength);
-										
-										// Get BLOSUM vectors for the C-terminus
-										byte[] reversedAminoSeq = Arrays.copyOf(aminoSeq, aminoSeq.length);
-										Tools.reverseInPlace(reversedAminoSeq);
-										String blosumCTerminus = aminoToBlosumString(reversedAminoSeq, terminalLength);
-
-										sb.append('\t').append(blosumNTerminus);
-										sb.append('\t').append(blosumCTerminus);
-									}
-								} else {
-									// This branch handles all "DNA" modes.
-									if (seq) {
-										// CASE 3: amino=false AND seq=true -> Output the full raw DNA sequence.
-										 sb.append('\t').append(new String(geneSeq));
-									} else {
-										// CASE 4: amino=false AND seq=false -> Output one-hot encoded DNA from windows.
-										// Logic to get DNA windows is now moved INSIDE this block where it's needed.
-										int length = orf.length();
-										int mid=(orf.strand == 1 ? start + (length / 2) - (length / 2 % 3) : stop - (length / 2) + (length / 2 % 3));
-
-										byte[] startWin = CallGenes.extractWindow(r1.bases, start, 18, 18);
-										byte[] midWin = CallGenes.extractWindow(r1.bases, mid, 6, 6);
-										byte[] stopWin = CallGenes.extractWindow(r1.bases, stop, 18, 18);
-
-										if(orf.strand == 1) {
-											AminoAcid.reverseComplementBasesInPlace(startWin);
-											AminoAcid.reverseComplementBasesInPlace(midWin);
-											AminoAcid.reverseComplementBasesInPlace(stopWin);
-										}
-
-										String oneHotStart = CallGenes.toOneHotString(startWin, 0, startWin.length-1);
-										String oneHotMid = CallGenes.toOneHotString(midWin, 0, midWin.length-1);
-										String oneHotStop = CallGenes.toOneHotString(stopWin, 0, stopWin.length-1);
-
-										sb.append('\t').append(oneHotStart).append('\t')
-										.append(oneHotMid).append('\t')
-										.append(oneHotStop);
-									}
-								}
-
-								// Append the match status, which is always last
-								if (geneKeySet != null) {
-									sb.append('\t').append(match);
-								}
-								
-								// Write the completed line to the thread-local buffer
-								vectorBB.append(sb.toString());
-								vectorBB.nl();
+					// --- B: Handle GFF Output ---
+					if (gffBB != null && !ml) { // Only write GFF if not in ML mode
+						if (orf.type == CDS) {
+							String vectorValues = CallGenesHelper.generateFeatureVector(
+								orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
+								CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
+							);
+							orf.appendGff(gffBB);
+							gffBB.trimLast(1);
+							gffBB.append(";VECTOR=");
+							for(int i=0; i<vectorValues.length(); i++){
+								char c = vectorValues.charAt(i);
+								gffBB.append(c == '\t' ? ',' : c);
 							}
-                        }
-					}
-					if(r2!=null){
-						ArrayList<Orf> list=processRead(r2);
-						if(list!=null){orfList.addAll(list);}
-					}
-				}
-			}
-			
-			genesOutT+=orfList.size();
-			ByteBuilder bb=new ByteBuilder();
-			
-			if(bsw!=null){
-				if(bsw.ordered){
-					for(Orf orf : orfList){
-						orf.appendGff(bb);
-						bb.nl();
-					}
-					bsw.add(bb, ln.id);
-					bytesOutT+=bb.length();
-				}else{
-					for(Orf orf : orfList){
-						orf.appendGff(bb);
-						bb.nl();
-//						if(bb.length()>=32000){
-//							bytesOutT+=bb.length();
-//							bsw.addJob(bb);
-//							bb=new ByteBuilder();
-//						}
-					}
-					if(bb.length()>0){
-						bsw.addJob(bb);
-						bytesOutT+=bb.length();
+							gffBB.nl();
+						} else {
+							orf.appendGff(gffBB); // Write non-CDS features as-is
+							gffBB.nl();
+						}
 					}
 				}
 			}
 
-			// Brandon:  // *** SOLUTION: Now, write the accumulated vector output as a single, thread-safe job ***
-			if(vectorBB != null && vectorBB.length() > 0){
+			// --- Final Step: Write the accumulated buffers to the output streams ---
+			if (gffBB != null && gffBB.length() > 0) {
+				if (bsw.ordered) { bsw.add(gffBB, ln.id); } 
+				else { bsw.addJob(gffBB); }
+				bytesOutT += gffBB.length();
+			}
+			
+			if (vectorBB != null && vectorBB.length() > 0) {
 				vectorOut.addJob(vectorBB);
 			}
 
-			//Notify the input stream that the list was used
 			cris.returnList(ln);
-//			if(verbose){outstream.println("Returned a list.");} //Disabled due to non-static access
 		}
 		
 		/**
@@ -1464,6 +1330,7 @@ public class CallGenes extends ProkObject {
 	private ArrayList<String> fnaList=new ArrayList<String>();
 	private ArrayList<String> pgmList=new ArrayList<String>();
 	private ArrayList<String> inGffList=new ArrayList<String>();
+	private Map<String, ContigStats> contigMetrics; // Brandon: 6-24-25
 	private String outGff=null;
 	private String outAmino=null;
 	private String out16S=null;
@@ -1476,7 +1343,6 @@ public class CallGenes extends ProkObject {
 	private boolean json_out=false;
 	private boolean ml = false;
 	private boolean seq = false;
-	private boolean amino_features = false; 
 
 	private int totalGffRows = 0;
 	private int totalGffGeneRows = 0;
@@ -1630,17 +1496,7 @@ public class CallGenes extends ProkObject {
         return false;
     }
     
-    // Brandon
-	// Add a static method to compute GC ratio for a byte[] window
-    public static float gcRatio(byte[] bases, int from, int to) {
-        int gc = 0, len = 0;
-        for (int i = from; i <= to && i < bases.length; i++) {
-            byte b = bases[i];
-            if (b == 'G' || b == 'g' || b == 'C' || b == 'c') { gc++; }
-            if (b == 'A' || b == 'a' || b == 'T' || b == 't' || b == 'G' || b == 'g' || b == 'C' || b == 'c') { len++; }
-        }
-        return len > 0 ? (float)gc / len : 0f;
-    }
+
 
 	// Brandon
 	// Convert a byte[] gene sequence to a String representation
@@ -1658,98 +1514,6 @@ public class CallGenes extends ProkObject {
 	    return sb.toString();
 	}
 
-	/** Brandon (and Gemini)
-	* Convert an amino acid sequence to a one-hot binary string.
-	* There are 20 standard AAs plus stop ('*'), so we use a 21-element vector.
-	* @param acids The amino acid sequence.
-	* @param maxLen The maximum number of amino acids to encode.
-	* @return A tab-delimited one-hot string.
-	*/
-	public static String toOneHotStringAmino(byte[] acids, int maxLen) {
-		StringBuilder sb = new StringBuilder();
-		final int numAminoAcids = 21; // 20 standard + 1 stop
 
-		for (int i = 0; i < maxLen; i++) {
-			if (i > 0) {
-				sb.append('\t');
-			}
 
-			if (i >= acids.length) {
-				// Pad with zeros if the protein is shorter than maxLen
-				for (int j = 0; j < numAminoAcids; j++) {
-					sb.append('0');
-					if (j < numAminoAcids - 1) sb.append('\t');
-				}
-			} else {
-				// Use the acidToNumber table from the AminoAcid class!
-				int aminoIndex = AminoAcid.acidToNumber[acids[i]];
-				if (aminoIndex < 0 || aminoIndex >= numAminoAcids) { 
-					aminoIndex = -1; // Treat any non-standard AA as "unknown"
-				}
-
-				for (int j = 0; j < numAminoAcids; j++) {
-					sb.append(j == aminoIndex ? '1' : '0');
-					if (j < numAminoAcids - 1) sb.append('\t');
-				}
-			}
-		}
-		return sb.toString();
-	}
-	/** Brandon: Function to address reverse compliment issues.
-	 * 
-	 * Argument: Prior code:
-	 * 		byte[] geneSeq = java.util.Arrays.copyOfRange(r1.bases, geneStart, geneStop);
-	 *		float gcGene = CallGenes.gcRatio(geneSeq, 0, geneSeq.length - 1);  
-	 * had a latent bug: it does not correctly handle genes on the reverse strand. It just slices the DNA from the forward strand regardless of where the gene is.
-	 * 
-	 * Safely extracts the DNA sequence for an ORF, handling the strand correctly.
-	 * This method has no side effects and does not modify its input objects.
-	 * @param orf The gene (Open Reading Frame) to fetch.
-	 * @param sourceContig The full Read object (contig) the gene was found on.
-	 * @return A new byte[] array containing the correct, oriented coding sequence.
-	 */
-	public static byte[] fetchGeneSequence(Orf orf, Read sourceContig) {
-		// Extract the sequence slice from the original contig's bases
-		byte[] geneSequence = Arrays.copyOfRange(sourceContig.bases, orf.start, orf.stop + 1);
-
-		// If the ORF is on the reverse strand, reverse-complement the *newly created* slice
-		if (orf.strand == 1) {
-			AminoAcid.reverseComplementBasesInPlace(geneSequence);
-		}
-		
-		return geneSequence;
-	}
-
-	/** Brandon: For aminofeatures conversion to ML-friendly space.
-	 * Converts an amino acid sequence into a flattened string of BLOSUM62 vectors.
-	 * @param acids The amino acid sequence.
-	 * @param maxLen The maximum number of amino acids to encode from the start of the sequence.
-	 * @return A tab-delimited string of BLOSUM62 scores.
-	 */
-	public static String aminoToBlosumString(byte[] acids, int maxLen) {
-		StringBuilder sb = new StringBuilder();
-		int[] unknownVector = BlosumMatrix.getVector('?'); // Get the 'X' vector for padding
-
-		for (int i = 0; i < maxLen; i++) {
-			if (i > 0) {
-				sb.append('\t');
-			}
-
-			int[] vector;
-			if (i < acids.length) {
-				vector = BlosumMatrix.getVector((char)acids[i]);
-			} else {
-				// Pad with the 'unknown' vector if the protein is too short
-				vector = unknownVector;
-			}
-
-			for (int j = 0; j < vector.length; j++) {
-				sb.append(vector[j]);
-				if (j < vector.length - 1) {
-					sb.append('\t');
-				}
-			}
-		}
-		return sb.toString();
-	}
 }
