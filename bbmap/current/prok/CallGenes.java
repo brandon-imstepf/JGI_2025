@@ -95,7 +95,7 @@ public class CallGenes extends ProkObject {
 			overwrite=parser.overwrite;
 			append=parser.append;
 			
-			outGff=parser.out1;
+			//outGff=parser.out1; // Possibly corrupting outGff with null
 			maxReads=parser.maxReads;
 		}
 		
@@ -451,7 +451,9 @@ public class CallGenes extends ProkObject {
 		ConcurrentReadOutputStream ros18S=makeCros(ffout18S);
 
 		//  Create a ByteStreamWriter for the vector output file
-		final ByteStreamWriter vectorOut=makeBSW(ffoutvector);
+		//final ByteStreamWriter vectorOut=makeBSW(ffoutvector);
+		// Brandon: If using ML, create a ByteStreamWriter for the vector output file
+		final ByteStreamWriter vectorOut = (ml && ffoutvector != null) ? makeBSW(ffoutvector) : null;
 
 	
 			
@@ -948,74 +950,89 @@ public class CallGenes extends ProkObject {
 		
 		// Brandon: 6/24/25
 		/** Updated processList to handle CallGenesHelper.java */
+		// In CallGenes.java, inside the ProcessThread inner class
 		void processList(ListNum<Read> ln){
 			final ArrayList<Read> reads = ln.list;
-			final ByteBuilder gffBB = (bsw == null) ? null : new ByteBuilder();
-			final ByteBuilder vectorBB = (vectorOut == null) ? null : new ByteBuilder();
 
 			// Loop through each contig (Read) in the list
 			for(int idx = 0; idx < reads.size(); idx++){
 				final Read r1 = reads.get(idx);
-
-				//System.err.println("LOOKUP ID: '" + r1.id + "'"); // Debugging output for contig ID
-
+				
 				readsInT += r1.pairCount();
 				basesInT += r1.length() + r1.mateLength();
 				
-				// This processes the contig and returns a list of gene candidates (Orfs)
 				ArrayList<Orf> orfList = processRead(r1);
+				
 				if(orfList == null || orfList.isEmpty()){ continue; }
 				
 				genesOutT += orfList.size();
 
-				// ---- Process the Orfs for THIS contig (r1) ----
-				for (Orf orf : orfList) {
-					
-					// --- A: Handle ML Vector Output ---
-					if (vectorOut != null) {
-						String featureVector = CallGenesHelper.generateFeatureVector(
-							orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-							CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
-						);
-						vectorBB.append(featureVector).nl();
-					}
+				final ByteBuilder bb = new ByteBuilder();
 
-					// --- B: Handle GFF Output ---
-					if (gffBB != null && !ml) { // Only write GFF if not in ML mode
-						if (orf.type == CDS) {
-							String vectorValues = CallGenesHelper.generateFeatureVector(
+				for (Orf orf : orfList) {
+					if (ml) {
+						if (vectorOut != null) {
+							String featureVector = CallGenesHelper.generateFeatureVector(
 								orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
 								CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
 							);
-							orf.appendGff(gffBB);
-							gffBB.trimLast(1);
-							gffBB.append(";VECTOR=");
-							for(int i=0; i<vectorValues.length(); i++){
-								char c = vectorValues.charAt(i);
-								gffBB.append(c == '\t' ? ',' : c);
+							bb.append(featureVector).nl();
+						}
+					} else {
+						if (bsw != null) {
+							if (orf.type == CDS) {
+								String vectorValues = CallGenesHelper.generateFeatureVector(
+									orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
+									CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
+								);
+								orf.appendGff(bb);
+				
+								if (bb.length() > 0 && bb.get(bb.length() - 1) =='\n'){ bb.trimLast(1); }
+				
+								bb.append(";VECTOR=");
+								for(int i=0; i<vectorValues.length(); i++){
+									char c = vectorValues.charAt(i);
+									bb.append(c == '\t' ? ',' : c);
+								}
+								bb.nl();
+							} else {
+								orf.appendGff(bb); 
+								if(bb.length() > 0 && bb.get(bb.length() - 1) !='\n') { bb.nl(); }
 							}
-							gffBB.nl();
-						} else {
-							orf.appendGff(gffBB); // Write non-CDS features as-is
-							gffBB.nl();
+						}
+					}
+				}
+
+				if (bb.length() > 0) {
+					bytesOutT += bb.length();
+					if (ml) {
+						if (vectorOut != null) { vectorOut.addJob(bb); }
+					} else {
+						if (bsw != null) {
+							if(bsw.ordered){ bsw.add(bb, r1.numericID); }
+							else{ bsw.addJob(bb); }
 						}
 					}
 				}
 			}
+			if (!ml) { // Only run this check in GFF mode
+				final ByteBuilder testBuffer = new ByteBuilder();
+				// Manually build a single line to see if writing works at all
+				testBuffer.append("## This is a test line from thread ").append(tid).nl();
 
-			// --- Final Step: Write the accumulated buffers to the output streams ---
-			if (gffBB != null && gffBB.length() > 0) {
-				if (bsw.ordered) { bsw.add(gffBB, ln.id); } 
-				else { bsw.addJob(gffBB); }
-				bytesOutT += gffBB.length();
-			}
-			
-			if (vectorBB != null && vectorBB.length() > 0) {
-				vectorOut.addJob(vectorBB);
+				// We are forcing a write to the bsw stream.
+				if(bsw != null){
+					bytesOutT += testBuffer.length();
+					bsw.addJob(testBuffer);
+				} else {
+					System.err.println("[DEBUG] bsw is null, cannot write.");
+				}
+				System.err.println("[DEBUG] Attempted to write a test line to the GFF output.");
 			}
 
 			cris.returnList(ln);
 		}
+
 		
 		/**
 		 * Process a read or a read pair.

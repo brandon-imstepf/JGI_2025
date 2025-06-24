@@ -203,17 +203,23 @@ public class CallGenesHelper{
             sb.append(contigRead.id).append('\t');
         }
         
+        // Debug: Add the start and stop coordinates to compare:
+        //sb.append(start + 1).append('\t'); 
+        //sb.append(stop+1).append('\t'); 
         // Append all the calculated features in order.
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", Math.log(orf.length()) / 10.0)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.startScore)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.kmerScore / (orf.length() > 0 ? orf.length() : 1))).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.stopScore)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneGc)).append('\t');
-        sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneEntropy)).append('\t');
-        
+        //sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneEntropy)).append('\t');
+        double geneEntropyLogitScaled = Math.tanh(Math.log(geneEntropy / (1.0 + 1e-8 - geneEntropy)) / 4.0);
+        sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneEntropyLogitScaled)).append('\t');
         // Add the new contig-level stats!
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigGc)).append('\t');
-        sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigEntropy));
+        //sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigEntropy));
+        double contigEntropyLogitScaled = Math.tanh(Math.log(contigEntropy / (1.0 + 1e-8 - contigEntropy)) / 4.0);
+        sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigEntropyLogitScaled)).append('\t');
 
         // --- 6. Handle Sequence/One-Hot Encoding ---
         if (seqMode) {
