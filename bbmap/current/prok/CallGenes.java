@@ -426,14 +426,14 @@ public class CallGenes extends ProkObject {
 				this.contigMetrics = new HashMap<>(); // Ensure it's not null
 		}
 			// Debugging output for contig IDs
-		    //System.err.println("--- Contig IDs found in FASTA map ---");
+		    /*System.err.println("--- Contig IDs found in FASTA map ---");
 			if(this.contigMetrics != null) {
 				for (String key : this.contigMetrics.keySet()) {
 					System.err.println("MAP KEY: '" + key + "'");
 				}
 			}
 			System.err.println("------------------------------------");
-		
+			*/
 		final GeneModel pgm0=PGMTools.loadAndMerge(pgmList);
 		
 		if(call16S || call18S || call23S || calltRNA || call5S){

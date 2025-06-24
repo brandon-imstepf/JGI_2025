@@ -26,7 +26,7 @@ for fna in "$GENEFOLDER"/*.fna.gz; do
     if [[ -f "$gff" ]]; then
         echo "Processing $base with ml, cds, $ARGS"
         # Output to a temp file for each pair
-        java -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ prok.CallGenes in="$fna" truegenes="$gff" outvector="$TMPDIR/$base.outvector" ml cds $ARGS -Xmx1g 
+        java -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ prok.CallGenes in="$fna" truegenes="$gff" outvector="$TMPDIR/$base.outvector" cds $ARGS -Xmx1g 
     else
         echo "WARNING: No matching .gff.gz for $fna, skipping."
     fi
