@@ -43,6 +43,8 @@ import structures.ListNum;
 import tracker.ReadStats;
 import tracker.EntropyTracker;
 import prok.CallGenesHelper.ContigStats;
+import prok.CallGenesHelper.GeneQuad;
+import prok.CallGenesHelper.TrueGeneData;
 
 /**
  * This is the executable class for gene-calling.
@@ -175,8 +177,16 @@ public class CallGenes extends ProkObject {
 			}
 			else if(a.equals("truegenes")){  // Brandon: truegenes is the file containing true gene annotations
 				trueGenesFile = b;
-				//outstream.println("DEBUG: truegenes argument detected: " + trueGenesFile);
-				loadAndCountTrueGenes(trueGenesFile);
+				try {
+					// Call the new helper method and unpack the results
+					TrueGeneData data = CallGenesHelper.loadTrueGeneSet(trueGenesFile);
+					this.trueGeneSet = data.set();
+					this.totalGffRows = data.totalRows();
+					this.totalGffGeneRows = data.geneRows();
+				} catch (IOException e) {
+					System.err.println("CRITICAL ERROR: Failed to load true genes file: " + trueGenesFile);
+					e.printStackTrace();
+				}
 			}
 			else if(arg.equalsIgnoreCase("ml")){ // Brandon: ml is to remove contig and strand information from the output
 				ml = true;
@@ -523,7 +533,6 @@ public class CallGenes extends ProkObject {
 		outstream.println("Total Rows detected in .gff = " + totalGffRows);
 		outstream.println(".gff Gene Rows = " + totalGffGeneRows);
 		outstream.println("Total Matches = " + totalMatches);
-		outstream.println("Total Fuzzies = " + totalFuzzies);
 		}
 
 		
@@ -720,13 +729,10 @@ public class CallGenes extends ProkObject {
 	 */
 	private void printTotalMatchCount(ArrayList<ProcessThread> alpt) {
 		int totalMatch = 0;
-		int totalFuzzy = 0;
 		for (ProcessThread pt : alpt) {
 			totalMatch += pt.getMatchCount();
-			totalFuzzy += pt.fuzzyCount;
 		}
 		totalMatches = totalMatch;
-		totalFuzzies = totalFuzzy;
 	}
 	
 	private void waitForThreads(ArrayList<ProcessThread> alpt){
@@ -974,7 +980,7 @@ public class CallGenes extends ProkObject {
 						if (vectorOut != null) {
 							String featureVector = CallGenesHelper.generateFeatureVector(
 								orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-								CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
+								CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
 							);
 							bb.append(featureVector).nl();
 						}
@@ -983,7 +989,7 @@ public class CallGenes extends ProkObject {
 							if (orf.type == CDS) {
 								String vectorValues = CallGenesHelper.generateFeatureVector(
 									orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-									CallGenes.this.geneKeySet, CallGenes.this.seq, CallGenes.this.ml
+									CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
 								);
 								orf.appendGff(bb);
 				
@@ -1145,7 +1151,6 @@ public class CallGenes extends ProkObject {
 		private boolean headerWritten = false;
 		
 		private int matchCount = 0; // Track number of Match rows for this thread
-		private int fuzzyCount = 0; // Track number of Fuzzy rows for this thread
 		
 		public int getMatchCount() { return matchCount; }
 	}
@@ -1348,6 +1353,7 @@ public class CallGenes extends ProkObject {
 	private ArrayList<String> pgmList=new ArrayList<String>();
 	private ArrayList<String> inGffList=new ArrayList<String>();
 	private Map<String, ContigStats> contigMetrics; // Brandon: 6-24-25
+	private HashSet<GeneQuad> trueGeneSet; // Brandon: 6-25-25
 	private String outGff=null;
 	private String outAmino=null;
 	private String out16S=null;
@@ -1364,7 +1370,6 @@ public class CallGenes extends ProkObject {
 	private int totalGffRows = 0;
 	private int totalGffGeneRows = 0;
 	private int totalMatches = 0;
-	private int totalFuzzies = 0;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Final Fields         ----------------*/
@@ -1451,67 +1456,6 @@ public class CallGenes extends ProkObject {
         return window;
     }
 
-	/** Load a GFF file and count total and gene rows */
-    private void loadAndCountTrueGenes(String gffFile) {
-        int totalRows = 0;
-        int geneRows = 0;
-        geneKeySet = new HashSet<>();
-        try (BufferedReader br = openBufferedReader(gffFile)) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (line.startsWith("#") || line.trim().isEmpty()) continue;
-                totalRows++;
-                String[] cols = line.split("\t");
-                if (cols.length > 7 && cols[2].equalsIgnoreCase("CDS")) {
-                    geneRows++;
-                    String key = cols[3] + "\t" + cols[4] + "\t" + cols[6]; // start, stop, strand
-                    geneKeySet.add(key);
-                }
-            }
-        } catch (Exception e) {
-            outstream.println("Error reading truegenes GFF: " + e.getMessage());
-            return;
-        }
-        // outstream.println("Total Rows = " + totalRows); Debugging line
-        // outstream.println("Gene Rows = " + geneRows); Debugging line
-		
-        // Write hash table to a .tsv file for confirmation
-		// Can be removed later.
-		
-        String tsvOut = gffFile + ".hash.tsv";
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter(tsvOut))) {
-            bw.write("start\tstop\tstrand\n");
-            for (String key : geneKeySet) {
-                bw.write(key + "\n");
-            }
-        } catch (Exception e) {
-            outstream.println("Error writing hash table TSV: " + e.getMessage());
-        }
-		
-		this.totalGffRows = totalRows;
-		this.totalGffGeneRows = geneRows;
-    }
-	
-	/* Brandon
-     * Check for a fuzzy match: if any gene in the hash table has the same strand,
-     * and either start or stop is within +/- 50 of the candidate, return true.
-	 * TO DO: make it easier to adjust the fuzzy match window size.
-     */
-    private boolean fuzzyGeneMatch(int start, String strand) {
-        if (geneKeySet == null) return false;
-        String exactKey = start + "\t" + strand;
-        if (geneKeySet.contains(exactKey)) return false; // Don't count exact matches as fuzzy
-        // Try all possible keys within the window (excluding exact match)
-        for (int delta = -50; delta <= 50; delta++) {
-            if (delta == 0) continue; // skip exact match
-            String keyStart = (start + delta) + "\t" + strand;
-            //String keyStop = start + "\t" + (stop + delta) + "\t" + strand;
-            if (geneKeySet.contains(keyStart)) {
-                return true;
-            }
-        }
-        return false;
-    }
     
 
 

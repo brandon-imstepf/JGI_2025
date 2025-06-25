@@ -33,6 +33,10 @@ import tracker.EntropyTracker;
 public class CallGenesHelper{
 
     public record ContigStats(double gcRatio, double entropy) {}
+    // Hold coordinates of a gene in a contig.
+    public record GeneQuad(String contig, int start, int stop, byte strand) {}
+    // A container to return multiple values from our GFF loading method.
+    public record TrueGeneData(HashSet<GeneQuad> set, int totalRows, int geneRows) {}
 
     /*
     * @date 6-24-25
@@ -147,6 +151,41 @@ public class CallGenesHelper{
 
 
     /**
+     * Loads a GFF file of "true" genes into a HashSet of GeneQuad objects for fast lookups.
+     * This entire process now lives inside the helper class.
+     * @param gffFilePath Path to the gzipped GFF file.
+     * @return A TrueGeneData object containing the HashSet and row counts.
+     */
+    public static TrueGeneData loadTrueGeneSet(String gffFilePath) throws IOException {
+        int totalRows = 0;
+        int geneRows = 0;
+        HashSet<GeneQuad> trueGeneSet = new HashSet<>();
+
+        // Using the smart gzipped reader we built earlier
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(gffFilePath))))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (line.startsWith("#") || line.trim().isEmpty()) continue;
+                totalRows++;
+                String[] cols = line.split("\t");
+                if (cols.length > 7 && cols[2].equalsIgnoreCase("CDS")) {
+                    geneRows++;
+                    try {
+                        String contig = cols[0];
+                        int start = Integer.parseInt(cols[3]);
+                        int stop = Integer.parseInt(cols[4]);
+                        byte strand = (byte) (cols[6].equals("+") ? 0 : 1);
+                        trueGeneSet.add(new GeneQuad(contig, start, stop, strand));
+                    } catch (NumberFormatException e) {
+                        System.err.println("Warning: Could not parse coordinates in GFF line: " + line);
+                    }
+                }
+            }
+        }
+        return new TrueGeneData(trueGeneSet, totalRows, geneRows);
+    }
+
+    /**
      * Generates a feature vector string for a given ORF.
      * This centralizes all feature calculation and formatting logic.
      *
@@ -159,97 +198,75 @@ public class CallGenesHelper{
      * @param mlMode If true, do not include the contig ID prefix.
      * @return A tab-separated string of features for the ORF.
      */
+    // In CallGenesHelper.java
+
     public static String generateFeatureVector(
             Orf orf,
             Read contigRead,
             ContigStats contigStats,
             EntropyTracker entropyTracker,
-            Set<String> geneKeySet,
+            Set<GeneQuad> trueGeneSet, // This parameter is correctly named here
             boolean seqMode,
             boolean mlMode) {
 
-        // --- 1. Get Gene Sequence and Basic Features ---
         int start = orf.start;
         int stop = orf.stop;
-        String strand = (orf.strand == 1 ? "-" : "+");
-        byte[] geneSeq = java.util.Arrays.copyOfRange(contigRead.bases, start, stop); // Use stop, as copyOfRange is exclusive
 
-        // The full contig read is always on the forward strand, so we only flip the gene sequence itself if needed.
-        if (orf.strand == 1) { 
-            AminoAcid.reverseComplementBasesInPlace(geneSeq);
+        String match = "0";
+        if (trueGeneSet != null) { // We are checking the parameter 'trueGeneSet'
+            byte orfStrand = (byte) orf.strand;
+            // The GFF start is 1-based, the Orf start is 0-based.
+            GeneQuad orfQuad = new GeneQuad(contigRead.id, start + 1, stop, orfStrand);
+            if (trueGeneSet.contains(orfQuad)) { // We are using the parameter 'trueGeneSet'
+                match = "1";
+            }
         }
-        
-        // --- 2. Calculate Gene-Specific Metrics ---
+
+        // --- The rest of the function remains the same ---
+        byte[] geneSeq = java.util.Arrays.copyOfRange(contigRead.bases, start, stop);
+        if (orf.strand == 1) { AminoAcid.reverseComplementBasesInPlace(geneSeq); }
         float geneGc = gcRatio(geneSeq, 0, geneSeq.length - 1);
         float geneEntropy = entropyTracker.averageEntropy(geneSeq, false);
-        
-        // --- 3. Get Contig-Specific Metrics ---
         double contigGc = (contigStats != null) ? contigStats.gcRatio() : 0.0;
         double contigEntropy = (contigStats != null) ? contigStats.entropy() : 0.0;
-        
-        // --- 4. Ground Truth Matching ---
-        String match = "0";
-        if (geneKeySet != null) {
-            String key = (start + 1) + "\t" + (stop) + "\t" + strand; // Adjusted to match your GFF loading logic
-            if (geneKeySet.contains(key)) {
-                match = "1";
-            } 
-            // Note: Fuzzy goes here for later
-        }
-        
-        // --- 5. Build the Feature String ---
         StringBuilder sb = new StringBuilder();
-        if (!mlMode) {
-            sb.append(contigRead.id).append('\t');
-        }
-        
-        // Debug: Add the start and stop coordinates to compare:
-        //sb.append(start + 1).append('\t'); 
-        //sb.append(stop+1).append('\t'); 
-        // Append all the calculated features in order.
+        if (!mlMode) { sb.append(contigRead.id).append('\t'); }
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", Math.log(orf.length()) / 10.0)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.startScore)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.kmerScore / (orf.length() > 0 ? orf.length() : 1))).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", orf.stopScore)).append('\t');
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneGc)).append('\t');
+
         //sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneEntropy)).append('\t');
+
         double geneEntropyLogitScaled = Math.tanh(Math.log(geneEntropy / (1.0 + 1e-8 - geneEntropy)) / 4.0);
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", geneEntropyLogitScaled)).append('\t');
+
         // Add the new contig-level stats!
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigGc)).append('\t');
         //sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigEntropy));
+
         double contigEntropyLogitScaled = Math.tanh(Math.log(contigEntropy / (1.0 + 1e-8 - contigEntropy)) / 4.0);
         sb.append(String.format(java.util.Locale.ROOT, "%.6f", contigEntropyLogitScaled)).append('\t');
-
-        // --- 6. Handle Sequence/One-Hot Encoding ---
+        
         if (seqMode) {
             sb.append('\t').append(new String(geneSeq));
         } else {
-            // This logic is from your original code.
             int length = orf.length();
             int mid = (orf.strand == 1) ? start + (length / 2) - (length / 2 % 3) : stop - (length / 2) + (length / 2 % 3);
-            
-            // Note: The window extraction needs the original contig bases and coordinates
             byte[] startWin = CallGenes.extractWindow(contigRead.bases, start, 18, 18);
             byte[] midWin = CallGenes.extractWindow(contigRead.bases, mid, 6, 6);
             byte[] stopWin = CallGenes.extractWindow(contigRead.bases, stop, 18, 18);
-
             if (orf.strand == 1) {
                 AminoAcid.reverseComplementBasesInPlace(startWin);
                 AminoAcid.reverseComplementBasesInPlace(midWin);
                 AminoAcid.reverseComplementBasesInPlace(stopWin);
             }
-
             sb.append('\t').append(CallGenes.toOneHotString(startWin, 0, startWin.length - 1));
             sb.append('\t').append(CallGenes.toOneHotString(midWin, 0, midWin.length - 1));
             sb.append('\t').append(CallGenes.toOneHotString(stopWin, 0, stopWin.length - 1));
         }
-        
-        // --- 7. Append Match Status ---
-        if (geneKeySet != null) {
-            sb.append('\t').append(match);
-        }
-        
+        if (trueGeneSet != null) { sb.append('\t').append(match); }
         return sb.toString();
     }
 
