@@ -18,7 +18,7 @@ import prok.CallGenesHelper.GeneQuad; // Reusing our nifty GeneQuad record
 
 /**
  * A command-line tool to perform set operations on GFF files based on feature coordinates.
- * @author The GFF Engineering Team
+ * @author The GFF Engineering Team (Brandon Imstepf, et al.)
  * @date June 25, 2025
  */
 public class GffSetOperator {

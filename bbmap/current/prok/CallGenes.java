@@ -982,6 +982,11 @@ public class CallGenes extends ProkObject {
 								orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
 								CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
 							);
+
+						if (featureVector.endsWith("\t1")) {
+                        	this.matchCount++;
+                    		}
+
 							bb.append(featureVector).nl();
 						}
 					} else {
@@ -991,6 +996,9 @@ public class CallGenes extends ProkObject {
 									orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
 									CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
 								);
+							if (vectorValues.endsWith("\t1")) {
+								this.matchCount++;
+							}
 								orf.appendGff(bb);
 				
 								if (bb.length() > 0 && bb.get(bb.length() - 1) =='\n'){ bb.trimLast(1); }
@@ -1455,8 +1463,6 @@ public class CallGenes extends ProkObject {
         }
         return window;
     }
-
-    
 
 
 	// Brandon
