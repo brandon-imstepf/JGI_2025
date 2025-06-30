@@ -188,6 +188,9 @@ public class CallGenes extends ProkObject {
 					e.printStackTrace();
 				}
 			}
+			else if(arg.equalsIgnoreCase("nofilter")){
+    			nofilter = true;
+			}
 			else if(arg.equalsIgnoreCase("ml")){ // Brandon: ml is to remove contig and strand information from the output
 				ml = true;
 			}
@@ -707,7 +710,7 @@ public class CallGenes extends ProkObject {
 		//Fill a list with ProcessThreads
 		ArrayList<ProcessThread> alpt=new ArrayList<ProcessThread>(threads);
 		for(int i=0; i<threads; i++){
-			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm, minLen, i, this.contigMetrics));
+			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm, minLen, i, this.contigMetrics,this.nofilter));
 		}
 		
 		//Start the threads
@@ -888,13 +891,15 @@ public class CallGenes extends ProkObject {
 	 * It is safe to remove the static modifier. */
 	private class ProcessThread extends Thread {
 
-		    final Map<String, ContigStats> contigMetrics; // Brandon 6/24/25
+		final Map<String, ContigStats> contigMetrics; // Brandon 6/24/25
+		final boolean nofilter; // Brandon 6/30/25
 		
 		//Constructor
 		ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
 				ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
 				final ByteStreamWriter vectorOut_, GeneModel pgm_, final int minLen, final int tid_,
-				final Map<String, ContigStats> contigMetrics_){
+				final Map<String, ContigStats> contigMetrics_,
+				final boolean nofilter_){
 			cris=cris_;
 			bsw=bsw_;
 			vectorOut=vectorOut_;
@@ -909,6 +914,7 @@ public class CallGenes extends ProkObject {
 			// Brandon: add Entropy Tracker for new feature!
 			this.entropyTracker = new EntropyTracker(5,50,false); // k=5, window=50, isAmino=false
 			this.contigMetrics = contigMetrics_; // Hash table mapping contig names to their stats
+			this.nofilter = nofilter_; 
 			
 		}
 		
@@ -1056,12 +1062,17 @@ public class CallGenes extends ProkObject {
 		 */
 		ArrayList<Orf> processRead(final Read r){
 
-			// Brandon:  Ensure all candidates are generated for vector output through this call
-			if (vectorOut != null) {
+			// Brandon:  Ensure all candidates are generated for vector output through this call (OLD CODE)
+			/*if (vectorOut != null) {
                 caller.setGenerateAllCandidates(true);
             }
-            // ---- END MODIFICATION ----
+			*/
 
+			// Tell the GeneCaller to generate all candidates ONLY if the nofilter flag is set.
+           	caller.setGenerateAllCandidates(this.nofilter);
+
+		    // If nofilter=false, this list will be filtered by the caller's internal logic.
+    		// If nofilter=true, this list will contain all potential candidates.
 			ArrayList<Orf> list=caller.callGenes(r, pgm, true);
 
 			// It's good practice to reset the flag after use
@@ -1372,8 +1383,10 @@ public class CallGenes extends ProkObject {
 	private String outStats="stderr";
 	private String geneHistFile=null;
 	private boolean json_out=false;
+	// Brandon's CLI input calls
 	private boolean ml = false;
 	private boolean seq = false;
+	private boolean nofilter = false; 	// Brandon: 6/30/25
 
 	private int totalGffRows = 0;
 	private int totalGffGeneRows = 0;

@@ -1,0 +1,18 @@
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=ncbi_100_8f.tsv out=cycles_trained_8dims_400k_ncbi_100_8f.bbnet maxdims=356,300,240,180,90,1 mindims=356,150,120,90,10,1 cycles=4 nets=8 -Xmx400g
+
+Loading ncbi_100_8f.tsv
+java.lang.RuntimeException: Can't find file ncbi_100_8f.tsv
+	at fileIO.ReadWrite.getRawInputStream(ReadWrite.java:980)
+	at fileIO.ReadWrite.getInputStream(ReadWrite.java:943)
+	at fileIO.ByteFile1.open(ByteFile1.java:336)
+	at fileIO.ByteFile1.<init>(ByteFile1.java:104)
+	at fileIO.ByteFile2$BF1Thread.<init>(ByteFile2.java:237)
+	at fileIO.ByteFile2.open(ByteFile2.java:215)
+	at fileIO.ByteFile2.<init>(ByteFile2.java:86)
+	at fileIO.ByteFile.makeByteFile(ByteFile.java:35)
+	at fileIO.ByteFile.makeByteFile(ByteFile.java:27)
+	at ml.DataLoader.load(DataLoader.java:103)
+	at ml.DataLoader.load(DataLoader.java:79)
+	at ml.Trainer.loadData(Trainer.java:1223)
+	at ml.Trainer.process(Trainer.java:709)
+	at ml.Trainer.main(Trainer.java:54)
