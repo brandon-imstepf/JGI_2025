@@ -303,29 +303,34 @@ public class CellNet implements Cloneable, Comparable<CellNet> {
 		return numEdges;
 	}
 	
-	private static BitSet pickEdges(int width, int edgeBlockSize, float density, Random randy) {
-		int toMake=0;
-		int min=Tools.mid(1, 5, width/3);
-		for(int i=0; i<width; i++) {
-			if(randy.nextFloat()<=density) {toMake++;}
-		}
-		toMake=Tools.max(toMake, min);
-		int mod=toMake%edgeBlockSize;
-		if(mod!=0) {toMake=Tools.min(width, toMake-mod+edgeBlockSize);}
-		BitSet bs=new BitSet(width);
-		int range=(width-1)/edgeBlockSize;
-		for(int made=0; made<toMake;) {
-			int start=randy.nextInt(range+1)*edgeBlockSize;
-			if(start<width && !bs.get(start)) {
-				for(int i=0; i<edgeBlockSize && i+start<width; i++) {
-					bs.set(i+start);
-					made++;
-				}
-			}
-		}
-//		System.err.println(bs);
-		return bs;
-	}
+private static BitSet pickEdges(int width, int edgeBlockSize, float density, Random randy) {
+        int toMake=0;
+        int min=Tools.mid(1, 5, width/3);
+        for(int i=0; i<width; i++) {
+            if(randy.nextFloat()<=density) {toMake++;}
+        }
+        toMake=Tools.max(toMake, min);
+        int mod=toMake%edgeBlockSize;
+        if(mod!=0) {toMake=Tools.min(width, toMake-mod+edgeBlockSize);}
+        BitSet bs=new BitSet(width);
+        int range=(width-1)/edgeBlockSize;
+        for(int made=0; made<toMake;) {
+            final int rand=randy.nextInt(range+1);
+            assert(rand>=0 && rand<=range) : rand+", "+range+", "+edgeBlockSize+", "+made+", "+width;
+            int start=randy.nextInt(range+1)*edgeBlockSize;
+            assert(start>=0) : rand+", "+range+", "+edgeBlockSize+", "+made+", "+width+", "+start;
+            if(start<width && !bs.get(start)) {
+                for(int i=0; i<edgeBlockSize && i+start<width; i++) {
+                    int loc=i+start;
+                    assert(loc>=0) : rand+", "+range+", "+edgeBlockSize+", "+made+", "+width+", "+start+", "+loc+", "+i;
+                    bs.set(loc);
+                    made++;
+                }
+            }
+        }
+//        System.err.println(bs);
+        return bs;
+    }
 	
 	static int[] toArray(BitSet bs) {
 		int[] array=new int[bs.cardinality()];

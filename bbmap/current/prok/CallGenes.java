@@ -109,7 +109,6 @@ public class CallGenes extends ProkObject {
 		ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
 		ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
 		ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
-		ffoutvector=FileFormat.testOutput(outvector, FileFormat.TEXT, null, true, overwrite, append, ordered);
 		
 		if(ffoutGff!=null){
 			assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
@@ -172,8 +171,6 @@ public class CallGenes extends ProkObject {
 				out16S=b;
 			}else if(a.equalsIgnoreCase("out18s") || a.equalsIgnoreCase("18sout")){
 				out18S=b;
-			}else if(a.equals("outvector")){ // Brandon: outvector is the training vector file
-				outvector=b;
 			}
 			else if(a.equals("truegenes")){  // Brandon: truegenes is the file containing true gene annotations
 				trueGenesFile = b;
@@ -190,9 +187,6 @@ public class CallGenes extends ProkObject {
 			}
 			else if(arg.equalsIgnoreCase("nofilter")){
     			nofilter = true;
-			}
-			else if(arg.equalsIgnoreCase("ml")){ // Brandon: ml is to remove contig and strand information from the output
-				ml = true;
 			}
 			else if (arg.equalsIgnoreCase("seq")) { // Brandon: seq is to output the sequence of the gene, rather than one-hot
 				seq = true;
@@ -463,11 +457,6 @@ public class CallGenes extends ProkObject {
 		ConcurrentReadOutputStream ros16S=makeCros(ffout16S);
 		ConcurrentReadOutputStream ros18S=makeCros(ffout18S);
 
-		//  Create a ByteStreamWriter for the vector output file
-		//final ByteStreamWriter vectorOut=makeBSW(ffoutvector);
-		// Brandon: If using ML, create a ByteStreamWriter for the vector output file
-		final ByteStreamWriter vectorOut = (ml && ffoutvector != null) ? makeBSW(ffoutvector) : null;
-
 	
 			
 		//Turn off read validation in the input threads to increase speed
@@ -487,7 +476,7 @@ public class CallGenes extends ProkObject {
 			final ConcurrentReadInputStream cris=makeCris(fna);
 			
 			//Process the reads in separate threads
-			spawnThreads(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm);
+			spawnThreads(cris, bsw, rosAmino, ros16S, ros18S, pgm);
 			
 			//Close the input stream
 			errorState|=ReadWrite.closeStream(cris);
@@ -502,10 +491,6 @@ public class CallGenes extends ProkObject {
 		errorState|=ReadStats.writeAll();
 		//Close the output stream
 		if(bsw!=null){errorState|=bsw.poisonAndWait();}
-			if(vectorOut!=null){
-				//System.out.println("DEBUG: Closing vector output stream");
-				errorState|=vectorOut.poisonAndWait();
-				}
 		
 		//Reset read validation
 		Read.VALIDATE_IN_CONSTRUCTOR=vic;
@@ -524,12 +509,6 @@ public class CallGenes extends ProkObject {
 		if(geneHistFile!=null){
 			printHist(geneHistFile);
 		}
-		// Brandon: Add summary lines
-		if(outvector!=null){
-			outstream.println(); // Spacing for readability
-			outstream.println("Training vector file: " + outvector);
-		}
-
 		if(trueGenesFile!=null){
 		outstream.println(); // Spacing for readability
 		outstream.println("True Genes File: " + trueGenesFile);
@@ -699,8 +678,7 @@ public class CallGenes extends ProkObject {
 	
 	/** Spawn process threads */
 	private void spawnThreads(final ConcurrentReadInputStream cris, final ByteStreamWriter bsw, 
-			ConcurrentReadOutputStream rosAmino, ConcurrentReadOutputStream ros16S, ConcurrentReadOutputStream ros18S, 
-			final ByteStreamWriter vectorOut, GeneModel pgm){
+			ConcurrentReadOutputStream rosAmino, ConcurrentReadOutputStream ros16S, ConcurrentReadOutputStream ros18S, GeneModel pgm){
 		
 		//Do anything necessary prior to processing
 		
@@ -710,7 +688,7 @@ public class CallGenes extends ProkObject {
 		//Fill a list with ProcessThreads
 		ArrayList<ProcessThread> alpt=new ArrayList<ProcessThread>(threads);
 		for(int i=0; i<threads; i++){
-			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, vectorOut, pgm, minLen, i, this.contigMetrics,this.nofilter));
+			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, pgm, minLen, i, this.contigMetrics,this.nofilter));
 		}
 		
 		//Start the threads
@@ -897,12 +875,11 @@ public class CallGenes extends ProkObject {
 		//Constructor
 		ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
 				ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
-				final ByteStreamWriter vectorOut_, GeneModel pgm_, final int minLen, final int tid_,
+				GeneModel pgm_, final int minLen, final int tid_,
 				final Map<String, ContigStats> contigMetrics_,
 				final boolean nofilter_){
 			cris=cris_;
 			bsw=bsw_;
-			vectorOut=vectorOut_;
 			rosAmino=rosAmino_;
 			ros16S=ros16S_;
 			ros18S=ros18S_;
@@ -963,95 +940,82 @@ public class CallGenes extends ProkObject {
 		// Brandon: 6/24/25
 		/** Updated processList to handle CallGenesHelper.java */
 		// In CallGenes.java, inside the ProcessThread inner class
-		void processList(ListNum<Read> ln){
-			final ArrayList<Read> reads = ln.list;
+		void processList(ListNum<Read> ln) {
+		final ArrayList<Read> reads = ln.list;
 
-			// Loop through each contig (Read) in the list
-			for(int idx = 0; idx < reads.size(); idx++){
-				final Read r1 = reads.get(idx);
-				
-				readsInT += r1.pairCount();
-				basesInT += r1.length() + r1.mateLength();
-				
-				ArrayList<Orf> orfList = processRead(r1);
-				
-				if(orfList == null || orfList.isEmpty()){ continue; }
-				
-				genesOutT += orfList.size();
+		// Loop through each contig (Read) in the list
+		for (int idx = 0; idx < reads.size(); idx++) {
+			final Read r1 = reads.get(idx);
+			
+			readsInT += r1.pairCount();
+			basesInT += r1.length() + r1.mateLength();
+			
+			ArrayList<Orf> orfList = processRead(r1);
+			
+			if (orfList == null || orfList.isEmpty()) {
+				continue;
+			}
+			
+			genesOutT += orfList.size();
 
-				final ByteBuilder bb = new ByteBuilder();
+			// This buffer will hold all the GFF lines for the current contig
+			final ByteBuilder bb = new ByteBuilder();
 
-				for (Orf orf : orfList) {
-					if (ml) {
-						if (vectorOut != null) {
-							String featureVector = CallGenesHelper.generateFeatureVector(
-								orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-								CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
-							);
-
-						if (featureVector.endsWith("\t1")) {
-                        	this.matchCount++;
-                    		}
-
-							bb.append(featureVector).nl();
+			// Process every ORF found on this contig
+			for (Orf orf : orfList) {
+				// Since we removed the 'ml' logic, we are always in GFF mode.
+				// We only need to check if the GFF writer (bsw) exists.
+				if (bsw != null) {
+					if (orf.type == CDS) {
+						// For CDS features, generate the vector and append it.
+						String vectorValues = CallGenesHelper.generateFeatureVector(
+							orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
+							CallGenes.this.trueGeneSet, CallGenes.this.seq, 
+							false // We explicitly pass 'false' for mlMode now.
+						);
+						
+						if (vectorValues.endsWith("\t1")) {
+							this.matchCount++;
 						}
+
+						orf.appendGff(bb);
+						
+						if (bb.length() > 0 && bb.get(bb.length() - 1) == '\n') {
+							bb.trimLast(1);
+						}
+						
+						bb.append(";VECTOR=");
+						for (int i = 0; i < vectorValues.length(); i++) {
+							char c = vectorValues.charAt(i);
+							bb.append(c == '\t' ? ',' : c);
+						}
+						bb.nl();
 					} else {
-						if (bsw != null) {
-							if (orf.type == CDS) {
-								String vectorValues = CallGenesHelper.generateFeatureVector(
-									orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-									CallGenes.this.trueGeneSet, CallGenes.this.seq, CallGenes.this.ml
-								);
-							if (vectorValues.endsWith("\t1")) {
-								this.matchCount++;
-							}
-								orf.appendGff(bb);
-				
-								if (bb.length() > 0 && bb.get(bb.length() - 1) =='\n'){ bb.trimLast(1); }
-				
-								bb.append(";VECTOR=");
-								for(int i=0; i<vectorValues.length(); i++){
-									char c = vectorValues.charAt(i);
-									bb.append(c == '\t' ? ',' : c);
-								}
-								bb.nl();
-							} else {
-								orf.appendGff(bb); 
-								if(bb.length() > 0 && bb.get(bb.length() - 1) !='\n') { bb.nl(); }
-							}
+						// For non-CDS features, just write the standard GFF line.
+						orf.appendGff(bb);
+						if (bb.length() > 0 && bb.get(bb.length() - 1) != '\n') {
+							bb.nl();
 						}
 					}
 				}
+			} // End of ORF loop
 
-				if (bb.length() > 0) {
-					bytesOutT += bb.length();
-					if (ml) {
-						if (vectorOut != null) { vectorOut.addJob(bb); }
+			// After processing all ORFs for this contig, write the buffer to the file stream.
+			if (bb.length() > 0) {
+				bytesOutT += bb.length();
+				if (bsw != null) {
+					if (bsw.ordered) {
+						bsw.add(bb, r1.numericID);
 					} else {
-						if (bsw != null) {
-							if(bsw.ordered){ bsw.add(bb, r1.numericID); }
-							else{ bsw.addJob(bb); }
-						}
+						bsw.addJob(bb);
 					}
 				}
 			}
-			if (!ml) { // Only run this check in GFF mode
-				final ByteBuilder testBuffer = new ByteBuilder();
-				// Manually build a single line to see if writing works at all
-				testBuffer.append("## This is a test line from thread ").append(tid).nl();
+		} // End of contig loop
 
-				// We are forcing a write to the bsw stream.
-				if(bsw != null){
-					bytesOutT += testBuffer.length();
-					bsw.addJob(testBuffer);
-				} else {
-					System.err.println("[DEBUG] bsw is null, cannot write.");
-				}
-				System.err.println("[DEBUG] Attempted to write a test line to the GFF output.");
-			}
-
-			cris.returnList(ln);
-		}
+		// Finally, tell the system we are done with this batch of reads.
+		cris.returnList(ln);
+	}
 
 		
 		/**
@@ -1075,10 +1039,12 @@ public class CallGenes extends ProkObject {
     		// If nofilter=true, this list will contain all potential candidates.
 			ArrayList<Orf> list=caller.callGenes(r, pgm, true);
 
-			// It's good practice to reset the flag after use
+			// It's good practice to reset the flag after use 
+			/*
             if (vectorOut != null) {
                 caller.setGenerateAllCandidates(false);
             }
+			*/
 			
 			if(geneHistT!=null && list!=null){
 				for(Orf o : list){
@@ -1155,8 +1121,6 @@ public class CallGenes extends ProkObject {
 		private final ConcurrentReadInputStream cris;
 		/** Shared output stream */
 		private final ByteStreamWriter bsw;
-		/** Vector output stream */
-		private final ByteStreamWriter vectorOut;
 		/** Gene Model for annotation (not really needed) */
 		private final GeneModel pgm;
 		/** Gene Caller for annotation */
@@ -1377,14 +1341,12 @@ public class CallGenes extends ProkObject {
 	private String outAmino=null;
 	private String out16S=null;
 	private String out18S=null;
-	private String outvector=null;
 	private String trueGenesFile = null;
 	private String compareToGff=null;
 	private String outStats="stderr";
 	private String geneHistFile=null;
 	private boolean json_out=false;
 	// Brandon's CLI input calls
-	private boolean ml = false;
 	private boolean seq = false;
 	private boolean nofilter = false; 	// Brandon: 6/30/25
 
@@ -1400,7 +1362,6 @@ public class CallGenes extends ProkObject {
 	private final FileFormat ffoutAmino;
 	private final FileFormat ffout16S;
 	private final FileFormat ffout18S;
-	private final FileFormat ffoutvector;
 	
 	/** Determines how sequence is processed if it will be output */
 	int mode=TRANSLATE;
