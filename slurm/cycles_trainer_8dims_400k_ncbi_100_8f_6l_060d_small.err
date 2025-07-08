@@ -1,0 +1,15 @@
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_100_8f.tsv out=cycles_trained_8dims_400k_ncbi_100_8f_6l_060d_small.bbnet maxdims=356,150,200,90,12,1 mindims=356,50,100,40,5,1 density=0.60 cycles=4 nets=8 -Xmx400g
+
+Loading ../ncbi_100_8f.tsv
+Inferring 356 inputs, 1 output, 0 weights.
+Data was organized into 207 sets.
+Using 64 worker threads, 8 trainer threads, 22 jobs/trainer/batch, 400000 batches, 4 cycles to train 32 networks total.
+Cycle 0
+Batch 1:	ERR= 0.154646	WER= 1.480155	FPR= 0.196793	FNR= 0.196749	CTF= 0.105424	33.1s
+Batch 4:	ERR= 0.140875	WER= 1.347080	FPR= 0.196659	FNR= 0.196613	CTF= 0.162417	14.2s
+Batch 16:	ERR= 0.115421	WER= 1.048997	FPR= 0.195866	FNR= 0.195816	CTF= 0.321437	20.3s
+Batch 64:	ERR= 0.114014	WER= 0.905056	FPR= 0.193925	FNR= 0.193810	CTF= 0.467305	41.4s
+Batch 256:	ERR= 0.107438	WER= 0.643700	FPR= 0.187916	FNR= 0.187588	CTF= 0.395418	51.7s
+Batch 1024:	ERR= 0.105637	WER= 0.626348	FPR= 0.152906	FNR= 0.152673	CTF= 0.402161	72.7s
+Batch 4096:	ERR= 0.054763	WER= 0.267990	FPR= 0.033907	FNR= 0.033899	CTF= 0.454494	257s
+Batch 10k:	ERR= 0.088785	WER= 0.186122	FPR= 0.026359	FNR= 0.026353	CTF= 0.430875	484s

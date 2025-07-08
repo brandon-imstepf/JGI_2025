@@ -1,14 +1,12 @@
-java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_100_8f.tsv out=cycles_trained_8dims_400k_ncbi_100_8f.bbnet maxdims=356,300,240,180,90,1 mindims=356,150,120,90,10,1 cycles=4 nets=8 -Xmx400g
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_100_8f.tsv out=cycles_trained_8dims_400k_ncbi_100_8f_6l_small.bbnet maxdims=356,150,200,90,12,1 mindims=356,50,100,40,5,1 density=0.60 cycles=4 nets=8 -Xmx400g
 
 Loading ../ncbi_100_8f.tsv
 Inferring 356 inputs, 1 output, 0 weights.
 Data was organized into 207 sets.
 Using 64 worker threads, 8 trainer threads, 22 jobs/trainer/batch, 400000 batches, 4 cycles to train 32 networks total.
 Cycle 0
-Exception in thread "main" java.lang.IndexOutOfBoundsException: bitIndex < 0: -204
-	at java.base/java.util.BitSet.get(BitSet.java:628)
-	at ml.CellNet.pickEdges(CellNet.java:319)
-	at ml.CellNet.makeEdgesDense(CellNet.java:262)
+Exception in thread "main" java.lang.AssertionError: Integer max value overflow error, probably. Check the edgeBlockSize parameter, it should be a positive integer.
+	at ml.CellNet.makeEdgesDense(CellNet.java:266)
 	at ml.CellNet.randomize(CellNet.java:135)
 	at ml.Trainer.randomNetwork(Trainer.java:1156)
 	at ml.Trainer.randomNetwork(Trainer.java:1144)
@@ -20,4 +18,4 @@ Exception in thread "main" java.lang.IndexOutOfBoundsException: bitIndex < 0: -2
 	at ml.Trainer.spawnThreads(Trainer.java:872)
 	at ml.Trainer.process(Trainer.java:726)
 	at ml.Trainer.main(Trainer.java:54)
-slurmstepd: error: *** JOB 17868361 ON n0048.dori0 CANCELLED AT 2025-07-02T13:13:21 ***
+slurmstepd: error: *** JOB 17951878 ON n0044.dori0 CANCELLED AT 2025-07-08T08:33:24 ***
