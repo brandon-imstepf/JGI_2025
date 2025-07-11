@@ -1,180 +1,385 @@
 package ml;
 
-import ml.SampleSet;
-import ml.DataLoader;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import bin.Oracle;
+import fileIO.ByteFile;
+import fileIO.ByteStreamWriter;
 import fileIO.FileFormat;
+import fileIO.ReadWrite;
+import shared.Parse;
+import shared.Parser;
+import shared.PreParser;
 import shared.Shared;
+import shared.Timer;
+import shared.Tools;
+import structures.ByteBuilder;
+import structures.LongList;
+import template.Accumulator;
+import template.ThreadWaiter;
 
+/**
+ * Loads data for CNN training.
+ * Based on ml.Trainer structure.
+ * 
+ * @author Your Name
+ * @date Current Date
+ */
 public class CNNTrainer {
-    // --- Only data loading for debugging ---
-
+    
+    /*--------------------------------------------------------------*/
+    /*----------------        Initialization        ----------------*/
+    /*--------------------------------------------------------------*/
+    
     /**
-     * Loads data using the DataLoader class and prints debug output.
-     * @param dataPath Path to the data file
-     * @return SampleSet object
+     * Code entrance from the command line.
+     * @param args Command line arguments
      */
-    public SampleSet loadData(String dataPath) {
-        System.err.println("[DEBUG] Loading data from: " + dataPath);
-        SampleSet[] sets = DataLoader.load(dataPath, Shared.MAX_ARRAY_LEN, false, 0f, 0, true, 0f);
-        SampleSet set = (sets != null && sets.length > 0) ? sets[0] : null;
-        System.err.println("[DEBUG] Loaded SampleSet: " + set);
-        // Print more info if possible
-        return set;
+    public static void main(String[] args){
+        //Start a timer immediately upon code entrance.
+        Timer t=new Timer();
+        
+        //Create an instance of this class
+        CNNTrainer x=new CNNTrainer(args);
+        
+        //Run the object
+        x.process(t);
+        
+        //Close the print stream if it was redirected
+        Shared.closeStream(x.outstream);
     }
-
-    // --- CNN network architecture fields ---
-    // These define the structure and parameters of the CNN.
-    private int numEpochs = 50;         // Number of training epochs
-    private int batchSize = 32;         // Batch size for training
-    private double learningRate = 0.001;// Learning rate for optimizer
-    private int numFilters1 = 32;       // Number of filters in first conv layer
-    private int filterSize1 = 7;        // Size of filters in first conv layer
-    private int poolSize1 = 2;          // Pooling size after first conv layer
-    private int numFilters2 = 64;       // Number of filters in second conv layer
-    private int filterSize2 = 5;        // Size of filters in second conv layer
-    private int poolSize2 = 2;          // Pooling size after second conv layer
-    private int numHidden = 128;        // Number of units in dense hidden layer
-    private int numOutputs = 1;         // Number of outputs (binary classification)
-
-    // --- Network weights (parameters) ---
-    // These arrays hold the weights for each layer of the CNN.
-    private double[][][] convFilters1;   // [numFilters1][1][filterSize1]
-    private double[] convBiases1;
-    private double[][][] convFilters2;   // [numFilters2][numFilters1][filterSize2]
-    private double[] convBiases2;
-    private double[][] denseWeights;     // [flattenedSize][numHidden]
-    private double[] denseBiases;        // [numHidden]
-    private double[][] outWeights;       // [numHidden][numOutputs]
-    private double[] outBiases;          // [numOutputs]
-
-    private java.util.Random rand = new java.util.Random(42); // For reproducibility
-
+    
     /**
-     * Constructor: Initializes the CNN weights.
-     * This uses He initialization for ReLU layers and Xavier for sigmoid output.
+     * Constructor.
+     * @param args Command line arguments
      */
-    public CNNTrainer() {
-        initializeWeights();
+    public CNNTrainer(String[] args){
+        
+        {//Preparse block for help, config files, and outstream
+            PreParser.printExecuting=false;
+            Parser.printSetThreads=false;
+            PreParser pp=new PreParser(args, getClass(), false);
+            args=pp.args;
+            outstream=pp.outstream;
+        }
+        
+        //Set shared static variables prior to parsing
+        ReadWrite.USE_PIGZ=ReadWrite.USE_UNPIGZ=true;
+        ReadWrite.setZipThreads(Shared.threads());
+        
+        {//Parse the arguments
+            final Parser parser=parse(args);
+            overwrite=parser.overwrite;
+            append=parser.append;
+            
+            if(dataIn==null) {dataIn=parser.in1;}
+        }
+        
+        validateParams();
+        checkFileExistence(); //Ensure files can be read and written
+        
+        ffDataIn=FileFormat.testInput(dataIn, FileFormat.TXT, null, true, true);
+        ffValidateIn=FileFormat.testInput(validateIn, FileFormat.TXT, null, true, true);
     }
-
-    /**
-     * Initializes all network weights with random values.
-     * Uses best practices for deep learning initialization.
-     */
-    private void initializeWeights() {
-        // First conv layer: processes raw input
-        convFilters1 = new double[numFilters1][1][filterSize1];
-        convBiases1 = new double[numFilters1];
-        double stdDev1 = Math.sqrt(2.0 / filterSize1); // He initialization
-        for (int i = 0; i < numFilters1; i++) {
-            for (int j = 0; j < filterSize1; j++) {
-                convFilters1[i][0][j] = rand.nextGaussian() * stdDev1;
+    
+    /*--------------------------------------------------------------*/
+    /*----------------          Parsing             ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    Parser parse(String[] args) {
+        
+        Parser parser=new Parser();
+        for(int i=0; i<args.length; i++){
+            String arg=args[i];
+            String[] split=arg.split("=");
+            String a=split[0].toLowerCase();
+            String b=split.length>1 ? split[1] : null;
+            
+            if(a.equals("data") || a.equals("train") || a.equals("traindata")){
+                dataIn=b;
+            }else if(a.equals("validate") || a.equals("validation") || a.equals("test")){
+                validateIn=b;
+            }else if(a.equals("verbose")){
+                verbose=Parse.parseBoolean(b);
+            }else if(a.equals("shuffle")){
+                shuffle=Parse.parseBoolean(b);
+            }else if(a.equals("splitfraction") || a.equals("split")){
+                splitFraction=Float.parseFloat(b);
+            }else if(a.equals("maxlines")){
+                maxLines=Parse.parseIntKMG(b);
+            }else if(a.equals("vlines") || a.equals("vsamples")){
+				maxLinesV=Parse.parseIntKMG(b);
+				if(maxLinesV<0){maxLinesV=Integer.MAX_VALUE;}
+			}else if(a.equals("exclusive")){
+                exclusive=Parse.parseBoolean(b);
+            }else if(a.equals("balance") || a.equals("balanced")){
+				if(b==null || Tools.startsWithLetter(b)) {
+					balance=Parse.parseBoolean(b) ? 1.0f : 0;
+				}else{
+					balance=Float.parseFloat(b);
+				}
+            }else if(parser.parse(arg, a, b)){
+                //do nothing
+            }else{
+                outstream.println("Unknown parameter "+args[i]);
+                assert(false) : "Unknown parameter "+args[i];
             }
         }
-        // Second conv layer: processes feature maps from first layer
-        convFilters2 = new double[numFilters2][numFilters1][filterSize2];
-        convBiases2 = new double[numFilters2];
-        double stdDev2 = Math.sqrt(2.0 / (numFilters1 * filterSize2));
-        for (int i = 0; i < numFilters2; i++) {
-            for (int j = 0; j < numFilters1; j++) {
-                for (int k = 0; k < filterSize2; k++) {
-                    convFilters2[i][j][k] = rand.nextGaussian() * stdDev2;
+
+        
+        
+        return parser;
+    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------        Validation            ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    private void validateParams(){
+        assert(splitFraction>=0 && splitFraction<=1) : "Split fraction must be between 0 and 1";
+        if(maxLines<0){maxLines=Integer.MAX_VALUE;}
+        if(maxLinesV<0){maxLinesV=maxLines;}
+    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------     File Existence           ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    private void checkFileExistence(){
+        
+        //Ensure input files can be read
+        ArrayList<String> inFiles=new ArrayList<String>();
+        if(dataIn!=null){inFiles.add(dataIn);}
+        if(validateIn!=null){inFiles.add(validateIn);}
+        
+        if(inFiles.size()>0){
+            if(!Tools.testInputFiles(false, true, inFiles.toArray(new String[0]))){
+                throw new RuntimeException("\nCan't read some input files.\n");  
+            }
+        }
+        
+        //Ensure output files can be written
+        ArrayList<String> outFiles=new ArrayList<String>();
+        // Add output files here if needed
+        
+        if(!Tools.testOutputFiles(overwrite, append, false, outFiles.toArray(new String[0]))){
+            throw new RuntimeException("\n\noverwrite="+overwrite+"; Can't write to output files\n");
+        }
+    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------         Outer Methods        ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    void process(Timer t){
+        
+        //Load training data
+        SampleSet[] trainData = null;
+        if(dataIn!=null){
+            trainData = loadData(dataIn, true, maxLines, shuffle, splitFraction, maxLinesV);
+            data = trainData[0];
+            if(trainData.length>1 && validateSet==null){
+                validateSet = trainData[1];
+            }
+        }
+        
+        //Load validation data if specified separately
+        if(validateIn!=null){
+            SampleSet[] valData = loadData(validateIn, false, maxLinesV, false, 0, 0);
+            validateSet = valData[0];
+        }
+        
+        //Validate that we have data
+        if(data==null && validateSet==null){
+            throw new RuntimeException("No data loaded!");
+        }
+        
+        printStats(t);
+
+         // Initialize and train CNN
+        if(data != null) {
+            outstream.println("\n" + "=".repeat(50));
+            outstream.println("Initializing CNN Network...");
+            
+            CNNNetwork network = new CNNNetwork(data.numInputs(), data.numOutputs());
+            network.initialize();
+            
+            outstream.println("\nStarting training...");
+            network.train(data, validateSet);
+        }
+    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------         Inner Methods        ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    private SampleSet[] loadData(String path, boolean makeSubsets, int maxLines0, 
+            boolean shuffleRaw, float splitFraction, int maxLines1){
+        if(!quiet) {outstream.println("Loading "+path);}
+        
+        // Add debug output
+        if(verbose) {
+            outstream.println("Parameters: maxLines0="+maxLines0+", shuffle="+shuffleRaw+
+                            ", split="+splitFraction+", maxLines1="+maxLines1+
+                            ", exclusive="+exclusive+", balance="+balance);
+        }
+        
+        SampleSet[] ssa = DataLoader.load(path, maxLines0, shuffleRaw, splitFraction, maxLines1, exclusive, balance);
+        
+        if(verbose) {
+            outstream.println("DataLoader returned "+ssa.length+" sets");
+        }
+        
+        for(SampleSet ss : ssa) {
+            ss.makeSamples();
+        }
+        
+        // Check if split actually worked
+        if(ssa.length == 2 && splitFraction > 0) {
+            int total = ssa[0].samples.length + ssa[1].samples.length;
+            float actualSplit = (float)ssa[0].samples.length / total;
+            
+            if(verbose || Math.abs(actualSplit - splitFraction) > 0.1) {
+                outstream.println("Split check: requested="+splitFraction+
+                                ", actual="+String.format("%.3f", actualSplit)+
+                                " ("+ssa[0].samples.length+"/"+total+")");
+            }
+        }
+        
+        // Original verbose output
+        if(verbose) {
+            for(int i=0; i<ssa.length; i++) {
+                if(ssa[i] != null && ssa[i].samples != null) {
+                    outstream.println("Set "+i+": "+ssa[i].samples.length+" samples, " +
+                                    "positive="+ssa[i].numPositive+", negative="+ssa[i].numNegative);
                 }
             }
         }
-        // Calculate size after convolutions and pooling (assuming input length 356)
-        int sizeAfterConv1 = (356 - filterSize1 + 1) / poolSize1;
-        int sizeAfterConv2 = (sizeAfterConv1 - filterSize2 + 1) / poolSize2;
-        int flattenedSize = sizeAfterConv2 * numFilters2;
-        // Dense layer
-        denseWeights = new double[flattenedSize][numHidden];
-        denseBiases = new double[numHidden];
-        double stdDevDense = Math.sqrt(2.0 / flattenedSize);
-        for (int i = 0; i < flattenedSize; i++) {
-            for (int j = 0; j < numHidden; j++) {
-                denseWeights[i][j] = rand.nextGaussian() * stdDevDense;
-            }
+        
+        if(makeSubsets && setsize>0 && ssa.length > 0) {
+            assert(setsize>=100) : "Setsize should be at least 100";
+            int subsets = Tools.max(1, ssa[0].samples.length/setsize);
+            outstream.println("Data was organized into "+subsets+(subsets==1 ? " set." : " sets."));
+            subsets = Tools.mid(1, subsets, ssa[0].samples.length);
+            ssa[0].makeSubsets(subsets);
         }
-        // Output layer (Xavier initialization for sigmoid)
-        outWeights = new double[numHidden][numOutputs];
-        outBiases = new double[numOutputs];
-        double stdDevOut = Math.sqrt(1.0 / numHidden);
-        for (int i = 0; i < numHidden; i++) {
-            outWeights[i][0] = rand.nextGaussian() * stdDevOut;
+        return ssa;
+    }
+        
+    private void printStats(Timer t){
+        outstream.println("\nData Loading Complete!");
+        outstream.println("Time: \t"+t);
+        
+        if(data!=null){
+            outstream.println("\nTraining Set:");
+            outstream.println("Samples: \t"+data.samples.length);
+            outstream.println("Inputs: \t"+data.numInputs());
+            outstream.println("Outputs: \t"+data.numOutputs());
+            outstream.println("Positive: \t"+data.numPositive);
+            outstream.println("Negative: \t"+data.numNegative);
+        }
+        
+        if(validateSet!=null){
+            outstream.println("\nValidation Set:");
+            outstream.println("Samples: \t"+validateSet.samples.length);
+            outstream.println("Positive: \t"+validateSet.numPositive);
+            outstream.println("Negative: \t"+validateSet.numNegative);
+        }
+        
+        // Print first few samples if verbose
+        if(verbose && data!=null && data.samples.length > 0){
+            outstream.println("\nFirst 5 samples:");
+            for(int i=0; i<Math.min(5, data.samples.length); i++){
+                Sample s = data.samples[i];
+                outstream.println("Sample "+i+": inputs="+s.in.length+
+                                ", goal="+s.goal[0]+", positive="+s.positive);
+            }
         }
     }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------            Fields            ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    /** Primary input file path */
+    private String dataIn=null;
+    
+    /** Validation file path */
+    private String validateIn=null;
+    
+    /** Primary output stream */
+    private PrintStream outstream=System.err;
+    
+    /** Maximum lines to load from training data */
+    private int maxLines=-1;
+    
+    /** Maximum lines to load from validation data */
+    private int maxLinesV=-1;
+    
+    /** Shuffle the data */
+    private boolean shuffle=true;
+    
+    /** Train/validation split fraction */
+    private float splitFraction=0.1f;
+    
+    /** Set size for organizing data into subsets */
+    private int setsize=1000;
+    
+    /** Exclusive mode */
+    private boolean exclusive=true;
+    
+    /** Balance positive/negative samples */
+    private float balance=0.0f;
+    
+    /** Verbose output */
+    private boolean verbose=false;
+    
+    /** Don't print typical output */
+    private boolean quiet=false;
+    
+    /** Overwrite existing output files */
+    private boolean overwrite=false;
+    
+    /** Append to existing output files */
+    private boolean append=false;
 
-    // --- CNN architecture fields (example, adjust as needed) ---
-    // Number of input features (length of input vector)
-    int inputLength = 100; // TODO: set based on your data
-    // Convolution layer parameters
-    int numFilters = 8;
-    int filterSize = 5;
-    float[][] convWeights; // [numFilters][filterSize]
-    float[] convBiases;    // [numFilters]
-    // Fully connected layer parameters
-    int fcOutputSize = 1; // For regression; change for classification
-    float[][] fcWeights;   // [numFilters * convOutputLength][fcOutputSize]
-    float[] fcBiases;      // [fcOutputSize]
+    // CNN parameters (temporary placeholders)
+    private int[] filterSizes = {3, 5, 7};  // Multiple filter sizes
+    private int[] filterCounts = {64, 128, 256};  // Filters per layer
+    private int[] poolSizes = {2, 2, 2};  // Max pooling sizes
+    private int[] denseLayers = {512, 256};  // Fully connected layers
+    private float dropout = 0.5f;
+    private String activation = "relu";  // relu, tanh, sigmoid
+    // CNN Training Parameters
+    private int epochs = 100;
+    private int batchSize = 32;
+    private float learningRate = 0.001f;
+    private String optimizer = "adam";
+    private float momentum = 0.9f;
+    private int patience = 10;  // Early stopping
 
-    // --- Forward pass for 1D CNN ---
-    /**
-     * Performs a forward pass through the CNN for a single input sample.
-     * @param input 1D input array (length = inputLength)
-     * @return output array (length = fcOutputSize)
-     */
-    public float[] forward(float[] input) {
-        // 1. Convolution layer
-        int convOutputLength = input.length - filterSize + 1;
-        float[][] convOutput = new float[numFilters][convOutputLength];
-        for (int f = 0; f < numFilters; f++) {
-            for (int i = 0; i < convOutputLength; i++) {
-                float sum = 0f;
-                for (int k = 0; k < filterSize; k++) {
-                    sum += input[i + k] * convWeights[f][k];
-                }
-                sum += convBiases[f];
-                // ReLU activation
-                convOutput[f][i] = Math.max(0, sum);
-            }
-        }
-        // 2. Flatten conv output for fully connected layer
-        float[] flat = new float[numFilters * convOutputLength];
-        for (int f = 0; f < numFilters; f++) {
-            for (int i = 0; i < convOutputLength; i++) {
-                flat[f * convOutputLength + i] = convOutput[f][i];
-            }
-        }
-        // 3. Fully connected layer
-        float[] output = new float[fcOutputSize];
-        for (int o = 0; o < fcOutputSize; o++) {
-            float sum = 0f;
-            for (int j = 0; j < flat.length; j++) {
-                sum += flat[j] * fcWeights[j][o];
-            }
-            sum += fcBiases[o];
-            output[o] = sum; // No activation for regression; use softmax/sigmoid for classification
-        }
-        return output;
-    }
-
-    /**
-     * Main method for CLI use. Accepts a data file path as argument.
-     */
-    public static void main(String[] args) {
-        if (args.length < 1) {
-            System.err.println("Usage: java ml.CNNTrainer <data_file>");
-            return;
-        }
-        CNNTrainer trainer = new CNNTrainer();
-        SampleSet data = trainer.loadData(args[0]);
-        if (data == null || data.samples == null) {
-            System.err.println("[ERROR] No data loaded. Exiting.");
-            return;
-        }
-        int nSamples = data.samples.length;
-        System.err.println("[DEBUG] Number of samples: " + nSamples);
-        System.err.println("[DEBUG] Data loading complete. Ready for training.");
-        // ...add training loop here in next steps...
-    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------        Data Structures       ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    /** Training data */
+    private SampleSet data;
+    
+    /** Validation data */
+    private SampleSet validateSet;
+    
+    /** File format for data input */
+    private FileFormat ffDataIn;
+    
+    /** File format for validation input */
+    private FileFormat ffValidateIn;
 }

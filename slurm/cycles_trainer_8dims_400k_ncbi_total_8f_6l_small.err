@@ -1,0 +1,11 @@
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_total_training_8f.tsv out=cycles_trained_8dims_400k_ncbi_total_8f_6l_small.bbnet maxdims=356,150,200,90,12,1 mindims=356,50,100,40,5,1 cycles=4 nets=8 -Xmx400g
+
+Loading ../ncbi_total_training_8f.tsv
+Inferring 356 inputs, 1 output, 0 weights.
+Exception in thread "main" java.lang.RuntimeException: Can't balance with zero examples: pos=14241539, neg=0
+	at ml.DataLoader.balance(DataLoader.java:203)
+	at ml.DataLoader.load(DataLoader.java:154)
+	at ml.DataLoader.load(DataLoader.java:79)
+	at ml.Trainer.loadData(Trainer.java:1223)
+	at ml.Trainer.process(Trainer.java:709)
+	at ml.Trainer.main(Trainer.java:54)

@@ -116,6 +116,25 @@ echo "Assembling final master training set: $OUT_TSV"
 # Note: The header should match the columns from your GffToTsv
 #echo -e "log_len\tstart_score\tmid_score\tend_score\tgene_gc\tgene_entropy\tcontig_gc\tcontig_entropy\t...\tmatch" > "$OUT_TSV"
 
+
+# Balance operations
+# Count total positives and negatives
+POS_COUNT=$(find "$TMPDIR" -name '*.positives.tsv' -exec cat {} + | wc -l)
+NEG_COUNT=$(find "$TMPDIR" -name '*.negatives.tsv' -exec cat {} + | wc -l)
+
+# Calculate max allowed negatives (2x positives)
+MAX_NEG=$((POS_COUNT * 2))
+
+# If too many negatives, subsample them
+if (( NEG_COUNT > MAX_NEG )); then
+    echo "Balancing negatives: subsampling $NEG_COUNT to $MAX_NEG"
+    # Concatenate and shuffle negatives, pick MAX_NEG lines
+    find "$TMPDIR" -name '*.negatives.tsv' -exec cat {} + | shuf -n "$MAX_NEG" > "$TMPDIR/negatives.balanced.tsv"
+    # Remove old negatives, use only balanced
+    find "$TMPDIR" -name '*.negatives.tsv' -delete
+    mv "$TMPDIR/negatives.balanced.tsv" "$TMPDIR/all.negatives.tsv"
+fi
+
 # Concatenate all the individual positive and negative TSV files
 # Use 'find' to gracefully handle cases where no files of a type were created
 find "$TMPDIR" -name '*.positives.tsv' -print0 | xargs -0 cat >> "$OUT_TSV"
