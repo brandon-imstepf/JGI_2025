@@ -30,8 +30,8 @@ import template.ThreadWaiter;
  * Loads data for CNN training.
  * Based on ml.Trainer structure.
  * 
- * @author Your Name
- * @date Current Date
+ * @author Brandon Imstepf 
+ * @date 7-11-2025
  */
 public class CNNTrainer {
     
@@ -105,6 +105,50 @@ public class CNNTrainer {
             
             if(a.equals("data") || a.equals("train") || a.equals("traindata")){
                 dataIn=b;
+            }
+            // CNN Architecture Parameters
+            else if(a.equals("filters") || a.equals("numfilters")){
+                // How many filters (feature detectors) in each conv layer
+                // Example: filters=32,64,128
+                String[] parts = b.split(",");
+                filterCounts = new int[parts.length];
+                for(int j=0; j<parts.length; j++){
+                    filterCounts[j] = Integer.parseInt(parts[j]);
+                }
+            }else if(a.equals("filtersizes") || a.equals("kernels")){
+                // Size of the sliding windows
+                // Example: filtersizes=3,5,7
+                String[] parts = b.split(",");
+                filterSizes = new int[parts.length];
+                for(int j=0; j<parts.length; j++){
+                    filterSizes[j] = Integer.parseInt(parts[j]);
+                }
+            }else if(a.equals("poolsizes") || a.equals("pool")){
+                // Pooling window sizes (usually 2)
+                // Example: poolsizes=2,2,2
+                String[] parts = b.split(",");
+                poolSizes = new int[parts.length];
+                for(int j=0; j<parts.length; j++){
+                    poolSizes[j] = Integer.parseInt(parts[j]);
+                }
+            }else if(a.equals("dense") || a.equals("denselayers")){
+                // Fully connected layer sizes
+                // Example: dense=256,128
+                String[] parts = b.split(",");
+                denseLayers = new int[parts.length];
+                for(int j=0; j<parts.length; j++){
+                    denseLayers[j] = Integer.parseInt(parts[j]);
+                }
+            }
+            // Training Parameters
+            else if(a.equals("epochs")){
+                epochs = Integer.parseInt(b);
+            }else if(a.equals("batchsize") || a.equals("batch")){
+                batchSize = Integer.parseInt(b);
+            }else if(a.equals("learningrate") || a.equals("lr")){
+                learningRate = Float.parseFloat(b);
+            }else if(a.equals("dropout")){
+                dropout = Float.parseFloat(b);
             }else if(a.equals("validate") || a.equals("validation") || a.equals("test")){
                 validateIn=b;
             }else if(a.equals("verbose")){
@@ -209,7 +253,10 @@ public class CNNTrainer {
             outstream.println("\n" + "=".repeat(50));
             outstream.println("Initializing CNN Network...");
             
+            // Create network with architecture parameters
             CNNNetwork network = new CNNNetwork(data.numInputs(), data.numOutputs());
+            network.setArchitecture(filterCounts, filterSizes, poolSizes, denseLayers);
+            network.setTrainingParams(epochs, batchSize, learningRate, dropout);
             network.initialize();
             
             outstream.println("\nStarting training...");
@@ -351,20 +398,17 @@ public class CNNTrainer {
     /** Append to existing output files */
     private boolean append=false;
 
-    // CNN parameters (temporary placeholders)
-    private int[] filterSizes = {3, 5, 7};  // Multiple filter sizes
-    private int[] filterCounts = {64, 128, 256};  // Filters per layer
-    private int[] poolSizes = {2, 2, 2};  // Max pooling sizes
-    private int[] denseLayers = {512, 256};  // Fully connected layers
-    private float dropout = 0.5f;
-    private String activation = "relu";  // relu, tanh, sigmoid
-    // CNN Training Parameters
-    private int epochs = 100;
-    private int batchSize = 32;
-    private float learningRate = 0.001f;
-    private String optimizer = "adam";
-    private float momentum = 0.9f;
-    private int patience = 10;  // Early stopping
+    /** CNN Architecture Parameters */
+    private int[] filterCounts = {32, 64};  // Number of filters per conv layer
+    private int[] filterSizes = {5, 3};     // Size of convolution windows
+    private int[] poolSizes = {2, 2};       // Pooling window sizes
+    private int[] denseLayers = {128};      // Fully connected layer sizes
+
+    /** Training Parameters */
+    private int epochs = 50;                 // How many times to go through all data
+    private int batchSize = 32;             // Samples per mini-batch
+    private float learningRate = 0.001f;    // How fast to learn
+    private float dropout = 0.5f;           // Randomly drop neurons to prevent overfitting
 
     
     /*--------------------------------------------------------------*/
