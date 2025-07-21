@@ -85,6 +85,10 @@ public class ConvolutionLayer extends Layer {
     public int getOutputSize() {
         return numFilters * outputLength;
     }
+
+    public int getParameterCount() {
+        return numFilters * inputChannels * filterSize + numFilters;
+    }    
     
     public int getOutputChannels() { return numFilters; }
     public int getOutputLength() { return outputLength; }

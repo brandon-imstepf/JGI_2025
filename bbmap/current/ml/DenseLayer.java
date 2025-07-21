@@ -64,9 +64,13 @@ public class DenseLayer extends Layer {
     public int getOutputSize() {
         return outputSize;
     }
+
+    public int getParameterCount() {
+        return outputSize * inputSize + outputSize;
+    }
     
-    private final int inputSize;
-    private final int outputSize;
-    private float[][] weights;
-    private float[] bias;
+    protected final int inputSize;
+    protected final int outputSize;
+    protected float[][] weights;
+    protected float[] bias;
 }

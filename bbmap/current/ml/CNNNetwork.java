@@ -74,7 +74,7 @@ public class CNNNetwork {
         }
         
         // Final output layer (sigmoid for binary classification)
-        DenseLayer outputLayer = new DenseLayer("Output", currentSize, numOutputs);
+        OutputLayer outputLayer = new OutputLayer("Output", currentSize);
         layers.add(outputLayer);
         
         outstream.println("\nNetwork architecture built with " + layers.size() + " layers");
@@ -82,8 +82,19 @@ public class CNNNetwork {
     }
 
     private int countParameters() {
-        // TODO: Count total weights and biases
-        return 0;
+        int total = 0;
+        for(Layer layer : layers) {
+            if(layer instanceof ConvolutionLayer) {
+                ConvolutionLayer conv = (ConvolutionLayer)layer;
+                // weights: filters * channels * filterSize + biases
+                total += conv.getParameterCount();
+            } else if(layer instanceof DenseLayer) {
+                DenseLayer dense = (DenseLayer)layer;
+                total += dense.getParameterCount();
+            }
+            // MaxPooling has no parameters
+        }
+        return total;
     }
     
     /**
@@ -93,7 +104,36 @@ public class CNNNetwork {
         outstream.println("You're calling CNNNetwork.train()");
         outstream.println("Training samples: " + trainData.samples.length);
         outstream.println("Validation samples: " + (valData != null ? valData.samples.length : 0));
-        // TODO: Implement training loop
+    
+        // Update train method to test forward pass
+
+        outstream.println("Testing forward pass...");
+        
+        // Test on first sample
+        Sample firstSample = trainData.samples[0];
+        float[] output = forward(firstSample.in);  // <-- Changed to use .in
+        
+        outstream.println("First sample forward pass:");
+        outstream.println("  Input size: " + firstSample.in.length);
+        outstream.println("  Output: " + output[0]);
+        outstream.println("  Target: " + firstSample.goal[0]);
+        outstream.println("  Initial prediction: " + (output[0] > 0.5f ? "positive" : "negative"));
+    
+        // TODO: Implement actual training loop
+
+    }
+
+    /**
+     * Forward pass through the entire network.
+     * @param input The input features
+     * @return The network output (probability for binary classification)
+     */
+    public float[] forward(float[] input) {
+        float[] current = input;
+        for(Layer layer : layers) {
+            current = layer.forward(current);
+        }
+        return current;
     }
 
     /**

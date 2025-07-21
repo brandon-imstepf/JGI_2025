@@ -128,11 +128,14 @@ MAX_NEG=$((POS_COUNT * 2))
 # If too many negatives, subsample them
 if (( NEG_COUNT > MAX_NEG )); then
     echo "Balancing negatives: subsampling $NEG_COUNT to $MAX_NEG"
-    # Concatenate and shuffle negatives, pick MAX_NEG lines
-    find "$TMPDIR" -name '*.negatives.tsv' -exec cat {} + | shuf -n "$MAX_NEG" > "$TMPDIR/balanced.negatives.tsv"
-    # Remove old negatives, use only balanced
+    # First concatenate to a temp file
+    find "$TMPDIR" -name '*.negatives.tsv' -exec cat {} + | shuf -n "$MAX_NEG" > "$TMPDIR/temp_balanced.tsv"
+    # Then delete the originals
     find "$TMPDIR" -name '*.negatives.tsv' -delete
+    # Finally rename to the proper pattern
+    mv "$TMPDIR/temp_balanced.tsv" "$TMPDIR/balanced.negatives.tsv"
 fi
+
 
 # Concatenate all the individual positive and negative TSV files
 # Use 'find' to gracefully handle cases where no files of a type were created
