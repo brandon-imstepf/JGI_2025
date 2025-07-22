@@ -11,12 +11,6 @@ public abstract class Layer {
     /** Forward pass - processes input and produces output */
     public abstract float[] forward(float[] input);
     
-    /** Backward pass - calculates gradients for backpropagation */
-    public abstract float[] backward(float[] gradientIn);
-    
-    /** Update weights using calculated gradients */
-    public abstract void updateWeights(float learningRate);
-    
     /** Get the output size of this layer */
     public abstract int getOutputSize();
     
@@ -28,4 +22,19 @@ public abstract class Layer {
     
     /** Store output for backward pass */
     protected float[] lastOutput;
+
+    /**
+     * Backward pass - compute gradients.
+     * @param gradientIn Gradient from the next layer
+     * @return Gradient to pass to previous layer
+     */
+    public abstract float[] backward(float[] gradientIn);
+
+    /**
+     * Update weights using accumulated gradients.
+     * @param learningRate Learning rate for gradient descent
+     */
+    public void updateWeights(float learningRate) {
+        // Default: do nothing (for layers without parameters)
+    }
 }

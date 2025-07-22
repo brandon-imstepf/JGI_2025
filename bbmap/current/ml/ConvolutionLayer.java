@@ -72,14 +72,76 @@ public class ConvolutionLayer extends Layer {
     
     @Override
     public float[] backward(float[] gradientIn) {
-        // TODO: Implement in Phase 3
-        return new float[inputChannels * inputLength];
+        // Initialize gradient for input
+        float[] gradientOut = new float[inputChannels * inputLength];
+        
+        // Initialize weight gradients if needed
+        if(weightGradients == null) {
+            weightGradients = new float[numFilters][inputChannels][filterSize];
+            biasGradients = new float[numFilters];
+        }
+        
+        // For each filter
+        for(int f = 0; f < numFilters; f++) {
+            // For each output position
+            for(int i = 0; i < outputLength; i++) {
+                // Get gradient from this output position
+                float grad = gradientIn[f * outputLength + i];
+                
+                // Skip if gradient is zero (ReLU killed it)
+                if(grad == 0) continue;
+                
+                // For each input channel
+                for(int c = 0; c < inputChannels; c++) {
+                    // For each position in the filter
+                    for(int k = 0; k < filterSize; k++) {
+                        int inputIdx = c * inputLength + i + k;
+                        
+                        // Gradient with respect to input
+                        gradientOut[inputIdx] += grad * weights[f][c][k];
+                        
+                        // Gradient with respect to weights
+                        weightGradients[f][c][k] += grad * lastInput[inputIdx];
+                    }
+                }
+                
+                // Gradient with respect to bias
+                biasGradients[f] += grad;
+            }
+        }
+        
+        // CLIP GRADIENTS AFTER ALL ACCUMULATION IS DONE
+        for(int f = 0; f < numFilters; f++) {
+            for(int c = 0; c < inputChannels; c++) {
+                for(int k = 0; k < filterSize; k++) {
+                    // Clip gradients to prevent explosion
+                    weightGradients[f][c][k] = Math.max(-5.0f, Math.min(5.0f, weightGradients[f][c][k]));
+                }
+            }
+            // Also clip bias gradients
+            biasGradients[f] = Math.max(-5.0f, Math.min(5.0f, biasGradients[f]));
+        }
+        
+        return gradientOut;
     }
-    
+
     @Override
     public void updateWeights(float learningRate) {
-        // TODO: Implement in Phase 3
+        if(weightGradients == null) return;
+        
+        // Update weights
+        for(int f = 0; f < numFilters; f++) {
+            for(int c = 0; c < inputChannels; c++) {
+                for(int k = 0; k < filterSize; k++) {
+                    weights[f][c][k] -= learningRate * weightGradients[f][c][k];
+                    weightGradients[f][c][k] = 0;  // Reset
+                }
+            }
+            bias[f] -= learningRate * biasGradients[f];
+            biasGradients[f] = 0;  // Reset
+        }
     }
+
     
     @Override
     public int getOutputSize() {
@@ -93,11 +155,14 @@ public class ConvolutionLayer extends Layer {
     public int getOutputChannels() { return numFilters; }
     public int getOutputLength() { return outputLength; }
     
-    private final int inputChannels;
-    private final int inputLength;
-    private final int numFilters;
-    private final int filterSize;
-    private final int outputLength;
-    private float[][][] weights;  // [numFilters][inputChannels][filterSize]
-    private float[] bias;
+    int inputChannels;
+    int inputLength;
+    int numFilters;
+    int filterSize;
+    int outputLength;
+    float[][][] weights;  // [numFilters][inputChannels][filterSize]
+    float[] bias;
+    float[][][] weightGradients;
+    float[] biasGradients;
+    int stride = 1; // default stride
 }

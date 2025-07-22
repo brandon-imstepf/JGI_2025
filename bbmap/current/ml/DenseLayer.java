@@ -3,6 +3,8 @@ package ml;
 import java.util.Random;
 
 /**
+ * @author Brandon Imstepf
+ * Last edited: @date 7-21-2025
  * Fully connected (dense) layer.
  * Every input connects to every output.
  */
@@ -51,14 +53,67 @@ public class DenseLayer extends Layer {
     
     @Override
     public float[] backward(float[] gradientIn) {
-        // TODO: Implement in Phase 3
-        return new float[inputSize];
+        // Gradient with respect to inputs
+        float[] gradientOut = new float[inputSize];
+        
+        // Apply ReLU derivative
+        float[] reluGradient = new float[outputSize];
+        for(int i = 0; i < outputSize; i++) {
+            reluGradient[i] = lastOutput[i] > 0 ? gradientIn[i] : 0;
+        }
+        
+        // Backpropagate through weights
+        for(int j = 0; j < inputSize; j++) {
+            float sum = 0;
+            for(int i = 0; i < outputSize; i++) {
+                sum += weights[i][j] * reluGradient[i];
+            }
+            gradientOut[j] = sum;
+        }
+        
+        // Store gradients for weight updates
+        if(weightGradients == null) {
+            weightGradients = new float[outputSize][inputSize];
+            biasGradients = new float[outputSize];
+        }
+        
+        // Accumulate gradients
+        for(int i = 0; i < outputSize; i++) {
+            for(int j = 0; j < inputSize; j++) {
+                weightGradients[i][j] += reluGradient[i] * lastInput[j];
+            }
+            biasGradients[i] += reluGradient[i];
+        }
+        
+        // CLIP GRADIENTS AFTER ALL ACCUMULATION IS DONE
+        for(int i = 0; i < outputSize; i++) {
+            for(int j = 0; j < inputSize; j++) {
+                // Clip weight gradients
+                weightGradients[i][j] = Math.max(-5.0f, Math.min(5.0f, weightGradients[i][j]));
+            }
+            // Clip bias gradients
+            biasGradients[i] = Math.max(-5.0f, Math.min(5.0f, biasGradients[i]));
+        }
+        
+        return gradientOut;  // Note: it's gradientOut, not outputGradient
     }
-    
+
     @Override
     public void updateWeights(float learningRate) {
-        // TODO: Implement in Phase 3
+        if(weightGradients == null) return;
+        
+        // Update weights and biases
+        for(int i = 0; i < outputSize; i++) {
+            for(int j = 0; j < inputSize; j++) {
+                weights[i][j] -= learningRate * weightGradients[i][j];
+                weightGradients[i][j] = 0;  // Reset gradient
+            }
+            bias[i] -= learningRate * biasGradients[i];
+            biasGradients[i] = 0;  // Reset gradient
+        }
     }
+
+
     
     @Override
     public int getOutputSize() {
@@ -69,8 +124,11 @@ public class DenseLayer extends Layer {
         return outputSize * inputSize + outputSize;
     }
     
-    protected final int inputSize;
-    protected final int outputSize;
-    protected float[][] weights;
-    protected float[] bias;
+    int inputSize;
+    int outputSize;
+    float[][] weights;
+    float[] bias;
+    float[][] weightGradients;
+    float[] biasGradients;
+    boolean useReLU = true; //
 }

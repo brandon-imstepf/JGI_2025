@@ -1,0 +1,118 @@
+java -ea -Xmx107380m -Xms107380m -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.CNNTrainer in=../ncbi_10_balanced.tsv in=../ncbi_10_balanced.tsv out=cnn_filters=32,64,128_dense=256,128_epochs=10.bbnet filters=32,64,128 dense=256,128 epochs=10
+
+Loading ../ncbi_10_balanced.tsv
+Inferring 356 inputs, 1 output, 0 weights.
+Split check: requested=0.1, actual=0.900 (93666/104088)
+Data was organized into 93 sets.
+
+Data Loading Complete!
+Time: 	0.000 seconds.
+
+Training Set:
+Samples: 	93666
+Inputs: 	356
+Outputs: 	1
+Positive: 	31201
+Negative: 	62465
+
+Validation Set:
+Samples: 	10422
+Positive: 	3495
+Negative: 	6927
+
+==================================================
+Initializing CNN Network...
+CNNNetwork initialized with 356 inputs and 1 outputs
+Architecture set:
+  Conv layers: 3
+  Filter counts: [32, 64, 128]
+  Filter sizes: [5, 3]
+  Pool sizes: [2, 2]
+  Dense layers: [256, 128]
+Training parameters:
+  Epochs: 10
+  Batch size: 32
+  Learning rate: 0.001
+  Dropout: 0.5
+Building network architecture...
+Conv1: 356 -> 11264 (channels=1→32, length=356→352)
+Pool1: 11264 -> 5632 (channels=32, pool=2)
+Conv2: 5632 -> 11136 (channels=32→64, length=176→174)
+Pool2: 11136 -> 5568 (channels=64, pool=2)
+Conv3: 5568 -> 10880 (channels=64→128, length=87→85)
+Dense1: 10880 -> 256
+Dense2: 256 -> 128
+Output: 128 -> 1
+
+Network architecture built with 8 layers
+Total parameters: 2849665
+
+Starting training...
+Starting training for 10 epochs...
+Batch size: 32
+Learning rate: 0.001
+
+Batch 1:       ERR= 0.500000  LOSS= 1.170627  FPR= 1.000000  FNR= 0.000000  0.6s
+Batch 2:       ERR= 0.421875  LOSS= 3.355612  FPR= 0.432432  FNR= 0.407407  1.0s
+Batch 3:       ERR= 0.479167  LOSS= 3.733178  FPR= 0.625000  FNR= 0.275000  1.4s
+Batch 4:       ERR= 0.507813  LOSS= 2.978945  FPR= 0.649351  FNR= 0.294118  1.9s
+Batch 5:       ERR= 0.481250  LOSS= 2.515650  FPR= 0.515464  FNR= 0.428571  2.3s
+Batch 6:       ERR= 0.447917  LOSS= 2.200260  FPR= 0.416667  FNR= 0.500000  2.7s
+Batch 7:       ERR= 0.441964  LOSS= 1.984848  FPR= 0.359712  FNR= 0.576471  3.2s
+Batch 8:       ERR= 0.445313  LOSS= 1.824936  FPR= 0.320513  FNR= 0.640000  3.6s
+Batch 9:       ERR= 0.434028  LOSS= 1.695613  FPR= 0.284091  FNR= 0.669643  4.0s
+Batch 10:      ERR= 0.428125  LOSS= 1.592087  FPR= 0.255102  FNR= 0.701613  4.5s
+Batch 25:      ERR= 0.362500  LOSS= 1.011499  FPR= 0.095602  FNR= 0.866426  11.0s
+Batch 50:      ERR= 0.360625  LOSS= 0.829487  FPR= 0.048591  FNR= 0.922942  22.0s
+Batch 100:     ERR= 0.330000  LOSS= 0.713165  FPR= 0.042442  FNR= 0.876700  43.9s
+Batch 250:     ERR= 0.267000  LOSS= 0.575658  FPR= 0.075493  FNR= 0.648224  1.8m
+Batch 500:     ERR= 0.206937  LOSS= 0.457431  FPR= 0.085244  FNR= 0.448507  3.6m
+Batch 1k:      ERR= 0.150094  LOSS= 0.340412  FPR= 0.077067  FNR= 0.295586  7.3m
+Batch 2k:      ERR= 0.114547  LOSS= 0.268617  FPR= 0.066196  FNR= 0.211311  14.9m
+
+Epoch 1/10 Complete:
+  Train - ERR: 0.1033  FPR: 0.0627  FNR: 0.1845  Loss: 0.2429
+  Valid - ERR: 0.0786  FPR: 0.0498  FNR: 0.1356  Loss: 0.1879
+
+Batch 3k:      ERR= 0.977951  LOSS= 0.004461  FPR= 0.054326  FNR= 0.131611  23.5m
+Batch 4k:      ERR= 0.753153  LOSS= 0.050430  FPR= 0.055171  FNR= 0.126785  30.9m
+Batch 5k:      ERR= 0.620748  LOSS= 0.083615  FPR= 0.055244  FNR= 0.144697  38.3m
+
+Epoch 2/10 Complete:
+  Train - ERR: 0.0879  FPR: 0.0547  FNR: 0.1545  Loss: 0.2079
+  Valid - ERR: 0.0823  FPR: 0.0683  FNR: 0.1102  Loss: 0.2037
+
+Batch 6k:      ERR= 0.978311  LOSS= 0.005326  FPR= 0.055701  FNR= 0.176735  46.7m
+Batch 7k:      ERR= 0.873841  LOSS= NaN  FPR= 0.025779  FNR= 0.629090  54.0m
+Batch 8k:      ERR= 0.805919  LOSS= NaN  FPR= 0.013707  FNR= 0.800700  61.2m
+
+Epoch 3/10 Complete:
+  Train - ERR: 0.2912  FPR: 0.0100  FNR: 0.8539  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 9k:      ERR= 0.984040  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  69.4m
+Batch 10k:     ERR= 0.918655  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  76.6m
+Batch 11k:     ERR= 0.865494  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  83.7m
+
+Epoch 4/10 Complete:
+  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 12k:     ERR= 0.984282  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  91.8m
+Batch 13k:     ERR= 0.934034  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  98.9m
+Batch 14k:     ERR= 0.890944  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  106.1m
+
+Epoch 5/10 Complete:
+  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 15k:     ERR= 0.984016  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  114.2m
+Batch 16k:     ERR= 0.943378  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  121.3m
+Batch 17k:     ERR= 0.907259  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  128.4m
+
+Epoch 6/10 Complete:
+  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 18k:     ERR= 0.983995  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  136.5m
+slurmstepd: error: *** JOB 18131784 ON n0062.dori0 CANCELLED AT 2025-07-21T13:30:05 ***

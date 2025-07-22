@@ -1,4 +1,4 @@
-java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_total_training_8f.tsv out=cycles_trained_8dims_400k_ncbi_total_8f_6l_small.bbnet maxdims=356,150,200,90,12,1 mindims=356,50,100,40,5,1 cycles=4 nets=8 -Xmx400g
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_total_training_8f.tsv out=cycles_trained_8dims_400k_ncbi_total_8f_6l_small_7-14.bbnet maxdims=356,150,250,100,50,1 mindims=356,50,150,25,5,1 cycles=4 nets=8 -Xmx400g
 
 Loading ../ncbi_total_training_8f.tsv
 java.lang.RuntimeException: Can't find file ../ncbi_total_training_8f.tsv
