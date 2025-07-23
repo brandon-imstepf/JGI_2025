@@ -42,6 +42,8 @@ import structures.ByteBuilder;
 import structures.ListNum;
 import tracker.ReadStats;
 import tracker.EntropyTracker;
+import ml.CellNet;
+import ml.CellNetParser;
 import prok.CallGenesHelper.ContigStats;
 import prok.CallGenesHelper.GeneQuad;
 import prok.CallGenesHelper.TrueGeneData;
@@ -109,6 +111,7 @@ public class CallGenes extends ProkObject {
 		ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
 		ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
 		ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
+		ffnet = FileFormat.testOutput(netFile, FileFormat.BBNET, null, true, true, false, false); // Brandon: netFile is for CellNetParser
 		
 		if(ffoutGff!=null){
 			assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
@@ -129,6 +132,13 @@ public class CallGenes extends ProkObject {
 			assert(geneHistDiv>=1) : "geneHistDiv="+geneHistDiv+"; should be >=1";
 		}
 		geneHist=geneHistBins>1 ? new long[geneHistBins] : null;
+
+		if(netFile != null){ // Brandon: Load the network file if specified
+			net0 = CellNetParser.load(netFile);
+			assert(net0 != null) : netFile;
+		} else {
+			net0 = null;
+		}
 	}
 	
 	/*--------------------------------------------------------------*/
@@ -185,10 +195,11 @@ public class CallGenes extends ProkObject {
 					e.printStackTrace();
 				}
 			}
-			else if(arg.equalsIgnoreCase("nofilter")){
+			else if(arg.equalsIgnoreCase("nofilter")){ // Brandon: arg for no filtering of candidates
     			nofilter = true;
-			}
-			else if (arg.equalsIgnoreCase("seq")) { // Brandon: seq is to output the sequence of the gene, rather than one-hot
+			}else if(a.equals("net")){ // Brandon: arg for network input
+				netFile = b;
+			}else if (arg.equalsIgnoreCase("seq")) { // Brandon: seq is to output the sequence of the gene, rather than one-hot
 				seq = true;
 			}
 			else if(a.equals("outgff") || a.equals("gffout") || a.equals("outg") || a.equals("gff")){
@@ -274,17 +285,7 @@ public class CallGenes extends ProkObject {
 				minAvgScore=Float.parseFloat(b);
 			}else if(a.equalsIgnoreCase("breakLimit")){
 				GeneCaller.breakLimit=Integer.parseInt(b);
-			}else if(a.equalsIgnoreCase("clearcutoffs") || a.equalsIgnoreCase("clearfilters")){
-				/* Brandon: Essentially ensure that all candidates get through the filter for ML training purposes */
-				GeneCaller.breakLimit=9999;
-				minOrfScore=-9999;
-				minAvgScore=-9999;
-				minKmerScore=-9999;
-				minStopScore=-9999;
-				minStartScore=-9999;
-			}
-
-			else if(a.equalsIgnoreCase("e1")){
+			}else if(a.equalsIgnoreCase("e1")){
 				Orf.e1=Float.parseFloat(b);
 			}else if(a.equalsIgnoreCase("e2")){
 				Orf.e2=Float.parseFloat(b);
@@ -899,6 +900,9 @@ public class CallGenes extends ProkObject {
 		@Override
 		public void run(){
 			//Do anything necessary prior to processing
+			    if(net0 != null){ // Branond: Make network available to threads
+					net = net0.copy(false);
+				}
 			
 			//Process the reads
 			processInner();
@@ -939,84 +943,175 @@ public class CallGenes extends ProkObject {
 		
 		// Brandon: 6/24/25
 		/** Updated processList to handle CallGenesHelper.java */
+		// 7/23/25: Updated to handle neural network scoring and filtering.
 		// In CallGenes.java, inside the ProcessThread inner class
-		void processList(ListNum<Read> ln) {
-		final ArrayList<Read> reads = ln.list;
+        void processList(ListNum<Read> ln) {
+            final ArrayList<Read> reads = ln.list;
 
-		// Loop through each contig (Read) in the list
-		for (int idx = 0; idx < reads.size(); idx++) {
-			final Read r1 = reads.get(idx);
-			
-			readsInT += r1.pairCount();
-			basesInT += r1.length() + r1.mateLength();
-			
-			ArrayList<Orf> orfList = processRead(r1);
-			
-			if (orfList == null || orfList.isEmpty()) {
-				continue;
-			}
-			
-			genesOutT += orfList.size();
+            // Loop through each contig (Read) in the list
+            for (int idx = 0; idx < reads.size(); idx++) {
+                final Read r1 = reads.get(idx);
+                
+                readsInT += r1.pairCount();
+                basesInT += r1.length() + r1.mateLength();
+                
+                // Step 1: Get all potential gene candidates from the GeneCaller.
+                // The 'nofilter' flag is handled inside processRead -> caller.callGenes.
+                ArrayList<Orf> orfList = processRead(r1);
+                ArrayList<Orf> passedOrfs;
 
-			// This buffer will hold all the GFF lines for the current contig
-			final ByteBuilder bb = new ByteBuilder();
+                // Step 2: Filter candidates with the neural network if it's provided.
+                if (net != null && !this.nofilter) {
+                    // NN INFERENCE MODE: Score ORF candidates and keep only those that pass the cutoff.
+                    passedOrfs = new ArrayList<>();
+                    for (Orf orf : orfList) {
+                        // Non-CDS features (tRNA, rRNA) are not scored by the network, so they pass automatically.
+                        if (orf.type != CDS) {
+                            passedOrfs.add(orf);
+                            continue;
+                        }
+                        
+                        // Generate feature vector, score it, and check if it passes the filter.
+                        float score = scoreOrf(orf, r1);
+                        boolean pass = (score >= cutoff) == highpass;
+                        
+                        if (pass) {
+                            orf.orfScore = score; // Optionally update the ORF's score to the NN score.
+                            passedOrfs.add(orf);
+                        }
+                    }
+                } else {
+                    // NO-NETWORK MODE: Keep all candidates. This branch is also used for 'nofilter'.
+                    passedOrfs = orfList;
+                }
+                
+                // Step 3: Process the final list of ORFs.
+                if (passedOrfs == null || passedOrfs.isEmpty()) {
+                    continue;
+                }
+                
+                genesOutT += passedOrfs.size();
 
-			// Process every ORF found on this contig
-			for (Orf orf : orfList) {
-				// Since we removed the 'ml' logic, we are always in GFF mode.
-				// We only need to check if the GFF writer (bsw) exists.
-				if (bsw != null) {
-					if (orf.type == CDS) {
-						// For CDS features, generate the vector and append it.
-						String vectorValues = CallGenesHelper.generateFeatureVector(
-							orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-							CallGenes.this.trueGeneSet, CallGenes.this.seq, 
-							false // We explicitly pass 'false' for mlMode now.
-						);
-						
-						if (vectorValues.endsWith("\t1")) {
-							this.matchCount++;
-						}
+                // This buffer will hold all the GFF lines for the current contig.
+                final ByteBuilder bb = new ByteBuilder();
 
-						orf.appendGff(bb);
-						
-						if (bb.length() > 0 && bb.get(bb.length() - 1) == '\n') {
-							bb.trimLast(1);
-						}
-						
-						bb.append(";VECTOR=");
-						for (int i = 0; i < vectorValues.length(); i++) {
-							char c = vectorValues.charAt(i);
-							bb.append(c == '\t' ? ',' : c);
-						}
-						bb.nl();
-					} else {
-						// For non-CDS features, just write the standard GFF line.
-						orf.appendGff(bb);
-						if (bb.length() > 0 && bb.get(bb.length() - 1) != '\n') {
-							bb.nl();
-						}
-					}
-				}
-			} // End of ORF loop
+                // Loop through the final set of ORFs (either filtered or unfiltered).
+                for (Orf orf : passedOrfs) {
+                    if (bsw != null) {
+                        orf.appendGff(bb); // Generate the standard GFF line.
+                        
+                        // If not using the network, append the feature vector for training data generation.
+                        if (net == null && orf.type == CDS) {
+                            String vectorValues = CallGenesHelper.generateFeatureVector(
+                                orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
+                                CallGenes.this.trueGeneSet, CallGenes.this.seq, false
+                            );
+                            
+                            if (vectorValues.endsWith("\t1")) {
+                                this.matchCount++;
+                            }
+                            
+                            // Trim the newline from appendGff before adding the vector.
+                            if (bb.length() > 0 && bb.get(bb.length() - 1) == '\n') {
+                                bb.trimLast(1);
+                            }
+                            
+                            // Append the vector attribute.
+                            bb.append(";VECTOR=");
+                            for (int i = 0; i < vectorValues.length(); i++) {
+                                char c = vectorValues.charAt(i);
+                                bb.append(c == '\t' ? ',' : c);
+                            }
+                            bb.nl();
+                        }
+                    }
+                } // End of ORF loop
 
-			// After processing all ORFs for this contig, write the buffer to the file stream.
-			if (bb.length() > 0) {
-				bytesOutT += bb.length();
-				if (bsw != null) {
-					if (bsw.ordered) {
-						bsw.add(bb, r1.numericID);
-					} else {
-						bsw.addJob(bb);
-					}
-				}
-			}
-		} // End of contig loop
+                // After processing all ORFs for this contig, write the buffer to the file stream.
+                if (bb.length() > 0) {
+                    bytesOutT += bb.length();
+                    if (bsw != null) {
+                        if (bsw.ordered) {
+                            bsw.add(bb, r1.numericID);
+                        } else {
+                            bsw.addJob(bb);
+                        }
+                    }
+                }
+            } // End of contig loop
 
-		// Finally, tell the system we are done with this batch of reads.
-		cris.returnList(ln);
-	}
+            // Finally, tell the system we are done with this batch of reads.
+            cris.returnList(ln);
+        }
 
+        // Brandon - 7/23/25: Method to score an ORF with the neural network
+        private float scoreOrf(Orf orf, Read contigRead) {
+            fillFeatureVector(vec, orf, contigRead);
+            net.applyInput(vec);
+            return net.feedForward();
+        }
+
+        // Brandon - 7/23/25: Method to populate the feature vector for the network
+        private void fillFeatureVector(float[] vec, Orf orf, Read contigRead) {
+            Arrays.fill(vec, 0);
+            int currentPos = 0;
+
+            ContigStats contigStats = this.contigMetrics.get(contigRead.id);
+            byte[] geneSeq = java.util.Arrays.copyOfRange(contigRead.bases, orf.start, orf.stop);
+            if (orf.strand == 1) { AminoAcid.reverseComplementBasesInPlace(geneSeq); }
+
+            // Feature 0: Scaled log length
+            vec[currentPos++] = (float) (Math.log(orf.length()) / 10.0);
+            // Feature 1: Start Score
+            vec[currentPos++] = orf.startScore;
+            // Feature 2: Avg Kmer Score
+            vec[currentPos++] = orf.kmerScore / (orf.length() > 0 ? orf.length() : 1);
+            // Feature 3: Stop Score
+            vec[currentPos++] = orf.stopScore;
+            // Feature 4: Gene GC
+            vec[currentPos++] = CallGenesHelper.gcRatio(geneSeq, 0, geneSeq.length - 1);
+            // Feature 5: Gene Entropy
+            float geneEntropy = entropyTracker.averageEntropy(geneSeq, false);
+            vec[currentPos++] = (float) Math.tanh(Math.log(geneEntropy / (1.0 + 1e-8 - geneEntropy)) / 4.0);
+            // Feature 6: Contig GC
+            vec[currentPos++] = (contigStats != null) ? (float) contigStats.gcRatio() : 0.0f;
+            // Feature 7: Contig Entropy
+            double contigEntropy = (contigStats != null) ? contigStats.entropy() : 0.0;
+            vec[currentPos++] = (float) Math.tanh(Math.log(contigEntropy / (1.0 + 1e-8 - contigEntropy)) / 4.0);
+
+            // One-hot encoded windows
+            int length = orf.length();
+            int mid = (orf.strand == 1) ? orf.start + (length / 2) - (length / 2 % 3) : orf.stop - (length / 2) + (length / 2 % 3);
+            byte[] startWin = CallGenes.extractWindow(contigRead.bases, orf.start, 18, 18);
+            byte[] midWin = CallGenes.extractWindow(contigRead.bases, mid, 6, 6);
+            byte[] stopWin = CallGenes.extractWindow(contigRead.bases, orf.stop, 18, 18);
+
+            if (orf.strand == 1) {
+                AminoAcid.reverseComplementBasesInPlace(startWin);
+                AminoAcid.reverseComplementBasesInPlace(midWin);
+                AminoAcid.reverseComplementBasesInPlace(stopWin);
+            }
+            
+            currentPos = fillOneHot(vec, currentPos, startWin);
+            currentPos = fillOneHot(vec, currentPos, midWin);
+            currentPos = fillOneHot(vec, currentPos, stopWin);
+        }
+
+        // Brandon - 7/23/25: Helper for filling one-hot vectors
+        private int fillOneHot(float[] vec, int pos, byte[] bases) {
+            for (byte b : bases) {
+                char c = (char) b;
+                switch (c) {
+                    case 'A': case 'a': vec[pos] = 1; break;
+                    case 'C': case 'c': vec[pos+1] = 1; break;
+                    case 'G': case 'g': vec[pos+2] = 1; break;
+                    case 'T': case 't': vec[pos+3] = 1; break;
+                    default: break; // Ns are all zero
+                }
+                pos += 4;
+            }
+            return pos;
+        }
 		
 		/**
 		 * Process a read or a read pair.
@@ -1129,6 +1224,9 @@ public class CallGenes extends ProkObject {
 		final int tid;
 		/** Entropy for this thread */
 		final EntropyTracker entropyTracker;
+		/** Neural network for scoring ORFs */
+		private CellNet net;
+        private float[] vec;
 
 		/** Flag to indicate if the header has been written for this thread's output */
 		private boolean headerWritten = false;
@@ -1350,6 +1448,15 @@ public class CallGenes extends ProkObject {
 	private boolean seq = false;
 	private boolean nofilter = false; 	// Brandon: 6/30/25
 
+	//private boolean net = false; // Brandon: 7/23/25
+
+    // Brandon - 7/23/25: Fields for neural network
+    private String netFile = null;
+    private final CellNet net0;
+    private float cutoff = 0.5f;
+    private boolean highpass = true;
+	private FileFormat ffnet;
+
 	private int totalGffRows = 0;
 	private int totalGffGeneRows = 0;
 	private int totalMatches = 0;
@@ -1362,6 +1469,7 @@ public class CallGenes extends ProkObject {
 	private final FileFormat ffoutAmino;
 	private final FileFormat ffout16S;
 	private final FileFormat ffout18S;
+	
 	
 	/** Determines how sequence is processed if it will be output */
 	int mode=TRANSLATE;

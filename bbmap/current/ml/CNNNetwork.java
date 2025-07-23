@@ -18,6 +18,9 @@ public class CNNNetwork {
     /*--------------------------------------------------------------*/
     /*----------------        Initialization        ----------------*/
     /*--------------------------------------------------------------*/
+
+    private float baseLearningRate;
+    private float currentLearningRate;
     
     /**
      * Constructor.
@@ -105,11 +108,13 @@ public class CNNNetwork {
     /*--------------------------------------------------------------*/
 
     public void train(SampleSet trainData, SampleSet valData) {
+        this.baseLearningRate = this.learningRate;
+        
         outstream.println("Starting training for " + epochs + " epochs...");
         outstream.println("Batch size: " + batchSize);
-        outstream.println("Learning rate: " + learningRate);
+        outstream.println("Base learning rate: " + baseLearningRate);
+
         outstream.println();
-        
         // Get sample counts
         int trainSize = trainData.samples.length;
         int valSize = valData.samples.length;
@@ -128,6 +133,10 @@ public class CNNNetwork {
         
         // Training loop
         for(int epoch = 0; epoch < epochs; epoch++) {
+            currentLearningRate = baseLearningRate * (float)Math.pow(0.95, epoch);
+            outstream.println("\n=== Epoch " + (epoch + 1) + "/" + epochs + " ===");
+            outstream.println("Current learning rate: " + String.format("%.6f", currentLearningRate) +  " (base * 0.95^" + epoch + ")");
+
             float epochLoss = 0;
             int epochCorrect = 0;
             int epochTP = 0, epochFP = 0, epochTN = 0, epochFN = 0;
@@ -149,9 +158,46 @@ public class CNNNetwork {
                     // Forward pass
                     float[] output = forward(sample.in);
                     
-                    // Calculate loss
-                    float loss = BinaryCrossEntropyLoss.calculateLoss(
-                        output[0], sample.goal[0]);
+            // Check output for NaN
+                if(Float.isNaN(output[0]) || Float.isInfinite(output[0])) {
+                    outstream.println("\n!!! NaN/Inf OUTPUT !!!");
+                    outstream.println("Epoch: " + (epoch+1) + ", Batch: " + totalBatches);
+                    outstream.println("Sample index: " + i);
+                    outstream.println("Output value: " + output[0]);
+                    outstream.println("Target value: " + sample.goal[0]);
+                    
+                    // Check some input values
+                    outstream.print("Input sample (first 10): [");
+                    for(int j = 0; j < Math.min(10, sample.in.length); j++) {
+                        outstream.print(sample.in[j]);
+                        if(j < 9) outstream.print(", ");
+                    }
+                    outstream.println("...]");
+                    
+                    // Skip this sample
+                    continue;
+                }
+                
+                // Calculate loss
+                float loss = BinaryCrossEntropyLoss.calculateLoss(output[0], sample.goal[0]);
+                
+                // Check loss for NaN
+                if(Float.isNaN(loss) || Float.isInfinite(loss)) {
+                    outstream.println("\n!!! NaN/Inf LOSS !!!");
+                    outstream.println("Epoch: " + (epoch+1) + ", Batch: " + totalBatches);
+                    outstream.println("Sample index: " + i);
+                    outstream.println("Output: " + output[0] + ", Target: " + sample.goal[0]);
+                    outstream.println("Loss calculation breakdown:");
+                    outstream.println("  -[" + sample.goal[0] + " * log(" + output[0] + ") + " + 
+                                    (1-sample.goal[0]) + " * log(" + (1-output[0]) + ")]");
+                    
+                    // Early stopping if this happens in first epoch
+                    if(epoch == 0 && totalBatches < 10) {
+                        outstream.println("Early NaN detected - stopping training!");
+                        return;
+                    }
+                    continue;
+                }
                     batchLoss += loss;
                     epochLoss += loss;
                     
@@ -178,6 +224,14 @@ public class CNNNetwork {
                     // Calculate loss gradient
                     float lossGrad = BinaryCrossEntropyLoss.calculateGradient(
                         output[0], sample.goal[0]);
+
+                    // Check loss gradient for NaN
+                    if(Float.isNaN(lossGrad) || Float.isInfinite(lossGrad)) {
+                        outstream.println("\n!!! NaN/Inf GRADIENT !!!");
+                        outstream.println("Loss gradient: " + lossGrad);
+                        outstream.println("From output: " + output[0] + ", target: " + sample.goal[0]);
+                        continue;
+                    }
                     
                     // Backward pass
                     backward(new float[]{lossGrad});
@@ -207,7 +261,14 @@ public class CNNNetwork {
                     float fpr = epochFP > 0 ? (float)epochFP / (epochFP + epochTN) : 0;
                     float fnr = epochFN > 0 ? (float)epochFN / (epochFN + epochTP) : 0;
                     float avgLoss = epochLoss / samplesProcessed;
-                    
+
+                    // Sanity Check
+                    if(err > 0.9) {
+                        outstream.println("WARNING: Very high error rate: " + err);
+                        outstream.println("  Correct: " + epochCorrect + " / " + samplesProcessed);
+                        outstream.println("  This might indicate a problem!");
+                    }
+                                
                     // Time elapsed
                     long elapsed = System.currentTimeMillis() - startTime;
                     String timeStr = formatTime(elapsed);
@@ -301,7 +362,16 @@ public class CNNNetwork {
         
         // Backward through layers in reverse order
         for(int i = layers.size() - 1; i >= 0; i--) {
-            gradient = layers.get(i).backward(gradient);
+            Layer layer = layers.get(i);
+            gradient = layer.backward(gradient);
+            
+            // ADD: Check for NaN after each layer
+            if(checkForNaN("After " + layer.getClass().getSimpleName() + " backward", gradient)) {
+                outstream.println("Layer index: " + i);
+                outstream.println("Stopping backward pass due to NaN");
+                // You might want to skip weight update for this batch
+                return;
+            }
         }
     }
 
@@ -310,7 +380,7 @@ public class CNNNetwork {
      */
     private void updateWeights() {
         for(Layer layer : layers) {
-            layer.updateWeights(learningRate);
+            layer.updateWeights(currentLearningRate);  // Use current learning rate
         }
     }
 
@@ -375,6 +445,31 @@ public class CNNNetwork {
             e.printStackTrace();
             return null;
         }
+    }
+    
+    // Check for NaN values in a float array
+    private boolean checkForNaN(String location, float[] values) {
+        for(int i = 0; i < values.length; i++) {
+            if(Float.isNaN(values[i]) || Float.isInfinite(values[i])) {
+                outstream.println("\n!!! NaN/Inf DETECTED !!!");
+                outstream.println("Location: " + location);
+                outstream.println("Index: " + i + " of " + values.length);
+                outstream.println("Value: " + values[i]);
+                
+                // Print some surrounding values
+                int start = Math.max(0, i - 2);
+                int end = Math.min(values.length, i + 3);
+                outstream.print("Context values: [");
+                for(int j = start; j < end; j++) {
+                    if(j == i) outstream.print("*" + values[j] + "*");
+                    else outstream.print(values[j]);
+                    if(j < end - 1) outstream.print(", ");
+                }
+                outstream.println("]");
+                return true;
+            }
+        }
+        return false;
     }
 
     /* --------------------------------------------------------------*/
