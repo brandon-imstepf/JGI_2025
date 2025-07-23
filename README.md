@@ -35,7 +35,9 @@ Use the `gff2tsv.sh` script to convert a GFF file and its corresponding FASTA fi
 gff2tsv.sh in=genome.fna.gz gff=known_genes.gff.gz out=training_data.tsv
 
 # Example using the helper script for a folder of genomes
+```bash
 buildtrainingsetfolder.sh in=genomes/ out=training_set.tsv
+```
 
 ### Step 2: Train a Network
 
