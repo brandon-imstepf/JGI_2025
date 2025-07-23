@@ -32,7 +32,9 @@ Use the `gff2tsv.sh` script to convert a GFF file and its corresponding FASTA fi
 
 
 # Example for a single genome
+```bash
 gff2tsv.sh in=genome.fna.gz gff=known_genes.gff.gz out=training_data.tsv
+```
 
 # Example using the helper script for a folder of genomes
 ```bash
@@ -44,8 +46,9 @@ buildtrainingsetfolder.sh in=genomes/ out=training_set.tsv
 You can use the generated `.tsv` file to train a model. This fork provides a built-in CNN trainer.
 
 # Train the custom Java CNN
+```bash
 cnntrain.sh in=training_set.tsv out=my_model.bbnet epochs=10
-
+```
 ### Step 3: Run Inference with CallGenes
 
 Use the modified `callgenes.sh` with a trained model (`.bbnet` file) to predict genes on a new genome.
