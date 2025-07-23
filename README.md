@@ -17,11 +17,13 @@ The primary additions are:
 ---
 ## Setup
 
-This project is built using the standard BBTools compilation process. From the main `bbmap/` directory, run:
+This project is built using the standard BBTools files From the main `bbmap/` directory, run:
 
 ```bash
 ./compile.sh
 ```
+If you ever add more files to any of the directories, add them to `sources.txt` as `compile.sh` grabs the files to build from there.
+
 ## Example Workflow
 
 The process involves three main steps: generating a training set, training a model, and running inference.
