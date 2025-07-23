@@ -870,76 +870,68 @@ public class CallGenes extends ProkObject {
 	 * It is safe to remove the static modifier. */
 	private class ProcessThread extends Thread {
 
-		final Map<String, ContigStats> contigMetrics; // Brandon 6/24/25
-		final boolean nofilter; // Brandon 6/30/25
-		
-		//Constructor
-		ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
-				ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
-				GeneModel pgm_, final int minLen, final int tid_,
-				final Map<String, ContigStats> contigMetrics_,
-				final boolean nofilter_){
-			cris=cris_;
-			bsw=bsw_;
-			rosAmino=rosAmino_;
-			ros16S=ros16S_;
-			ros18S=ros18S_;
-			pgm=pgm_;
-			tid=tid_;
-			geneHistT=(geneHistBins>1 ? new long[geneHistBins] : null);
-			caller=new GeneCaller(minLen, maxOverlapSameStrand, maxOverlapOppositeStrand, 
-					minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
-			// Brandon: add Entropy Tracker for new feature!
-			this.entropyTracker = new EntropyTracker(5,50,false); // k=5, window=50, isAmino=false
-			this.contigMetrics = contigMetrics_; // Hash table mapping contig names to their stats
-			this.nofilter = nofilter_; 
-			
-		}
-		
-		//Called by start()
-		@Override
-		public void run(){
-			//Do anything necessary prior to processing
-			    if(net0 != null){ // Branond: Make network available to threads
-					net = net0.copy(false);
-				}
-			
-			//Process the reads
-			processInner();
-			
-			//Do anything necessary after processing
-			
-			//Indicate successful exit status
-			success=true;
-		}
-		
-		/** Iterate through the reads */
-		void processInner(){
-			
-			//Grab the first ListNum of reads
-			ListNum<Read> ln=cris.nextList();
+        final Map<String, ContigStats> contigMetrics;
+        final boolean nofilter;
+        // FIXED: Declare thread-local network and feature vector fields
+        private CellNet net;
+        private float[] vec;
+        
+        //Constructor
+        ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
+                ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
+                GeneModel pgm_, final int minLen, final int tid_,
+                final Map<String, ContigStats> contigMetrics_,
+                final boolean nofilter_){
+            cris=cris_;
+            bsw=bsw_;
+            rosAmino=rosAmino_;
+            ros16S=ros16S_;
+            ros18S=ros18S_;
+            pgm=pgm_;
+            tid=tid_;
+            geneHistT=(geneHistBins>1 ? new long[geneHistBins] : null);
+            caller=new GeneCaller(minLen, maxOverlapSameStrand, maxOverlapOppositeStrand, 
+                    minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
+            this.entropyTracker = new EntropyTracker(5,50,false);
+            this.contigMetrics = contigMetrics_;
+            this.nofilter = nofilter_; 
+        }
+        
+        //Called by start()
+        @Override
+        public void run(){
+            // FIXED: This block initializes the network and vector for each thread.
+            // It MUST be present and run before processInner().
+            if (net0 != null) {
+                net = net0.copy(false);
+                vec = new float[net.numInputs()];
+            }
+            
+            //Process the reads
+            processInner();
+            
+            //Indicate successful exit status
+            success=true;
+        }
+        
+        /** Iterate through the reads */
+        void processInner(){
+            
+            //Grab the first ListNum of reads
+            ListNum<Read> ln=cris.nextList();
 
-			//Check to ensure pairing is as expected
-			if(ln!=null && !ln.isEmpty()){
-				Read r=ln.get(0);
-//				assert(ffin1.samOrBam() || (r.mate!=null)==cris.paired()); //Disabled due to non-static access
-			}
+            //As long as there is a nonempty read list...
+            while(ln!=null && ln.size()>0){
+                processList(ln);
+                //Fetch a new list
+                ln=cris.nextList();
+            }
 
-			//As long as there is a nonempty read list...
-			while(ln!=null && ln.size()>0){
-//				if(verbose){outstream.println("Fetched "+reads.size()+" reads.");} //Disabled due to non-static access
-				
-				processList(ln);
-
-				//Fetch a new list
-				ln=cris.nextList();
-			}
-
-			//Notify the input stream that the final list was used
-			if(ln!=null){
-				cris.returnList(ln.id, ln.list==null || ln.list.isEmpty());
-			}
-		}
+            //Notify the input stream that the final list was used
+            if(ln!=null){
+                cris.returnList(ln.id, ln.list==null || ln.list.isEmpty());
+            }
+        }
 		
 		// Brandon: 6/24/25
 		/** Updated processList to handle CallGenesHelper.java */
@@ -1224,9 +1216,6 @@ public class CallGenes extends ProkObject {
 		final int tid;
 		/** Entropy for this thread */
 		final EntropyTracker entropyTracker;
-		/** Neural network for scoring ORFs */
-		private CellNet net;
-        private float[] vec;
 
 		/** Flag to indicate if the header has been written for this thread's output */
 		private boolean headerWritten = false;
