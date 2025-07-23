@@ -619,8 +619,16 @@
 ./bbmap/current/ml/Swish.java
 ./bbmap/current/ml/Tanh.java
 ./bbmap/current/ml/Trainer.java
+./bbmap/current/ml/CNNTrainer.java
+./bbmap/current/ml/CNNNetwork.java
+./bbmap/current/ml/Layer.java
+./bbmap/current/ml/ConvolutionLayer.java
+./bbmap/current/ml/MaxPoolingLayer.java
+./bbmap/current/ml/DenseLayer.java
+./bbmap/current/ml/OutputLayer.java
 ./bbmap/current/ml/TrainerThread.java
 ./bbmap/current/ml/WorkerThread.java
+./bbmap/current/ml/BinaryCrossEntropyLoss.java
 ./bbmap/current/pacbio/CalcCoverageFromSites.java
 ./bbmap/current/pacbio/GenerateMultiChrom.java
 ./bbmap/current/pacbio/MakePacBioScript.java
@@ -639,6 +647,9 @@
 ./bbmap/current/prok/AnalyzeGenes.java
 ./bbmap/current/prok/CallGenes.java
 ./bbmap/current/prok/CallGenes_original.java
+./bbmap/current/prok/CallGenesHelper.java
+./bbmap/current/prok/GffSetOperator.java
+./bbmap/current/prok/GffToTsv.java
 ./bbmap/current/prok/FetchProks.java
 ./bbmap/current/prok/FilterSilva.java
 ./bbmap/current/prok/FrameStats.java
