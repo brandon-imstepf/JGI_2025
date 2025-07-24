@@ -29,11 +29,7 @@ public class BinaryCrossEntropyLoss {
      * @return The gradient
      */
     public static float calculateGradient(float prediction, float target) {
-        // Clip to avoid division by zero
-        float epsilon = 1e-7f;
-        float clippedPred = Math.max(epsilon, Math.min(1.0f - epsilon, prediction));
-        
-        // Gradient: (p - y) / (p * (1 - p))
-        return (clippedPred - target) / (clippedPred * (1 - clippedPred));
+        // When combined with sigmoid, the gradient simplifies to:
+        return prediction - target;
     }
 }

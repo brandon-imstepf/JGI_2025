@@ -3,15 +3,10 @@
 usage(){
 echo "
 Written by Brandon Imstepf, inspired by Brian Bushnell's scripts.
-Last modified June 24, 2025
+Last modified July 23, 2025
 
 Description: 
 Processes a folder of FASTA files to generate gene-call data.
-It can operate in two modes depending on whether the 'ml' flag is passed.
-- GFF Mode (default): Creates an annotated GFF file for each input FASTA,
-  then concatenates them into a single GFF output file.
-- ML Mode ('ml' flag): Creates a feature vector file for each input,
-  then concatenates them into a single TSV output file.
 
 Usage:   callgenesfolder.sh in=<folder> out=<outfile> [options]
 
@@ -21,16 +16,13 @@ in=<folder>     Input folder containing .fna.gz files.
 out=<outfile>   Final, combined output file (.gff or .tsv).
 
 Common Pass-through Options (for prok.CallGenes):
-ml              Activates Machine Learning mode, outputting a feature vector TSV.
 cds             Call protein-coding genes.
 truegenes=      Specify a reference GFF for labeling training data.
                 Note: this script automatically finds the matching GFF for each FASTA.
 
-Example (GFF Mode):
+Example:
 callgenesfolder.sh in=./genomes out=all_annotations.gff cds
 
-Example (ML Mode):
-callgenesfolder.sh in=./genomes out=all_vectors.tsv ml cds
 "
 }
 
@@ -94,15 +86,6 @@ fi
 
 # --- Main Logic ---
 
-# Check if 'ml' is in the pass-through arguments to determine the mode
-ML_MODE=0
-for arg in "${PASSTHRU_ARGS[@]}"; do
-    if [[ "$arg" == "ml" ]]; then
-        ML_MODE=1
-        break
-    fi
-done
-
 TMPDIR=$(mktemp -d)
 echo "Temporary directory: $TMPDIR"
 
@@ -121,13 +104,8 @@ for fna in "$INFOLDER"/*.fna.gz; do
         CMD_ARGS+=("truegenes=$gff")
     fi
 
-    if [[ $ML_MODE -eq 1 ]]; then
-        echo "Processing (ML Mode): $base"
-        CMD_ARGS+=("outvector=$TEMP_OUT")
-    else
-        echo "Processing (GFF Mode): $base"
-        CMD_ARGS+=("outgff=$TEMP_OUT")
-    fi
+    echo "Processing: $base"
+    CMD_ARGS+=("outgff=$TEMP_OUT")
     
     # Run the Java application with the combined arguments
     java $EA $EOOM $z $z2 -cp $CP prok.CallGenes "${CMD_ARGS[@]}" "${PASSTHRU_ARGS[@]}"

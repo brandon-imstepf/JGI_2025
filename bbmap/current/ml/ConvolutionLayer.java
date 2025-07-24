@@ -72,6 +72,11 @@ public class ConvolutionLayer extends Layer {
     
     @Override
     public float[] backward(float[] gradientIn) {
+        // Clip incoming gradients to prevent explosion
+        for(int i = 0; i < gradientIn.length; i++) {
+            gradientIn[i] = Math.max(-5.0f, Math.min(5.0f, gradientIn[i]));
+        }
+            
         // Initialize gradient for input
         float[] gradientOut = new float[inputChannels * inputLength];
         
