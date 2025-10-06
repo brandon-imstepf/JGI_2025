@@ -3,9 +3,9 @@
 #SBATCH -q jgi_normal
 #SBATCH -t 48:00:00            # Time
 #SBATCH --exclusive
-#SBATCH --output=cnntrain_filters=32,64,128_dense=256,128_epochs=10.log
-#SBATCH --error=cnntrain_filters=32,64,128_dense=256,128_epochs=10.err
-#SBATCH --job-name=cnntrain_filters=32,64,128_dense=256,128_epochs=10
+#SBATCH --output=cnntrain_filters-32-64-128_dense-256-128_epochs-10_7-23.log
+#SBATCH --error=cnntrain_filters-32-64-128_dense-256-128_epochs-10_7-23.err
+#SBATCH --job-name=cnntrain_filters-32-64-128_dense-256-128_epochs-10
 
 echo "Starting CNN training at $(date)"
 

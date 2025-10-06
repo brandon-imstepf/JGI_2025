@@ -30,7 +30,7 @@ public class GeneCaller extends ProkObject {
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	GeneCaller(int minLen_, int maxOverlapSameStrand_, int maxOverlapOppositeStrand_, 
+	GeneCaller(int minLen_, int maxOverlapSameStrand_, int maxOverlapOppositeStrand_,
 			float minStartScore_, float minStopScore_, float minInnerScore_,
 			float minOrfScore_, float minAvgScore_, GeneModel pgm_){
 		minLen=minLen_;
@@ -44,6 +44,24 @@ public class GeneCaller extends ProkObject {
 		minOrfScore=minOrfScore_;
 		minAvgScore=minAvgScore_;
 		assert(pgm!=null);
+	}
+	
+	// Neural network helper for score modification
+	private CallGenesHelper helper = null;
+	private Read currentContigRead = null;
+	
+	/**
+	 * Set the helper for neural network operations
+	 */
+	public void setHelper(CallGenesHelper helper) {
+		this.helper = helper;
+	}
+	
+	/**
+	 * Set the current contig read for neural network context
+	 */
+	public void setCurrentContigRead(Read contigRead) {
+		this.currentContigRead = contigRead;
 	}
 
 	// Brandon: Add a new field to the GeneCCaller class to control its behavior:
@@ -401,6 +419,11 @@ public class GeneCaller extends ProkObject {
 			if(orf.isValidPrev(prev, maxOverlap)){
 				int overlap=Tools.max(0, prev.stop-orf.start+1);
 				float orfScore=overlap==0 ? orf.orfScore : orf.calcOrfScore(overlap);
+				// Brandon Notes: Neural network integration
+				// If neural network is available, modify the ORF score using neural network prediction
+				if (helper != null && helper.hasNeuralNetwork() && currentContigRead != null && orf.type == CDS) {
+					orfScore = helper.modifyOrfScoreWithNeuralNetwork(orfScore, orf, currentContigRead);
+				}
 				
 				final float prevScore=prev.pathScore();
 				final int prevLength=prev.pathLength();
@@ -462,6 +485,10 @@ public class GeneCaller extends ProkObject {
 			if(orf.isValidPrev(prev, maxOverlap)){
 				int overlap=Tools.max(0, prev.stop-orf.start+1);
 				float orfScore=overlap==0 ? orf.orfScore : orf.calcOrfScore(overlap);
+				// Brandon Notes: Neural network integration for minus strand
+				if (helper != null && helper.hasNeuralNetwork() && currentContigRead != null && orf.type == CDS) {
+					orfScore = helper.modifyOrfScoreWithNeuralNetwork(orfScore, orf, currentContigRead);
+				}
 				
 				final float prevScore=prev.pathScore();
 				final int prevLength=prev.pathLength();

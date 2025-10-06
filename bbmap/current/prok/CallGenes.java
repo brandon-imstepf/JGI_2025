@@ -1,22 +1,9 @@
 package prok;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.File;
 import java.io.PrintStream;
-import java.io.InputStreamReader;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.zip.GZIPInputStream;
-
 
 import dna.AminoAcid;
 import dna.Data;
@@ -40,13 +27,18 @@ import stream.Read;
 import stream.ReadInputStream;
 import structures.ByteBuilder;
 import structures.ListNum;
-import tracker.ReadStats;
 import tracker.EntropyTracker;
+import tracker.ReadStats;
+import java.io.IOException;
+import java.util.Map;
+import java.util.HashSet;
 import ml.CellNet;
 import ml.CellNetParser;
+
+// HELPER HOOK: Import the helper class
+import prok.CallGenesHelper;
 import prok.CallGenesHelper.ContigStats;
 import prok.CallGenesHelper.GeneQuad;
-import prok.CallGenesHelper.TrueGeneData;
 
 /**
  * This is the executable class for gene-calling.
@@ -55,187 +47,176 @@ import prok.CallGenesHelper.TrueGeneData;
  *
  */
 public class CallGenes extends ProkObject {
-	
-	/*--------------------------------------------------------------*/
-	/*----------------        Initialization        ----------------*/
-	/*--------------------------------------------------------------*/
-	
-	/**
-	 * Code entrance from the command line.
-	 * @param args Command line arguments
-	 */
-	public static void main(String[] args){
-		//Start a timer immediately upon code entrance.
-		Timer t=new Timer();
-		
-		//Create an instance of this class
-		CallGenes x=new CallGenes(args);
-		
-		//Run the object
-		x.process(t);
-		
-		//Close the print stream if it was redirected
-		Shared.closeStream(x.outstream);
-	}
-	
-	/**
-	 * Constructor.
-	 * @param args Command line arguments
-	 */
-	public CallGenes(String[] args){
-		
-		{//Preparse block for help, config files, and outstream
-			PreParser pp=new PreParser(args, (args.length>40 ? null : getClass()), false);
-			args=pp.args;
-			outstream=pp.outstream;
-		}
-		
-		//Set shared static variables prior to parsing
-		ReadWrite.USE_PIGZ=ReadWrite.USE_UNPIGZ=true;
-		ReadWrite.setZipThreads(Shared.threads());
-		
-		{//Parse the arguments
-			final Parser parser=parse(args);
-			overwrite=parser.overwrite;
-			append=parser.append;
-			
-			//outGff=parser.out1; // Possibly corrupting outGff with null
-			maxReads=parser.maxReads;
-		}
-		
-		fixExtensions(); //Add or remove .gz or .bz2 as needed
-		checkFileExistence(); //Ensure files can be read and written
-		checkStatics(); //Adjust file-related static fields as needed for this program
-		
-		ffoutGff=FileFormat.testOutput(outGff, FileFormat.GFF, null, true, overwrite, append, ordered);
-		ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
-		ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
-		ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
-		ffnet = FileFormat.testOutput(netFile, FileFormat.BBNET, null, true, true, false, false); // Brandon: netFile is for CellNetParser
-		
-		if(ffoutGff!=null){
-			assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
-		}
-		if(ffoutAmino!=null){
-			assert(!ffoutAmino.gff()) : "\nouta is for sequence data.  To output gff, please use out.";
-		}
-		if(ffout16S!=null){
-			assert(!ffout16S.gff()) : "\nout16S is for sequence data.  To output gff, please use out.";
-		}
-		if(ffout18S!=null){
-			assert(!ffout18S.gff()) : "\nout18S is for sequence data.  To output gff, please use out.";
-		}
-		
-		if(geneHistFile==null){geneHistBins=0;}
-		else{
-			assert(geneHistBins>1) : "geneHistBins="+geneHistBins+"; should be >1";
-			assert(geneHistDiv>=1) : "geneHistDiv="+geneHistDiv+"; should be >=1";
-		}
-		geneHist=geneHistBins>1 ? new long[geneHistBins] : null;
+    
+    /*--------------------------------------------------------------*/
+    /*----------------        Initialization        ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    /**
+     * Code entrance from the command line.
+     * @param args Command line arguments
+     */
+    public static void main(String[] args){
+        Timer t=new Timer();
+        CallGenes x=new CallGenes(args);
+        x.process(t);
+        Shared.closeStream(x.outstream);
+    }
+    
+    /**
+     * Constructor.
+     * @param args Command line arguments
+     */
+    public CallGenes(String[] args){
+        
+        {//Preparse block for help, config files, and outstream
+            PreParser pp=new PreParser(args, (args.length>40 ? null : getClass()), false);
+            args=pp.args;
+            outstream=pp.outstream;
+        }
+        
+        // HELPER HOOK: Instantiate the helper
+        helper = new CallGenesHelper();
 
-		if(netFile != null){ // Brandon: Load the network file if specified
-			net0 = CellNetParser.load(netFile);
-			assert(net0 != null) : netFile;
-		} else {
-			net0 = null;
-		}
-	}
-	
-	/*--------------------------------------------------------------*/
-	/*----------------    Initialization Helpers    ----------------*/
-	/*--------------------------------------------------------------*/
-	
-	/** Parse arguments from the command line */
-	private Parser parse(String[] args){
-		
-		Parser parser=new Parser();
-		for(int i=0; i<args.length; i++){
-			String arg=args[i];
-			String[] split=arg.split("=");
-			String a=split[0].toLowerCase();
-			String b=split.length>1 ? split[1] : null;
-			if(b!=null && b.equalsIgnoreCase("null")){b=null;}
+        ReadWrite.USE_PIGZ=ReadWrite.USE_UNPIGZ=true;
+        ReadWrite.setZipThreads(Shared.threads());
+        
+        {//Parse the arguments
+            final Parser parser=parse(args);
+			// Brandon 9-15 Assertion
+			assert(outGff != null) : "DIAGNOSTIC: outGff not set. Full args: " + Arrays.toString(args) + 
+    		" | Parsed outGff value: " + outGff;
+            overwrite=parser.overwrite;
+            append=parser.append;
 
-//			outstream.println(arg+", "+a+", "+b);
-			if(PGMTools.parseStatic(arg, a, b)){
-				//do nothing
-			}else if(a.equals("in") || a.equals("infna") || 
-					a.equals("fnain") || a.equals("fna") || a.equals("ref")){
-				assert(b!=null);
-				Tools.addFiles(b, fnaList);
-			}else if(b==null && new File(arg).exists() && FileFormat.isFastaFile(arg)){
-				fnaList.add(arg);
-			}else if(a.equals("pgm") || a.equals("gm") || a.equals("model")){
-				assert(b!=null);
-				if(b.equalsIgnoreCase("auto") || b.equalsIgnoreCase("default")){
-					b=Data.findPath("?model.pgm");
-					pgmList.add(b);
-				}else{
-					Tools.addFiles(b, pgmList);
-				}
-			}else if(b==null && new File(arg).exists() && FileFormat.isPgmFile(arg)){
-				pgmList.add(b);
-			}else if(a.equals("outamino") || a.equals("aminoout") || a.equals("outa") || a.equals("outaa") || a.equals("aaout") || a.equals("amino")){
-				outAmino=b;
-			}else if(a.equalsIgnoreCase("out16s") || a.equalsIgnoreCase("16sout")){
-				out16S=b;
-			}else if(a.equalsIgnoreCase("out18s") || a.equalsIgnoreCase("18sout")){
-				out18S=b;
+			if (outGff == null) {
+				outGff=parser.out1;
 			}
-			else if(a.equals("truegenes")){  // Brandon: truegenes is the file containing true gene annotations
-				trueGenesFile = b;
-				try {
-					// Call the new helper method and unpack the results
-					TrueGeneData data = CallGenesHelper.loadTrueGeneSet(trueGenesFile);
-					this.trueGeneSet = data.set();
-					this.totalGffRows = data.totalRows();
-					this.totalGffGeneRows = data.geneRows();
-				} catch (IOException e) {
-					System.err.println("CRITICAL ERROR: Failed to load true genes file: " + trueGenesFile);
-					e.printStackTrace();
-				}
-			}
-			else if(arg.equalsIgnoreCase("nofilter")){ // Brandon: arg for no filtering of candidates
-    			nofilter = true;
-			}else if(a.equals("net")){ // Brandon: arg for network input
-				netFile = b;
-			}else if (arg.equalsIgnoreCase("seq")) { // Brandon: seq is to output the sequence of the gene, rather than one-hot
-				seq = true;
-			}
-			else if(a.equals("outgff") || a.equals("gffout") || a.equals("outg") || a.equals("gff")){
-				outGff=b;
-			}
-			else if(a.equals("verbose")){
-				verbose=Parse.parseBoolean(b);
-				//ReadWrite.verbose=verbose;
-				GeneCaller.verbose=verbose;
-			}else if(a.equalsIgnoreCase("ingff") || a.equalsIgnoreCase("gffin")){
-				Tools.addFiles(b, inGffList);
-			}
-			
-			else if(a.equals("json_out") || a.equalsIgnoreCase("json")){
-				json_out=Parse.parseBoolean(b);
-			}else if(a.equals("stats") || a.equalsIgnoreCase("outstats")){
-				outStats=b;
-			}else if(a.equals("hist") || a.equalsIgnoreCase("outhist") || a.equalsIgnoreCase("lengthhist") || a.equalsIgnoreCase("lhist") || a.equalsIgnoreCase("genehist")){
-				geneHistFile=b;
-			}else if(a.equals("bins")){
-				geneHistBins=Integer.parseInt(b);
-			}else if(a.equals("binlen") || a.equals("binlength") || a.equalsIgnoreCase("histdiv")){
-				geneHistDiv=Integer.parseInt(b);
-			}else if(a.equals("printzero") || a.equals("pz")){
-				printZeroCountHist=Parse.parseBoolean(b);
-			}
-			
-			else if(a.equals("merge")){
-				merge=Parse.parseBoolean(b);
-			}else if(a.equals("ecco")){
-				ecco=Parse.parseBoolean(b);
-			}else if(a.equals("2pass") || a.equals("twopass")){
-				if(Parse.parseBoolean(b)) {passes=2;}
-			}else if(a.equals("passes")){
-				passes=Integer.parseInt(b);
-			}
+            
+            maxReads=parser.maxReads;
+			// Brandon 9-15 Assertion
+			assert(outGff != null) : "outGff was not set during argument parsing. Parsed args: " + Arrays.toString(args);
+        }
+		// Brandon 9-15 Assertion
+        assert(outGff != null) : "outGff null after parsing. Args: " + Arrays.toString(args);
+        
+		fixExtensions();
+
+		// Brandon 9-15 Assertion
+		assert(outGff != null) : "outGff null after fixExtensions";
+
+        checkFileExistence();
+        checkStatics();
+        
+        ffoutGff=FileFormat.testOutput(outGff, FileFormat.GFF, null, true, overwrite, append, ordered);
+        ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
+        ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
+        ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
+        ffoutScore=FileFormat.testOutput(outScore, FileFormat.TEXT, null, true, overwrite, append, ordered);
+       // Brandon 9-15 Assertion
+  assert(ffoutGff != null) : "ffoutGff null. outGff=" + outGff + " overwrite=" + overwrite + " append=" + append;
+
+        
+        if(ffoutGff!=null){
+            assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
+        }
+        if(ffoutAmino!=null){
+            assert(!ffoutAmino.gff()) : "\nouta is for sequence data.  To output gff, please use out.";
+        }
+        if(ffout16S!=null){
+            assert(!ffout16S.gff()) : "\nout16S is for sequence data.  To output gff, please use out.";
+        }
+        if(ffout18S!=null){
+            assert(!ffout18S.gff()) : "\nout18S is for sequence data.  To output gff, please use out.";
+        }
+        
+        if(geneHistFile==null){geneHistBins=0;}
+        else{
+            assert(geneHistBins>1) : "geneHistBins="+geneHistBins+"; should be >1";
+            assert(geneHistDiv>=1) : "geneHistDiv="+geneHistDiv+"; should be >=1";
+        }
+        geneHist=geneHistBins>1 ? new long[geneHistBins] : null;
+
+        // HELPER HOOK: Initialize the helper with parsed arguments and files
+        helper.initialize(fnaList, outstream, outGff, compareToGff);
+    }
+    
+    /*--------------------------------------------------------------*/
+    /*----------------    Initialization Helpers    ----------------*/
+    /*--------------------------------------------------------------*/
+    
+    /** Parse arguments from the command line */
+    private Parser parse(String[] args){
+        
+        Parser parser=new Parser();
+        for(int i=0; i<args.length; i++){
+            String arg=args[i];
+            String[] split=arg.split("=");
+            String a=split[0].toLowerCase();
+            String b=split.length>1 ? split[1] : null;
+            if(b!=null && b.equalsIgnoreCase("null")){b=null;}
+
+            if(PGMTools.parseStatic(arg, a, b)){
+                //do nothing
+            } // HELPER HOOK: Pass arguments to the helper for parsing.
+              else if (helper.parse(arg, a, b)) {
+                // do nothing, helper handled it
+              } else if(a.equals("in") || a.equals("infna") || 
+                    a.equals("fnain") || a.equals("fna") || a.equals("ref")){
+                assert(b!=null);
+                Tools.addFiles(b, fnaList);
+            }else if(b==null && new File(arg).exists() && FileFormat.isFastaFile(arg)){
+                fnaList.add(arg);
+            }else if(a.equals("pgm") || a.equals("gm") || a.equals("model")){
+                assert(b!=null);
+                if(b.equalsIgnoreCase("auto") || b.equalsIgnoreCase("default")){
+                    b=Data.findPath("?model.pgm");
+                    pgmList.add(b);
+                }else{
+                    Tools.addFiles(b, pgmList);
+                }
+            }else if(b==null && new File(arg).exists() && FileFormat.isPgmFile(arg)){
+                pgmList.add(b);
+            }else if(a.equals("outamino") || a.equals("aminoout") || a.equals("outa") || a.equals("outaa") || a.equals("aaout") || a.equals("amino")){
+                outAmino=b;
+            }else if(a.equalsIgnoreCase("out16s") || a.equalsIgnoreCase("16sout")){
+                out16S=b;
+            }else if(a.equalsIgnoreCase("out18s") || a.equalsIgnoreCase("18sout")){
+                out18S=b;
+            }else if(a.equals("verbose")){
+                verbose=Parse.parseBoolean(b);
+                GeneCaller.verbose=verbose;
+            }else if(a.equalsIgnoreCase("ingff") || a.equalsIgnoreCase("gffin")){
+                Tools.addFiles(b, inGffList);
+            }else if(a.equals("outgff") || a.equals("gffout") || a.equals("gff")){
+    outGff = b;
+   }else if(a.equals("outscore") || a.equals("scoreout")){
+                outScore=b;
+            }
+            
+            else if(a.equals("json_out") || a.equalsIgnoreCase("json")){
+                json_out=Parse.parseBoolean(b);
+            }else if(a.equals("stats") || a.equalsIgnoreCase("outstats")){
+                outStats=b;
+            }else if(a.equals("hist") || a.equalsIgnoreCase("outhist") || a.equalsIgnoreCase("lengthhist") || a.equalsIgnoreCase("lhist") || a.equalsIgnoreCase("genehist")){
+                geneHistFile=b;
+            }else if(a.equals("bins")){
+                geneHistBins=Integer.parseInt(b);
+            }else if(a.equals("binlen") || a.equals("binlength") || a.equalsIgnoreCase("histdiv")){
+                geneHistDiv=Integer.parseInt(b);
+            }else if(a.equals("printzero") || a.equals("pz")){
+                printZeroCountHist=Parse.parseBoolean(b);
+            }
+            
+            else if(a.equals("merge")){
+                merge=Parse.parseBoolean(b);
+            }else if(a.equals("ecco")){
+                ecco=Parse.parseBoolean(b);
+            }else if(a.equals("2pass") || a.equals("twopass")){
+                if(Parse.parseBoolean(b)) {passes=2;}
+            }else if(a.equals("passes")){
+                passes=Integer.parseInt(b);
+            }
 
 			else if(a.equals("extended") || a.equals("extendedstats") || a.equals("verbosestats")){
 				extendedStats=Parse.parseBoolean(b);
@@ -333,9 +314,7 @@ public class CallGenes extends ProkObject {
 				GeneCaller.lookbackMinus=Integer.parseInt(b);
 			}
 			
-			else if(a.equalsIgnoreCase("compareto")){
-				compareToGff=b;
-			}
+			// Neural Network Parameters are handled by CallGenesHelper
 			
 			else if(ProkObject.parse(arg, a, b)){}
 			
@@ -375,10 +354,10 @@ public class CallGenes extends ProkObject {
 	/** Ensure files can be read and written */
 	private void checkFileExistence(){
 		//Ensure output files can be written
-		if(!Tools.testOutputFiles(overwrite, append, false, outGff, outAmino, out16S, out18S, outStats, geneHistFile)){
+		if(!Tools.testOutputFiles(overwrite, append, false, outGff, outAmino, out16S, out18S, outStats, geneHistFile, outScore)){
 			outstream.println((outGff==null)+", "+outGff);
 			throw new RuntimeException("\n\noverwrite="+overwrite+"; Can't write to output files "
-					+outGff+", "+outAmino+", "+out16S+", "+out18S+", "+outStats+", "+geneHistFile+"\n");
+					+outGff+", "+outAmino+", "+out16S+", "+out18S+", "+outStats+", "+geneHistFile+", "+outScore+"\n");
 		}
 		
 		//Ensure input files can be read
@@ -396,6 +375,7 @@ public class CallGenes extends ProkObject {
 		foo.add(out18S);
 		foo.add(outStats);
 		foo.add(geneHistFile);
+		      foo.add(outScore);
 		if(!Tools.testForDuplicateFiles(true, foo.toArray(new String[0]))){
 			throw new RuntimeException("\nSome file names were specified multiple times.\n");
 		}
@@ -415,126 +395,81 @@ public class CallGenes extends ProkObject {
 	
 	/** Create read streams and process all data */
 	void process(Timer t){
+	       
+	       // Neural network loading is handled in CallGenesHelper.initialize()
+	       
+	       final GeneModel pgm0=PGMTools.loadAndMerge(pgmList);
+	       
+	       if(call16S || call18S || call23S || calltRNA || call5S){
+	           loadLongKmers();
+	           loadConsensusSequenceFromFile(false, false);
+	       }
+        
+        ByteStreamWriter bswGff=makeBSW(ffoutGff);
+  // Brandon 9-18 Assertion
+  // This catches the case where 'out=' is not specified on the command line.
+  assert(bswGff != null) : "FATAL: Output stream is null. Specify an output file with 'out=<filename>' or 'out=stdout'.";
+    
+        if(bswGff!=null){
+            bswGff.forcePrint("##gff-version 3\n");
+        }
 
+        ByteStreamWriter bswScore=makeBSW(ffoutScore);
+        if(bswScore!=null){
+            bswScore.forcePrint("ORF_ID,Original_Score,Modified_Score\n");
+        }
 
-		try {
-        // We assume the first FNA file is the reference for all contigs.
-        // This is a typical use case.
-			if (fnaList != null && !fnaList.isEmpty()) {
-				String fastaFile = fnaList.get(0);
-				System.err.println("Reading FASTA file: " + fastaFile);
-				Map<String, String> contigSequences = CallGenesHelper.readFastaFile(fastaFile);
-				this.contigMetrics = CallGenesHelper.calculateContigMetrics(contigSequences);
-			}
-			} catch (IOException e) {
-				System.err.println("Error: Failed to read or process the FASTA file for contig metrics.");
-				e.printStackTrace();
-				// We can choose to exit or continue without the contig-level stats.
-				// For now, we'll just print the error and continue.
-				this.contigMetrics = new HashMap<>(); // Ensure it's not null
-		}
-			// Debugging output for contig IDs
-		    /*System.err.println("--- Contig IDs found in FASTA map ---");
-			if(this.contigMetrics != null) {
-				for (String key : this.contigMetrics.keySet()) {
-					System.err.println("MAP KEY: '" + key + "'");
-				}
-			}
-			System.err.println("------------------------------------");
-			*/
-		final GeneModel pgm0=PGMTools.loadAndMerge(pgmList);
-		
-		if(call16S || call18S || call23S || calltRNA || call5S){
-			loadLongKmers();
-			loadConsensusSequenceFromFile(false, false);
-		}
-		
-		ByteStreamWriter bsw=makeBSW(ffoutGff);
-		if(bsw!=null){
-			bsw.forcePrint("##gff-version 3\n");
-		}
+        ConcurrentReadOutputStream rosAmino=makeCros(ffoutAmino);
+        ConcurrentReadOutputStream ros16S=makeCros(ffout16S);
+        ConcurrentReadOutputStream ros18S=makeCros(ffout18S);
+        
+        final boolean vic=Read.VALIDATE_IN_CONSTRUCTOR;
+        Read.VALIDATE_IN_CONSTRUCTOR=Shared.threads()<4;
+        
+        readsIn=genesOut=0;
+        basesIn=bytesOut=0;
+        
+        for(int fnum=0; fnum<fnaList.size(); fnum++){
+            final String fna=fnaList.get(fnum);
+            String gffIn=(inGffList!=null && !inGffList.isEmpty()) ? inGffList.set(fnum, null) : null;
+            final GeneModel pgm=makeMultipassModel(pgm0, fna, gffIn, passes);
+            final ConcurrentReadInputStream cris=makeCris(fna);
+            spawnThreads(cris, bswGff, bswScore, rosAmino, ros16S, ros18S, pgm);
+            errorState|=ReadWrite.closeStream(cris);
+        }
+        
+        errorState|=ReadWrite.closeStreams(null, rosAmino, ros16S, ros18S);
+        if(verbose){outstream.println("Finished; closing streams.");}
+        errorState|=ReadStats.writeAll();
+        if(bswGff!=null){errorState|=bswGff.poisonAndWait();}
+        if(bswScore!=null){errorState|=bswScore.poisonAndWait();}
+        
+        Read.VALIDATE_IN_CONSTRUCTOR=vic;
+        t.stop();
+        outstream.println(Tools.timeReadsBasesProcessed(t, readsIn, basesIn, 8));
+        outstream.println(Tools.linesBytesOut(readsIn, basesIn, genesOut, bytesOut, 8, false));
+        outstream.println();
+        
+        if(json_out){
+            printStatsJson(outStats);
+        }else{
+            printStats(outStats);
+        }
+        
+        if(geneHistFile!=null){
+            printHist(geneHistFile);
+        }
+        
+        // HELPER HOOK: Print the final statistics from the helper
+        helper.printFinalStats(outstream);
 
-		ConcurrentReadOutputStream rosAmino=makeCros(ffoutAmino);
-		ConcurrentReadOutputStream ros16S=makeCros(ffout16S);
-		ConcurrentReadOutputStream ros18S=makeCros(ffout18S);
-
-	
-			
-		//Turn off read validation in the input threads to increase speed
-		final boolean vic=Read.VALIDATE_IN_CONSTRUCTOR;
-		Read.VALIDATE_IN_CONSTRUCTOR=Shared.threads()<4;
-		
-		//Reset counters
-		readsIn=genesOut=0;
-		basesIn=bytesOut=0;
-		
-		for(int fnum=0; fnum<fnaList.size(); fnum++){
-			final String fna=fnaList.get(fnum);
-			String gffIn=(inGffList!=null && !inGffList.isEmpty()) ? inGffList.set(fnum, null) : null;
-			//Create a read input stream
-			final GeneModel pgm=makeMultipassModel(pgm0, fna, gffIn, passes/*, maxReads*/);
-			
-			final ConcurrentReadInputStream cris=makeCris(fna);
-			
-			//Process the reads in separate threads
-			spawnThreads(cris, bsw, rosAmino, ros16S, ros18S, pgm);
-			
-			//Close the input stream
-			errorState|=ReadWrite.closeStream(cris);
-		}
-		
-		//Close the input stream
-		errorState|=ReadWrite.closeStreams(null, rosAmino, ros16S, ros18S);
-		
-		if(verbose){outstream.println("Finished; closing streams.");}
-		
-		//Write anything that was accumulated by ReadStats
-		errorState|=ReadStats.writeAll();
-		//Close the output stream
-		if(bsw!=null){errorState|=bsw.poisonAndWait();}
-		
-		//Reset read validation
-		Read.VALIDATE_IN_CONSTRUCTOR=vic;
-		
-		//Report timing and results
-		t.stop();
-		outstream.println(Tools.timeReadsBasesProcessed(t, readsIn, basesIn, 8));
-		outstream.println(Tools.linesBytesOut(readsIn, basesIn, genesOut, bytesOut, 8, false));
-		outstream.println();
-		
-		if(json_out){
-			printStatsJson(outStats);
-		}else{
-			printStats(outStats);
-		}
-		if(geneHistFile!=null){
-			printHist(geneHistFile);
-		}
-		if(trueGenesFile!=null){
-		outstream.println(); // Spacing for readability
-		outstream.println("True Genes File: " + trueGenesFile);
-		outstream.println("Total Rows detected in .gff = " + totalGffRows);
-		outstream.println(".gff Gene Rows = " + totalGffGeneRows);
-		outstream.println("Total Matches = " + totalMatches);
-		}
-
-		
-		//Throw an exception of there was an error in a thread
-		if(errorState){
-			throw new RuntimeException(getClass().getName()+" terminated in an error state; the output may be corrupt.");
-		}
-		
-		if(compareToGff!=null){
-			if(compareToGff.equals("auto")){
-				compareToGff=fnaList.get(0).replace(".fna", ".gff");
-				compareToGff=compareToGff.replace(".fa", ".gff");
-				compareToGff=compareToGff.replace(".fasta", ".gff");
-			}
-			CompareGff.main(new String[] {outGff, compareToGff});
-		}
-	}
-	
-	private void printStats(String fname){
+        if(errorState){
+            throw new RuntimeException(getClass().getName()+" terminated in an error state; the output may be corrupt.");
+        }
+        
+    }
+ 
+ private void printStats(String fname){
 		if(fname==null){return;}
 		ByteStreamWriter bsw=new ByteStreamWriter(fname, overwrite, append, false);
 		bsw.start();
@@ -678,69 +613,50 @@ public class CallGenes extends ProkObject {
 	}
 	
 	/** Spawn process threads */
-	private void spawnThreads(final ConcurrentReadInputStream cris, final ByteStreamWriter bsw, 
-			ConcurrentReadOutputStream rosAmino, ConcurrentReadOutputStream ros16S, ConcurrentReadOutputStream ros18S, GeneModel pgm){
-		
-		//Do anything necessary prior to processing
-		
-		//Determine how many threads may be used
-		final int threads=Shared.threads();
-		
-		//Fill a list with ProcessThreads
-		ArrayList<ProcessThread> alpt=new ArrayList<ProcessThread>(threads);
-		for(int i=0; i<threads; i++){
-			alpt.add(new ProcessThread(cris, bsw, rosAmino, ros16S, ros18S, pgm, minLen, i, this.contigMetrics,this.nofilter));
-		}
-		
-		//Start the threads
-		for(ProcessThread pt : alpt){
-			pt.start();
-		}
-		
-		//Wait for threads to finish
-		waitForThreads(alpt);
-		
-		//Do anything necessary after processing
-		
-		// After all threads join, aggregate and print the total foundCount
-		printTotalMatchCount(alpt);
-	}
+private void spawnThreads(final ConcurrentReadInputStream cris, final ByteStreamWriter bswGff, final ByteStreamWriter bswScore,
+	           ConcurrentReadOutputStream rosAmino, ConcurrentReadOutputStream ros16S, ConcurrentReadOutputStream ros18S, GeneModel pgm){
+	       
+	       final int threads=Shared.threads();
 
-	/**
-	 * Aggregates and prints the total number of found genes from all threads.
-	 */
-	private void printTotalMatchCount(ArrayList<ProcessThread> alpt) {
-		int totalMatch = 0;
-		for (ProcessThread pt : alpt) {
-			totalMatch += pt.getMatchCount();
-		}
-		totalMatches = totalMatch;
-	}
-	
-	private void waitForThreads(ArrayList<ProcessThread> alpt){
-		
-		//Wait for completion of all threads
-		boolean success=true;
-		for(ProcessThread pt : alpt){
-			
-			//Wait until this thread has terminated
-			while(pt.getState()!=Thread.State.TERMINATED){
-				try {
-					//Attempt a join operation
-					pt.join();
-				} catch (InterruptedException e) {
-					//Potentially handle this, if it is expected to occur
-					e.printStackTrace();
-				}
-			}
-			
-			//Accumulate per-thread statistics
-			readsIn+=pt.readsInT;
-			basesIn+=pt.basesInT;
-			genesOut+=pt.genesOutT;
-			bytesOut+=pt.bytesOutT;
-			
-			geneStopsMade+=pt.caller.geneStopsMade;
+		// Brandon 9-15 Assertion
+		assert(bswGff != null) : "ByteStreamWriter null. ffoutGff=" + ffoutGff;
+	       
+	       
+	       ArrayList<ProcessThread> alpt=new ArrayList<ProcessThread>(threads);
+	       for(int i=0; i<threads; i++){
+	           // HELPER HOOK: Pass the helper object to the thread constructor
+	           alpt.add(new ProcessThread(cris, bswGff, bswScore, rosAmino, ros16S, ros18S, pgm, minLen, i));
+	       }
+        
+        for(ProcessThread pt : alpt){
+            pt.start();
+        }
+        
+        waitForThreads(alpt);
+    }
+    
+    private void waitForThreads(ArrayList<ProcessThread> alpt){
+        
+        boolean success=true;
+        for(ProcessThread pt : alpt){
+            
+            while(pt.getState()!=Thread.State.TERMINATED){
+                try {
+                    pt.join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            
+            readsIn+=pt.readsInT;
+            basesIn+=pt.basesInT;
+            genesOut+=pt.genesOutT;
+            bytesOut+=pt.bytesOutT;
+            
+            // HELPER HOOK: Accumulate stats from the helper instance in the thread
+            helper.accumulateStatsFromThread(pt.helper);
+
+            geneStopsMade+=pt.caller.geneStopsMade;
 			geneStartsMade+=pt.caller.geneStartsMade;
 			geneStartsRetained+=pt.caller.geneStartsRetained;
 			geneStopsRetained+=pt.caller.geneStopsRetained;
@@ -853,376 +769,108 @@ public class CallGenes extends ProkObject {
 		return ros;
 	}
 	
-	// Utility method to open a BufferedReader for plain or gzipped files
-	private static BufferedReader openBufferedReader(String filename) throws IOException {
-	    if (filename.endsWith(".gz")) {
-	        return new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(filename))));
-	    } else {
-	        return new BufferedReader(new FileReader(filename));
-	    }
-	}
-	
-	/*--------------------------------------------------------------*/
-	/*----------------         Inner Classes        ----------------*/
-	/*--------------------------------------------------------------*/
-	
-	/** This class is static to prevent accidental writing to shared variables.
-	 * It is safe to remove the static modifier. */
 	private class ProcessThread extends Thread {
 
-        final Map<String, ContigStats> contigMetrics;
-        final boolean nofilter;
-        // FIXED: Declare thread-local network and feature vector fields
-        private CellNet net;
-        private float[] vec;
-        
-        //Constructor
-        ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bsw_, 
-                ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_, 
-                GeneModel pgm_, final int minLen, final int tid_,
-                final Map<String, ContigStats> contigMetrics_,
-                final boolean nofilter_){
-            cris=cris_;
-            bsw=bsw_;
-            rosAmino=rosAmino_;
-            ros16S=ros16S_;
-            ros18S=ros18S_;
-            pgm=pgm_;
-            tid=tid_;
-            geneHistT=(geneHistBins>1 ? new long[geneHistBins] : null);
-            caller=new GeneCaller(minLen, maxOverlapSameStrand, maxOverlapOppositeStrand, 
-                    minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
-            this.entropyTracker = new EntropyTracker(5,50,false);
-            this.contigMetrics = contigMetrics_;
-            this.nofilter = nofilter_; 
-        }
-        
-        //Called by start()
-        @Override
-        public void run(){
-            // FIXED: This block initializes the network and vector for each thread.
-            // It MUST be present and run before processInner().
-            if (net0 != null) {
-                net = net0.copy(false);
-                vec = new float[net.numInputs()];
-            }
-            
-            //Process the reads
-            processInner();
-            
-            //Indicate successful exit status
-            success=true;
-        }
-        
-        /** Iterate through the reads */
-        void processInner(){
-            
-            //Grab the first ListNum of reads
-            ListNum<Read> ln=cris.nextList();
-
-            //As long as there is a nonempty read list...
-            while(ln!=null && ln.size()>0){
-                processList(ln);
-                //Fetch a new list
-                ln=cris.nextList();
-            }
-
-            //Notify the input stream that the final list was used
-            if(ln!=null){
-                cris.returnList(ln.id, ln.list==null || ln.list.isEmpty());
-            }
-        }
+		// HELPER HOOK: Add a thread-local helper instance
+		final CallGenesHelper helper;
 		
-		// Brandon: 6/24/25
-		/** Updated processList to handle CallGenesHelper.java */
-		// 7/23/25: Updated to handle neural network scoring and filtering.
-		// In CallGenes.java, inside the ProcessThread inner class
-        void processList(ListNum<Read> ln) {
-            final ArrayList<Read> reads = ln.list;
 
-            // Loop through each contig (Read) in the list
-            for (int idx = 0; idx < reads.size(); idx++) {
-                final Read r1 = reads.get(idx);
-                
-                readsInT += r1.pairCount();
-                basesInT += r1.length() + r1.mateLength();
-                
-                // Step 1: Get all potential gene candidates from the GeneCaller.
-                // The 'nofilter' flag is handled inside processRead -> caller.callGenes.
-                ArrayList<Orf> orfList = processRead(r1);
-                ArrayList<Orf> passedOrfs;
-
-                // Step 2: Filter candidates with the neural network if it's provided.
-                if (net != null && !this.nofilter) {
-                    // NN INFERENCE MODE: Score ORF candidates and keep only those that pass the cutoff.
-                    passedOrfs = new ArrayList<>();
-                    for (Orf orf : orfList) {
-                        // Non-CDS features (tRNA, rRNA) are not scored by the network, so they pass automatically.
-                        if (orf.type != CDS) {
-                            passedOrfs.add(orf);
-                            continue;
-                        }
-                        
-                        // Generate feature vector, score it, and check if it passes the filter.
-                        float score = scoreOrf(orf, r1);
-                        boolean pass = (score >= cutoff) == highpass;
-                        
-                        if (pass) {
-                            orf.orfScore = score; // Optionally update the ORF's score to the NN score.
-                            passedOrfs.add(orf);
-                        }
-                    }
-                } else {
-                    // NO-NETWORK MODE: Keep all candidates. This branch is also used for 'nofilter'.
-                    passedOrfs = orfList;
-                }
-                
-                // Step 3: Process the final list of ORFs.
-                if (passedOrfs == null || passedOrfs.isEmpty()) {
-                    continue;
-                }
-                
-                genesOutT += passedOrfs.size();
-
-                // This buffer will hold all the GFF lines for the current contig.
-                final ByteBuilder bb = new ByteBuilder();
-
-                // Loop through the final set of ORFs (either filtered or unfiltered).
-                for (Orf orf : passedOrfs) {
-                    if (bsw != null) {
-                        orf.appendGff(bb); // Generate the standard GFF line.
-                        
-                        // If not using the network, append the feature vector for training data generation.
-                        if (net == null && orf.type == CDS) {
-                            String vectorValues = CallGenesHelper.generateFeatureVector(
-                                orf, r1, this.contigMetrics.get(r1.id), this.entropyTracker,
-                                CallGenes.this.trueGeneSet, CallGenes.this.seq, false
-                            );
-                            
-                            if (vectorValues.endsWith("\t1")) {
-                                this.matchCount++;
-                            }
-                            
-                            // Trim the newline from appendGff before adding the vector.
-                            if (bb.length() > 0 && bb.get(bb.length() - 1) == '\n') {
-                                bb.trimLast(1);
-                            }
-                            
-                            // Append the vector attribute.
-                            bb.append(";VECTOR=");
-                            for (int i = 0; i < vectorValues.length(); i++) {
-                                char c = vectorValues.charAt(i);
-                                bb.append(c == '\t' ? ',' : c);
-                            }
-                            bb.nl();
-                        }
-                    }
-                } // End of ORF loop
-
-                // After processing all ORFs for this contig, write the buffer to the file stream.
-                if (bb.length() > 0) {
-                    bytesOutT += bb.length();
-                    if (bsw != null) {
-                        if (bsw.ordered) {
-                            bsw.add(bb, r1.numericID);
-                        } else {
-                            bsw.addJob(bb);
-                        }
-                    }
-                }
-            } // End of contig loop
-
-            // Finally, tell the system we are done with this batch of reads.
-            cris.returnList(ln);
-        }
-
-        // Brandon - 7/23/25: Method to score an ORF with the neural network
-        private float scoreOrf(Orf orf, Read contigRead) {
-            fillFeatureVector(vec, orf, contigRead);
-            net.applyInput(vec);
-            return net.feedForward();
-        }
-
-        // Brandon - 7/23/25: Method to populate the feature vector for the network
-        private void fillFeatureVector(float[] vec, Orf orf, Read contigRead) {
-            Arrays.fill(vec, 0);
-            int currentPos = 0;
-
-            ContigStats contigStats = this.contigMetrics.get(contigRead.id);
-            byte[] geneSeq = java.util.Arrays.copyOfRange(contigRead.bases, orf.start, orf.stop);
-            if (orf.strand == 1) { AminoAcid.reverseComplementBasesInPlace(geneSeq); }
-
-            // Feature 0: Scaled log length
-            vec[currentPos++] = (float) (Math.log(orf.length()) / 10.0);
-            // Feature 1: Start Score
-            vec[currentPos++] = orf.startScore;
-            // Feature 2: Avg Kmer Score
-            vec[currentPos++] = orf.kmerScore / (orf.length() > 0 ? orf.length() : 1);
-            // Feature 3: Stop Score
-            vec[currentPos++] = orf.stopScore;
-            // Feature 4: Gene GC
-            vec[currentPos++] = CallGenesHelper.gcRatio(geneSeq, 0, geneSeq.length - 1);
-            // Feature 5: Gene Entropy
-            float geneEntropy = entropyTracker.averageEntropy(geneSeq, false);
-            vec[currentPos++] = (float) Math.tanh(Math.log(geneEntropy / (1.0 + 1e-8 - geneEntropy)) / 4.0);
-            // Feature 6: Contig GC
-            vec[currentPos++] = (contigStats != null) ? (float) contigStats.gcRatio() : 0.0f;
-            // Feature 7: Contig Entropy
-            double contigEntropy = (contigStats != null) ? contigStats.entropy() : 0.0;
-            vec[currentPos++] = (float) Math.tanh(Math.log(contigEntropy / (1.0 + 1e-8 - contigEntropy)) / 4.0);
-
-            // One-hot encoded windows
-            int length = orf.length();
-            int mid = (orf.strand == 1) ? orf.start + (length / 2) - (length / 2 % 3) : orf.stop - (length / 2) + (length / 2 % 3);
-            byte[] startWin = CallGenes.extractWindow(contigRead.bases, orf.start, 18, 18);
-            byte[] midWin = CallGenes.extractWindow(contigRead.bases, mid, 6, 6);
-            byte[] stopWin = CallGenes.extractWindow(contigRead.bases, orf.stop, 18, 18);
-
-            if (orf.strand == 1) {
-                AminoAcid.reverseComplementBasesInPlace(startWin);
-                AminoAcid.reverseComplementBasesInPlace(midWin);
-                AminoAcid.reverseComplementBasesInPlace(stopWin);
-            }
-            
-            currentPos = fillOneHot(vec, currentPos, startWin);
-            currentPos = fillOneHot(vec, currentPos, midWin);
-            currentPos = fillOneHot(vec, currentPos, stopWin);
-        }
-
-        // Brandon - 7/23/25: Helper for filling one-hot vectors
-        private int fillOneHot(float[] vec, int pos, byte[] bases) {
-            for (byte b : bases) {
-                char c = (char) b;
-                switch (c) {
-                    case 'A': case 'a': vec[pos] = 1; break;
-                    case 'C': case 'c': vec[pos+1] = 1; break;
-                    case 'G': case 'g': vec[pos+2] = 1; break;
-                    case 'T': case 't': vec[pos+3] = 1; break;
-                    default: break; // Ns are all zero
-                }
-                pos += 4;
-            }
-            return pos;
-        }
+		// Original fields needed by the thread
+		private final ConcurrentReadInputStream cris;
+		private final ByteStreamWriter bswGff;
+		      private final ByteStreamWriter bswScore;
+		private final GeneModel pgm;
+		final GeneCaller caller;
+		final int tid;
 		
-		/**
-		 * Process a read or a read pair.
-		 * @param r1 Read 1
-		 * @param r2 Read 2 (may be null)
-		 * @return True if the reads should be kept, false if they should be discarded.
-		 */
-		ArrayList<Orf> processRead(final Read r){
-
-			// Brandon:  Ensure all candidates are generated for vector output through this call (OLD CODE)
-			/*if (vectorOut != null) {
-                caller.setGenerateAllCandidates(true);
-            }
-			*/
-
-			// Tell the GeneCaller to generate all candidates ONLY if the nofilter flag is set.
-           	caller.setGenerateAllCandidates(this.nofilter);
-
-		    // If nofilter=false, this list will be filtered by the caller's internal logic.
-    		// If nofilter=true, this list will contain all potential candidates.
-			ArrayList<Orf> list=caller.callGenes(r, pgm, true);
-
-			// It's good practice to reset the flag after use 
-			/*
-            if (vectorOut != null) {
-                caller.setGenerateAllCandidates(false);
-            }
-			*/
-			
-			if(geneHistT!=null && list!=null){
-				for(Orf o : list){
-					int bin=Tools.min(geneHistT.length-1, o.length()/geneHistDiv);
-					geneHistT[bin]++;
-				}
-			}
-			
-			if(ros16S!=null){
-				if(list!=null && !list.isEmpty()){
-//					System.err.println("Looking for 16S.");
-					ArrayList<Read> ssu=fetchType(r, list, r16S);
-					if(ssu!=null && !ssu.isEmpty()){
-//						System.err.println("Found "+ssu.size()+" 16S.");
-						ros16S.add(ssu, r.numericID);
-					}
-				}
-			}
-			if(ros18S!=null){
-				if(list!=null && !list.isEmpty()){
-					ArrayList<Read> ssu=fetchType(r, list, r18S);
-					if(ssu!=null && !ssu.isEmpty()){ros18S.add(ssu, r.numericID);}
-				}
-			}
-			
-			if(rosAmino!=null){
-				if(mode==TRANSLATE){
-					if(list!=null && !list.isEmpty()){
-						ArrayList<Read> prots=translate(r, list);
-						if(prots!=null){rosAmino.add(prots, r.numericID);}
-					}
-				}else if(mode==RETRANSLATE) {
-					if(list!=null && !list.isEmpty()){
-						ArrayList<Read> prots=translate(r, list);
-						ArrayList<Read> ret=detranslate(prots);
-						if(ret!=null){rosAmino.add(ret, r.numericID);}
-					}
-				}else if(mode==RECODE) {
-					if(list!=null && !list.isEmpty()){
-						Read recoded=recode(r, list);
-						r.mate=null;
-						ArrayList<Read> rec=new ArrayList<Read>(1);
-						rec.add(recoded);
-						if(rec!=null){rosAmino.add(rec, r.numericID);}
-					}
-				}else{
-					assert(false) : mode;
-				}
-			}
-			
-			return list;
-		}
-		
-		/** Number of reads processed by this thread */
-		protected long readsInT=0;
-		/** Number of bases processed by this thread */
-		protected long basesInT=0;
-		
-		/** Number of genes called by this thread */
-		protected long genesOutT=0;
-		/** Number of bytes written by this thread */
-		protected long bytesOutT=0;
-		
-		final long[] geneHistT;
-
 		protected ConcurrentReadOutputStream rosAmino;
 		protected ConcurrentReadOutputStream ros16S;
 		protected ConcurrentReadOutputStream ros18S;
 		
-		/** True only if this thread has completed successfully */
-		boolean success=false;
-		
-		/** Shared input stream */
-		private final ConcurrentReadInputStream cris;
-		/** Shared output stream */
-		private final ByteStreamWriter bsw;
-		/** Gene Model for annotation (not really needed) */
-		private final GeneModel pgm;
-		/** Gene Caller for annotation */
-		final GeneCaller caller;
-		/** Thread ID */
-		final int tid;
-		/** Entropy for this thread */
-		final EntropyTracker entropyTracker;
+		protected long readsInT = 0;
+		protected long basesInT = 0;
+		protected long genesOutT = 0;
+		protected long bytesOutT = 0;
+		final long[] geneHistT;
+		boolean success = false;
 
-		/** Flag to indicate if the header has been written for this thread's output */
-		private boolean headerWritten = false;
-		
-		private int matchCount = 0; // Track number of Match rows for this thread
-		
-		public int getMatchCount() { return matchCount; }
+		//Constructor
+		ProcessThread(final ConcurrentReadInputStream cris_, final ByteStreamWriter bswGff_, final ByteStreamWriter bswScore_,
+					ConcurrentReadOutputStream rosAmino_, ConcurrentReadOutputStream ros16S_, ConcurrentReadOutputStream ros18S_,
+					GeneModel pgm_, final int minLen, final int tid_) {
+			cris = cris_;
+			bswGff = bswGff_;
+		          bswScore = bswScore_;
+			rosAmino = rosAmino_;
+			ros16S = ros16S_;
+			ros18S = ros18S_;
+			pgm = pgm_;
+			tid = tid_;
+			geneHistT = (geneHistBins > 1 ? new long[geneHistBins] : null);
+			caller = new GeneCaller(minLen, maxOverlapSameStrand, maxOverlapOppositeStrand,
+					minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
+			this.helper = CallGenes.this.helper.getThreadLocalCopy();
+			         helper.setScoreWriter(bswScore);
+		}
+
+		@Override
+		public void run() {
+			helper.initializeThreadObjects();
+			processInner();
+			success = true;
+		}
+
+		void processInner() {
+			ListNum<Read> ln = cris.nextList();
+			while (ln != null && ln.size() > 0) {
+				processList(ln);
+				ln = cris.nextList();
+			}
+			if (ln != null) {
+				cris.returnList(ln.id, ln.list == null || ln.list.isEmpty());
+			}
+		}
+
+		void processList(ListNum<Read> ln) {
+			final ArrayList<Read> reads = ln.list;
+			// Create a single buffer for all GFF lines from this batch of reads.
+			final ByteBuilder bb = new ByteBuilder();
+
+			for (final Read r1 : reads) {
+				// ... (your existing read prep logic for merging, etc.) ...
+				readsInT += r1.pairCount();
+				basesInT += r1.length() + r1.mateLength();
+
+				// Step 1: Get the final list of genes from the helper.
+				ArrayList<Orf> finalOrfs = helper.processContig(r1, caller, pgm, rosAmino, ros16S, ros18S);
+
+				if (finalOrfs != null && !finalOrfs.isEmpty()) {
+					genesOutT += finalOrfs.size();
+					// Step 2: Tell the helper to format the genes and add them to OUR buffer.
+					helper.formatGffOutput(bb, finalOrfs, r1);
+					assert(bb.length() > 0) : "Buffer empty after formatGffOutput call";
+					assert(bswGff != null) : "ByteStreamWriter is null";
+
+					if (geneHistT != null) {
+						for (Orf o : finalOrfs) {
+							int bin = Tools.min(geneHistT.length - 1, o.length() / geneHistDiv);
+							geneHistT[bin]++;
+						}
+					}
+				}
+			} // End of contig loop
+
+			// Step 3: Write the now-populated buffer to the output stream.
+			if (bswGff != null && bb.length() > 0) {
+				bytesOutT += bb.length();
+				if (bswGff.ordered) {
+					bswGff.add(bb, ln.id);
+				} else {
+					bswGff.addJob(bb);
+				}
+			}
+			cris.returnList(ln);
+		}
 	}
 	
 	public static ArrayList<Read> fetchType(final Read r, final ArrayList<Orf> list, int type){
@@ -1350,14 +998,23 @@ public class CallGenes extends ProkObject {
 	}
 	
 	/*--------------------------------------------------------------*/
+	/*----------------     Neural Network Methods   ----------------*/
+	/*--------------------------------------------------------------*/
+	
+	
+	/*--------------------------------------------------------------*/
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
+	
 	
 	public static GeneCaller makeGeneCaller(GeneModel pgm){
 		GeneCaller caller=new GeneCaller(minLen, maxOverlapSameStrand, maxOverlapOppositeStrand, 
 				minStartScore, minStopScore, minKmerScore, minOrfScore, minAvgScore, pgm);
 		return caller;
 	}
+
+	// HELPER HOOK: Add a single field for the helper class
+    private final CallGenesHelper helper;
 	
 	private long maxReads=-1;
 	private boolean merge;
@@ -1418,37 +1075,20 @@ public class CallGenes extends ProkObject {
 	/*--------------------------------------------------------------*/
 
 	
-	private HashSet<String> geneKeySet; // Set of gene keys loaded from true genes GFF file
 	private ArrayList<String> fnaList=new ArrayList<String>();
 	private ArrayList<String> pgmList=new ArrayList<String>();
 	private ArrayList<String> inGffList=new ArrayList<String>();
-	private Map<String, ContigStats> contigMetrics; // Brandon: 6-24-25
-	private HashSet<GeneQuad> trueGeneSet; // Brandon: 6-25-25
 	private String outGff=null;
 	private String outAmino=null;
 	private String out16S=null;
 	private String out18S=null;
 	private String trueGenesFile = null;
 	private String compareToGff=null;
+	   private String outScore=null;
+	
 	private String outStats="stderr";
 	private String geneHistFile=null;
 	private boolean json_out=false;
-	// Brandon's CLI input calls
-	private boolean seq = false;
-	private boolean nofilter = false; 	// Brandon: 6/30/25
-
-	//private boolean net = false; // Brandon: 7/23/25
-
-    // Brandon - 7/23/25: Fields for neural network
-    private String netFile = null;
-    private final CellNet net0;
-    private float cutoff = 0.5f;
-    private boolean highpass = true;
-	private FileFormat ffnet;
-
-	private int totalGffRows = 0;
-	private int totalGffGeneRows = 0;
-	private int totalMatches = 0;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Final Fields         ----------------*/
@@ -1458,6 +1098,7 @@ public class CallGenes extends ProkObject {
 	private final FileFormat ffoutAmino;
 	private final FileFormat ffout16S;
 	private final FileFormat ffout18S;
+	   private final FileFormat ffoutScore;
 	
 	
 	/** Determines how sequence is processed if it will be output */
@@ -1482,76 +1123,6 @@ public class CallGenes extends ProkObject {
 	private boolean append=false;
 	private boolean ordered=false; //this is OK sometimes, but sometimes hangs (e.g. on RefSeq mito), possibly if a sequence produces nothing.
 	//To fix it, just ensure functions like translate always produce an array, even if it is empty.
-	
-	// Brandon's Functions
-    /*
-     * Convert a DNA sequence to a one-hot binary string (A=1000, C=0100, G=0010, T=0001, others=0000)
-     */
-	public static String toOneHotString(byte[] bases, int start, int end) {
-		StringBuilder sb = new StringBuilder();
-		for (int i = start; i <= end; i++) {
-			char c = (char) bases[i];
-			if (i > start) sb.append('\t');
-			switch (c) {
-				case 'A': case 'a':
-					sb.append("1\t0\t0\t0");
-					break;
-				case 'C': case 'c':
-					sb.append("0\t1\t0\t0");
-					break;
-				case 'G': case 'g':
-					sb.append("0\t0\t1\t0");
-					break;
-				case 'T': case 't':
-					sb.append("0\t0\t0\t1");
-					break;
-				default:
-					sb.append("0\t0\t0\t0");
-					break;
-			}
-		}
-		return sb.toString();
-	}
-
-    /**
-     * Extract a window of bases around a position, with padding as 'N' if out of bounds.
-     * @param bases The base array
-     * @param center The center position
-     * @param before Number of bases before center (inclusive)
-     * @param after Number of bases after center (inclusive)
-     * @return byte[] window
-     */
-    public static byte[] extractWindow(byte[] bases, int center, int before, int after) {
-        int len = before + after + 1;
-        byte[] window = new byte[len];
-        for (int i = 0; i < len; i++) {
-            int idx = center - before + i;
-            if (idx < 0 || idx >= bases.length) {
-                window[i] = 'N';
-            } else {
-                window[i] = bases[idx];
-            }
-        }
-        return window;
-    }
-
-
-	// Brandon
-	// Convert a byte[] gene sequence to a String representation
-	private static String basesToString(byte[] gene) {
-	    StringBuilder sb = new StringBuilder();
-	    for (byte base : gene) {
-	        switch (base) {
-	            case 'A': case 'a': sb.append('A'); break;
-	            case 'C': case 'c': sb.append('C'); break;
-	            case 'G': case 'g': sb.append('G'); break;
-	            case 'T': case 't': sb.append('T'); break;
-	            default: sb.append('N'); break;
-	        }
-	    }
-	    return sb.toString();
-	}
-
 
 
 }

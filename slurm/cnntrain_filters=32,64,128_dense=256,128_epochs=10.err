@@ -1,4 +1,4 @@
-java -ea -Xmx107380m -Xms107380m -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.CNNTrainer in=../ncbi_10_balanced.tsv in=../ncbi_10_balanced.tsv out=cnn_filters=32,64,128_dense=256,128_epochs=10.bbnet filters=32,64,128 dense=256,128 epochs=10
+java -ea -Xmx107366m -Xms107366m -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.CNNTrainer in=../ncbi_10_balanced.tsv in=../ncbi_10_balanced.tsv out=cnn_filters-32-64-128_dense-256-128_epochs-10.bbnet filters=32,64,128 dense=256,128 epochs=10
 
 Loading ../ncbi_10_balanced.tsv
 Inferring 356 inputs, 1 output, 0 weights.
@@ -52,67 +52,98 @@ Starting training for 10 epochs...
 Batch size: 32
 Learning rate: 0.001
 
-Batch 1:       ERR= 0.500000  LOSS= 1.170627  FPR= 1.000000  FNR= 0.000000  0.6s
-Batch 2:       ERR= 0.421875  LOSS= 3.355612  FPR= 0.432432  FNR= 0.407407  1.0s
-Batch 3:       ERR= 0.479167  LOSS= 3.733178  FPR= 0.625000  FNR= 0.275000  1.4s
-Batch 4:       ERR= 0.507813  LOSS= 2.978945  FPR= 0.649351  FNR= 0.294118  1.9s
-Batch 5:       ERR= 0.481250  LOSS= 2.515650  FPR= 0.515464  FNR= 0.428571  2.3s
-Batch 6:       ERR= 0.447917  LOSS= 2.200260  FPR= 0.416667  FNR= 0.500000  2.7s
-Batch 7:       ERR= 0.441964  LOSS= 1.984848  FPR= 0.359712  FNR= 0.576471  3.2s
-Batch 8:       ERR= 0.445313  LOSS= 1.824936  FPR= 0.320513  FNR= 0.640000  3.6s
-Batch 9:       ERR= 0.434028  LOSS= 1.695613  FPR= 0.284091  FNR= 0.669643  4.0s
-Batch 10:      ERR= 0.428125  LOSS= 1.592087  FPR= 0.255102  FNR= 0.701613  4.5s
-Batch 25:      ERR= 0.362500  LOSS= 1.011499  FPR= 0.095602  FNR= 0.866426  11.0s
-Batch 50:      ERR= 0.360625  LOSS= 0.829487  FPR= 0.048591  FNR= 0.922942  22.0s
-Batch 100:     ERR= 0.330000  LOSS= 0.713165  FPR= 0.042442  FNR= 0.876700  43.9s
-Batch 250:     ERR= 0.267000  LOSS= 0.575658  FPR= 0.075493  FNR= 0.648224  1.8m
-Batch 500:     ERR= 0.206937  LOSS= 0.457431  FPR= 0.085244  FNR= 0.448507  3.6m
-Batch 1k:      ERR= 0.150094  LOSS= 0.340412  FPR= 0.077067  FNR= 0.295586  7.3m
-Batch 2k:      ERR= 0.114547  LOSS= 0.268617  FPR= 0.066196  FNR= 0.211311  14.9m
+Batch 1:       ERR= 0.781250  LOSS= 1.460468  FPR= 1.000000  FNR= 0.000000  0.6s
+Batch 2:       ERR= 0.593750  LOSS= 4.004223  FPR= 0.568182  FNR= 0.650000  1.0s
+Batch 3:       ERR= 0.593750  LOSS= 5.824745  FPR= 0.698413  FNR= 0.393939  1.4s
+Batch 4:       ERR= 0.562500  LOSS= 6.257399  FPR= 0.550000  FNR= 0.583333  1.9s
+Batch 5:       ERR= 0.606250  LOSS= 7.496917  FPR= 0.657143  FNR= 0.509091  2.3s
+Batch 6:       ERR= 0.562500  LOSS= 7.170860  FPR= 0.547619  FNR= 0.590909  2.7s
+Batch 7:       ERR= 0.517857  LOSS= 6.722096  FPR= 0.460000  FNR= 0.635135  3.1s
+Batch 8:       ERR= 0.503906  LOSS= 6.700328  FPR= 0.408284  FNR= 0.689655  3.6s
+Batch 9:       ERR= 0.524306  LOSS= 7.173669  FPR= 0.476440  FNR= 0.618557  4.0s
+Batch 10:      ERR= 0.518750  LOSS= 7.211841  FPR= 0.437500  FNR= 0.669643  4.4s
+Batch 25:      ERR= 0.477500  LOSS= 7.210493  FPR= 0.405405  FNR= 0.609929  10.9s
+Batch 50:      ERR= 0.445625  LOSS= 6.920795  FPR= 0.355349  FNR= 0.630476  21.7s
+Batch 100:     ERR= 0.444687  LOSS= 7.016571  FPR= 0.347280  FNR= 0.644423  43.3s
+Batch 250:     ERR= 0.443875  LOSS= 7.068596  FPR= 0.353774  FNR= 0.627324  1.8m
+Batch 500:     ERR= 0.455875  LOSS= 7.282909  FPR= 0.366723  FNR= 0.635456  3.6m
+Batch 1k:      ERR= 0.454281  LOSS= 7.268366  FPR= 0.366784  FNR= 0.629564  7.2m
+Batch 2k:      ERR= 0.456344  LOSS= 7.306796  FPR= 0.370046  FNR= 0.628593  14.5m
 
 Epoch 1/10 Complete:
-  Train - ERR: 0.1033  FPR: 0.0627  FNR: 0.1845  Loss: 0.2429
-  Valid - ERR: 0.0786  FPR: 0.0498  FNR: 0.1356  Loss: 0.1879
+  Train - ERR: 0.4558  FPR: 0.3697  FNR: 0.6282  Loss: 7.2998
+  Valid - ERR: 0.6647  FPR: 1.0000  FNR: 0.0000  Loss: 10.5968
 
-Batch 3k:      ERR= 0.977951  LOSS= 0.004461  FPR= 0.054326  FNR= 0.131611  23.5m
-Batch 4k:      ERR= 0.753153  LOSS= 0.050430  FPR= 0.055171  FNR= 0.126785  30.9m
-Batch 5k:      ERR= 0.620748  LOSS= 0.083615  FPR= 0.055244  FNR= 0.144697  38.3m
+Batch 3k:      ERR= 0.987111  LOSS= 0.178127  FPR= 0.387459  FNR= 0.608365  23.0m
+Batch 4k:      ERR= 0.854778  LOSS= 1.968285  FPR= 0.374638  FNR= 0.624282  30.5m
+Batch 5k:      ERR= 0.775858  LOSS= 3.049757  FPR= 0.374542  FNR= 0.628425  37.9m
 
 Epoch 2/10 Complete:
-  Train - ERR: 0.0879  FPR: 0.0547  FNR: 0.1545  Loss: 0.2079
-  Valid - ERR: 0.0823  FPR: 0.0683  FNR: 0.1102  Loss: 0.2037
+  Train - ERR: 0.4596  FPR: 0.3748  FNR: 0.6294  Loss: 7.3642
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: 5.4050
 
-Batch 6k:      ERR= 0.978311  LOSS= 0.005326  FPR= 0.055701  FNR= 0.176735  46.7m
-Batch 7k:      ERR= 0.873841  LOSS= NaN  FPR= 0.025779  FNR= 0.629090  54.0m
-Batch 8k:      ERR= 0.805919  LOSS= NaN  FPR= 0.013707  FNR= 0.800700  61.2m
+Batch 6k:      ERR= 0.987074  LOSS= 0.177564  FPR= 0.372606  FNR= 0.641126  46.3m
+Batch 7k:      ERR= 0.911713  LOSS= 1.204700  FPR= 0.375354  FNR= 0.628319  53.8m
+Batch 8k:      ERR= 0.854790  LOSS= 1.968476  FPR= 0.373365  FNR= 0.628730  61.3m
 
 Epoch 3/10 Complete:
-  Train - ERR: 0.2912  FPR: 0.0100  FNR: 0.8539  Loss: NaN
-  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Train - ERR: 0.4575  FPR: 0.3730  FNR: 0.6268  Loss: 7.3310
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: 5.4050
 
-Batch 9k:      ERR= 0.984040  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  69.4m
-Batch 10k:     ERR= 0.918655  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  76.6m
-Batch 11k:     ERR= 0.865494  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  83.7m
+Batch 9k:      ERR= 0.987232  LOSS= 0.180086  FPR= 0.382123  FNR= 0.639153  69.7m
+Batch 10k:     ERR= 0.934297  LOSS= 0.896186  FPR= 0.374957  FNR= 0.629853  77.3m
+Batch 11k:     ERR= 0.890858  LOSS= 1.479958  FPR= 0.374227  FNR= 0.626161  84.8m
 
 Epoch 4/10 Complete:
-  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
-  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Train - ERR: 0.4578  FPR: 0.3732  FNR: 0.6272  Loss: 7.3358
+  Valid - ERR: 0.6647  FPR: 1.0000  FNR: 0.0000  Loss: 10.5968
 
-Batch 12k:     ERR= 0.984282  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  91.8m
-Batch 13k:     ERR= 0.934034  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  98.9m
-Batch 14k:     ERR= 0.890944  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  106.1m
+Batch 12k:     ERR= 0.986952  LOSS= 0.175587  FPR= 0.369660  FNR= 0.635247  93.2m
+Batch 13k:     ERR= 0.946133  LOSS= 0.724859  FPR= 0.370372  FNR= 0.632080  100.9m
+Batch 14k:     ERR= 0.911454  LOSS= 1.200542  FPR= 0.373043  FNR= 0.630283  108.5m
 
 Epoch 5/10 Complete:
-  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
-  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Train - ERR: 0.4581  FPR: 0.3739  FNR: 0.6266  Loss: 7.3402
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: 5.4050
 
-Batch 15k:     ERR= 0.984016  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  114.2m
-Batch 16k:     ERR= 0.943378  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  121.3m
-Batch 17k:     ERR= 0.907259  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  128.4m
+Batch 15k:     ERR= 0.986917  LOSS= 0.175034  FPR= 0.369008  FNR= 0.629669  117.0m
+Batch 16k:     ERR= 0.954000  LOSS= 0.625301  FPR= 0.374323  FNR= 0.628056  124.6m
+Batch 17k:     ERR= 0.925110  LOSS= 1.025017  FPR= 0.376545  FNR= 0.628073  132.2m
 
 Epoch 6/10 Complete:
+  Train - ERR: 0.4589  FPR: 0.3743  FNR: 0.6283  Loss: 7.3532
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: 5.4050
+
+Batch 18k:     ERR= 0.986940  LOSS= 0.175414  FPR= 0.372933  FNR= 0.620898  140.7m
+Batch 19k:     ERR= 0.959264  LOSS= 0.555275  FPR= 0.375779  FNR= 0.626549  148.3m
+Batch 20k:     ERR= 0.929402  LOSS= NaN  FPR= 0.258355  FNR= 0.742040  155.9m
+
+Epoch 7/10 Complete:
+  Train - ERR: 0.4048  FPR: 0.2146  FNR: 0.7855  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 21k:     ERR= 0.983921  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  164.3m
+Batch 22k:     ERR= 0.954353  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  171.9m
+Batch 23k:     ERR= 0.927284  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  179.4m
+
+Epoch 8/10 Complete:
   Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
   Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
 
-Batch 18k:     ERR= 0.983995  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  136.5m
-slurmstepd: error: *** JOB 18131784 ON n0062.dori0 CANCELLED AT 2025-07-21T13:30:05 ***
+Batch 24k:     ERR= 0.984025  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  187.9m
+Batch 25k:     ERR= 0.957941  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  195.4m
+Batch 26k:     ERR= 0.933938  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  202.9m
+
+Epoch 9/10 Complete:
+  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Batch 27k:     ERR= 0.984000  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  211.4m
+Batch 28k:     ERR= 0.960608  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  219.0m
+Batch 29k:     ERR= 0.939084  LOSS= NaN  FPR= 0.000000  FNR= 1.000000  226.5m
+
+Epoch 10/10 Complete:
+  Train - ERR: 0.3331  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+  Valid - ERR: 0.3353  FPR: 0.0000  FNR: 1.0000  Loss: NaN
+
+Training complete! Total time: 229.6m
