@@ -1,0 +1,4 @@
+../run_experiments_folder.sh: line 30: ./callgenesfolder_no_cleanup.sh: Permission denied
+real 0.00
+user 0.00
+sys 0.00

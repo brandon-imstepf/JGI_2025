@@ -104,6 +104,8 @@ public class CompareGff {
 //				ByteFile1.verbose=verbose;
 //				ByteFile2.verbose=verbose;
 //				ReadWrite.verbose=verbose;
+			}else if(a.equals("stoponly")){
+				stoponly=Parse.parseBoolean(b);
 			}else if(parser.parse(arg, a, b)){
 				//do nothing
 			}else if(i==0 && arg.indexOf('=')<0){
@@ -290,7 +292,11 @@ public class CompareGff {
 			truePositiveStop++;
 			truePositiveStop2++;
 			stopCountMap.put(sn, stopCountMap.get(sn)+1);
-			if(start==refline.trueStart()){
+			if(stoponly){
+				truePositiveStart++;
+				truePositiveStart2++;
+				startCountMap.put(sn, startCountMap.get(sn)+1);
+			}else if(start==refline.trueStart()){
 				truePositiveStart++;
 				truePositiveStart2++;
 				startCountMap.put(sn, startCountMap.get(sn)+1);
@@ -308,6 +314,7 @@ public class CompareGff {
 	private String in=null;
 	private String ref=null;
 	
+	private boolean stoponly=false;
 	
 	/*--------------------------------------------------------------*/
 

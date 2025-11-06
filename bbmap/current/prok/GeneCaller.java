@@ -161,6 +161,19 @@ public class GeneCaller extends ProkObject {
         }
         // ---- END MODIFICATION ----
 		
+		// Score ORFs with neural network before pathfinding
+		if (helper != null && helper.hasNeuralNetwork() && currentContigRead != null) {
+			for (ArrayList<Orf> list : brokenLists) {
+				if (list != null) {
+					for (Orf orf : list) {
+						if (orf.type == CDS) {
+							helper.modifyOrfScoreWithNeuralNetwork(orf, currentContigRead);
+						}
+					}
+				}
+			}
+		}
+		
 		stCds2.add(brokenLists);
 		
 		//Find the optimal path through Orfs
@@ -419,11 +432,6 @@ public class GeneCaller extends ProkObject {
 			if(orf.isValidPrev(prev, maxOverlap)){
 				int overlap=Tools.max(0, prev.stop-orf.start+1);
 				float orfScore=overlap==0 ? orf.orfScore : orf.calcOrfScore(overlap);
-				// Brandon Notes: Neural network integration
-				// If neural network is available, modify the ORF score using neural network prediction
-				if (helper != null && helper.hasNeuralNetwork() && currentContigRead != null && orf.type == CDS) {
-					orfScore = helper.modifyOrfScoreWithNeuralNetwork(orfScore, orf, currentContigRead);
-				}
 				
 				final float prevScore=prev.pathScore();
 				final int prevLength=prev.pathLength();
@@ -485,10 +493,6 @@ public class GeneCaller extends ProkObject {
 			if(orf.isValidPrev(prev, maxOverlap)){
 				int overlap=Tools.max(0, prev.stop-orf.start+1);
 				float orfScore=overlap==0 ? orf.orfScore : orf.calcOrfScore(overlap);
-				// Brandon Notes: Neural network integration for minus strand
-				if (helper != null && helper.hasNeuralNetwork() && currentContigRead != null && orf.type == CDS) {
-					orfScore = helper.modifyOrfScoreWithNeuralNetwork(orfScore, orf, currentContigRead);
-				}
 				
 				final float prevScore=prev.pathScore();
 				final int prevLength=prev.pathLength();

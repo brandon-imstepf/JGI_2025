@@ -1,15 +1,16 @@
 #!/bin/bash
 #SBATCH -A grp-org-gt-ga
 #SBATCH -q jgi_normal
-#SBATCH -t 24:00:00            # Time
-#SBATCH -c 1                   # 1 CPU core (adjust if you want more)
+#SBATCH -t 48:00:00            # Time
+#SBATCH -c 8                   # 8 CPU cores (adjust if you want more)
 #SBATCH --mem=16G              # 16 GB memory
-#SBATCH --output=ncbi_scraper.log
-#SBATCH --error=ncbi_scraper.err
-#SBATCH --job-name=ncbi_scraper
+#SBATCH --output=ncbi_builder_10-23.log
+#SBATCH --error=ncbi_builder_10-23.err
+#SBATCH --job-name=ncbi_builder
 
-# Load your Python environment
-module load python
-source /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/jgi_venv/bin/activate
 
-python3 /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/NCBI_Scraper.py
+echo "Started building at $(date)"
+
+buildtrainingsetfolder.sh in=/clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/NCBI_Datasets_10-23_SORTED out=/clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/ncbi_master_10-23.tsv
+
+echo "Finished building at $(date)"

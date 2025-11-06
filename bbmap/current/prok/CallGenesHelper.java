@@ -65,6 +65,7 @@ public class CallGenesHelper {
     private static boolean nnDebug = false;
     private static float nnMinScore = 0.0f;
     private static boolean nnAllOrfs = false;
+    private static float prefilterCutoff = 0.1f;
     
     // Debug and assertion counters
     private static int netLoadAssertions = 0;
@@ -84,15 +85,32 @@ public class CallGenesHelper {
     private int threadTruePositives = 0;
     private int threadFalsePositives = 0;
     private ByteStreamWriter scoreCsvStream = null;
+    private Set<GeneQuad> calledCdsQuads = new HashSet<>();
+    private Set<GeneQuad> threadCalledCdsQuads = new HashSet<>();
 
     // PUBLIC METHODS
+
+    public boolean isLoggingEnabled() {
+        return enableLogging;
+    }
+
+    public String generateScoresCsvPath(String outGff) {
+        if (!enableLogging || outGff == null) {
+            return null;
+        }
+        File logDir = getLogDirectory(outGff);
+        if (logDir == null) { return null; }
+        return new File(logDir, "scores.csv").getPath();
+    }
+
     public boolean parse(String arg, String a, String b) {
         if (a.equals("log")) {
             enableLogging = shared.Parse.parseBoolean(b);
             return true;
         }
         if (a.equals("truegenes")) { trueGenesFile = b; return true; }
-        if (arg.equalsIgnoreCase("nofilter")) { nofilter = true; return true; }
+    // Accept both forms: 'nofilter' (flag) and 'nofilter=true' (key=value)
+    if (a.equalsIgnoreCase("nofilter") || arg.equalsIgnoreCase("nofilter")) { nofilter = true; return true; }
         if (a.equals("net")) { netFile = b; return true; }
         if (arg.equalsIgnoreCase("seq")) { seqMode = true; return true; }
         if (a.equals("compareto")) { compareToGff = b; return true; }
@@ -128,6 +146,10 @@ public class CallGenesHelper {
             nnAllOrfs = shared.Parse.parseBoolean(b);
             return true;
         }
+        if (a.equals("prefilter_cutoff")) {
+            prefilterCutoff = Float.parseFloat(b);
+            return true;
+        }
         
         return false;
     }
@@ -144,7 +166,7 @@ public class CallGenesHelper {
         }
         if (netFile != null) {
             net0 = CellNetParser.load(netFile);
-            assert(net0 != null) : netFile;
+            assert(net0 != null) : "Net file is null or incorrectly loaded: " + netFile;
         }
         
         // Load neural network if specified
@@ -161,13 +183,7 @@ public class CallGenesHelper {
         }
 
         if (enableLogging && outGff != null) {
-            File gffFile = new File(outGff);
-            String name = gffFile.getName();
-            if (name.endsWith(".gz")) { name = name.substring(0, name.length() - 3); }
-            if (name.endsWith(".gff")) { name = name.substring(0, name.length() - 4); }
-            File parentDir = gffFile.getParentFile();
-            File logDir = (parentDir == null) ? new File(name) : new File(parentDir, name);
-            
+            File logDir = getLogDirectory(outGff);
             if (!logDir.exists()) {
                 logDir.mkdirs();
             }
@@ -188,6 +204,7 @@ public class CallGenesHelper {
         copy.trueGenesFile = this.trueGenesFile;
         copy.enableLogging = this.enableLogging;
         copy.compareToGff = this.compareToGff;
+        copy.calledCdsQuads = this.calledCdsQuads;
         
         // Clone neural network for thread safety
         if (primaryNet != null) {
@@ -263,14 +280,14 @@ public class CallGenesHelper {
                     if (orf.type == ProkObject.CDS) {
                         this.finalScores.add(orf.orfScore); // Add to thread-local list
                         if (trueGeneSet != null) {
-                            String contigIdShort = contig.id.split("\\s+")[0];
-                            GeneQuad orfQuad = new GeneQuad(contigIdShort, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+                            GeneQuad orfQuad = new GeneQuad(contig.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
                             if (trueGeneSet.contains(orfQuad)) {
                                 threadTruePositives++;
                             } else {
                                 threadFalsePositives++;
                             }
                         }
+                        threadCalledCdsQuads.add(new GeneQuad(contig.id, orf.start + 1, orf.stop + 1, (byte)orf.strand));
                     }
                 }
             }
@@ -285,12 +302,16 @@ public class CallGenesHelper {
             this.truePositives += threadHelper.threadTruePositives;
             this.falsePositives += threadHelper.threadFalsePositives;
             this.finalScores.addAll(threadHelper.finalScores);
+            this.calledCdsQuads.addAll(threadHelper.threadCalledCdsQuads);
         }
     }
     
     public void printFinalStats(PrintStream outstream) {
         if (enableLogging) {
             writeLogFile();
+            if (scoreCsvStream != null && trueGeneSet != null) {
+                appendFalseNegativesToScores(scoreCsvStream);
+            }
         }
         if (trueGenesFile != null) {
             outstream.println();
@@ -376,6 +397,9 @@ public class CallGenesHelper {
 
                 ps.println("False positive rate: " + String.format(java.util.Locale.ROOT, "%.6f", fpRate));
                 ps.println("False negative rate: " + String.format(java.util.Locale.ROOT, "%.6f", fnRate));
+                ps.println("True positives: " + truePositives);
+                ps.println("False positives: " + falsePositives);
+                ps.println("False negatives: " + falseNegatives);
             } else if (compareToGff != null) {
                 try {
                     String outGffPath = new File(logDirectoryPath).getParent() + "/" + new File(logDirectoryPath).getName() + ".gff";
@@ -386,6 +410,9 @@ public class CallGenesHelper {
 
                     ps.println("False positive rate: " + String.format(java.util.Locale.ROOT, "%.6f", fpRate));
                     ps.println("False negative rate: " + String.format(java.util.Locale.ROOT, "%.6f", fnRate));
+                    ps.println("True positives: " + stats.truePositives());
+                    ps.println("False positives: " + stats.falsePositives());
+                    ps.println("False negatives: " + stats.falseNegatives());
                 } catch (IOException e) {
                     ps.println("Could not generate grading stats: " + e.getMessage());
                 }
@@ -529,8 +556,10 @@ public class CallGenesHelper {
             sb.append('\t').append(new String(geneSeq));
         } else {
             int length = orf.length();
-            int mid = (orf.strand == 0) ? start + (length / 2) - (length / 2 % 3) : stop - (length / 2) + (length / 2 % 3);
-            
+            int offset = (length / 2) % 3;
+            int mid = (orf.strand == 0)
+                ? start + (length / 2 - offset)
+                : stop - (length / 2 - offset);            
             byte[] startWin = extractWindow(contigRead.bases, start, 18, 18);
             byte[] midWin = extractWindow(contigRead.bases, mid, 6, 6); // The missing window
             byte[] stopWin = extractWindow(contigRead.bases, stop, 18, 18);
@@ -559,7 +588,8 @@ public class CallGenesHelper {
     private float scoreOrf(Orf orf, Read contigRead) {
         // Use neural network if available
         if (hasNeuralNetwork()) {
-            return modifyOrfScoreWithNeuralNetwork(orf.orfScore, orf, contigRead);
+            modifyOrfScoreWithNeuralNetwork(orf, contigRead);
+            return orf.orfScore;
         }
         // Fallback to original score
         return orf.orfScore;
@@ -616,7 +646,7 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
                 if (cols.length > 7 && cols[2].equalsIgnoreCase("CDS")) {
                     geneRows++;
                     try {
-                        String contig = cols[0].split("\\s+")[0];
+                        String contig = cols[0];
                         int start = Integer.parseInt(cols[3]);
                         int stop = Integer.parseInt(cols[4]);
                         byte strand = (byte) (cols[6].equals("+") ? 0 : 1);
@@ -729,19 +759,26 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
      * Modify ORF score using neural network prediction
      * Algorithm: mult = NN_output / cutoff; final_mult = ((mult - 1) × strength) + 1; modified_score = original_score × final_mult
      */
-    public float modifyOrfScoreWithNeuralNetwork(float originalScore, Orf orf, Read contigRead) {
+    public void modifyOrfScoreWithNeuralNetwork(Orf orf, Read contigRead) {
         // ASSERTION: Ensure we have a neural network available
         assert(threadNeuralNet != null) : "SCORE_MOD_ASSERTION: Thread neural network is null";
         assert(threadFeatureVector != null) : "SCORE_MOD_ASSERTION: Thread feature vector is null";
         assert(orf != null) : "SCORE_MOD_ASSERTION: ORF is null";
         assert(contigRead != null) : "SCORE_MOD_ASSERTION: Contig read is null";
-        // Note: originalScore can be negative, so no assertion on score >= 0
+        
+        final float originalScore = orf.orfScore;
+
+        // Phase 2: Prefilter based on score/length ratio
+        if (!nnAllOrfs && orf.length() > 0 && (originalScore / orf.length()) < prefilterCutoff) {
+            orf.orfScore = -1; // Explicitly mark the ORF as invalid
+            return;
+        }
         
         // Increment call counter first
         scoreModificationCalls++;
         
         if (!nnAllOrfs && originalScore < nnMinScore) {
-            return originalScore;
+            return;
         }
         
         // Debug output every 10000 calls to reduce spam but still track progress
@@ -770,6 +807,9 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
             // ASSERTION: Ensure modified score is reasonable
             assert(!Float.isNaN(modifiedScore) && !Float.isInfinite(modifiedScore)) : "SCORE_MOD_ASSERTION: Modified score is NaN or infinite: " + modifiedScore;
             
+            // Update the ORF's score directly
+            orf.orfScore = modifiedScore;
+            
             // Debug output for first few calls only
             if (nnDebug && scoreModificationCalls <= 5) {
                 System.err.println("DEBUG: NN output: " + output[0] + ", mult: " + mult + ", finalMult: " + finalMult);
@@ -778,15 +818,26 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
             
             // Log score data for CSV
             if (scoreCsvStream != null) {
-                String orfId = contigRead.id.split("\\s+")[0] + "_" + orf.start;
+                String orfId = contigRead.id + "_" + orf.start;
+                
+                String status = "Unknown";
+                if (trueGeneSet != null) {
+                    GeneQuad orfQuad = new GeneQuad(contigRead.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+                    if (trueGeneSet.contains(orfQuad)) {
+                        status = "TP";
+                    } else {
+                        status = "FP";
+                    }
+                }
+
                 ByteBuilder bb = new ByteBuilder();
                 bb.append(orfId).append(',');
                 bb.append(String.format(java.util.Locale.ROOT, "%.4f", originalScore)).append(',');
-                bb.append(String.format(java.util.Locale.ROOT, "%.4f", modifiedScore)).nl();
+                bb.append(String.format(java.util.Locale.ROOT, "%.4f", modifiedScore)).append(',');
+                bb.append(orf.length()).append(',');
+                bb.append(status).nl();
                 scoreCsvStream.add(bb, contigRead.numericID);
                }
-               
-            return modifiedScore;
             
         } catch (Exception e) {
             if (nnDebug) {
@@ -796,9 +847,6 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
             
             // ASSERTION: Neural network operations should not fail
             assert(false) : "SCORE_MOD_ASSERTION: Exception during neural network score modification: " + e.getMessage();
-            
-            // Fallback to original score
-            return originalScore;
         }
     }
     
@@ -982,5 +1030,40 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
             }
         }
         return map;
+    }
+
+    // --- PRIVATE HELPER METHODS ---
+
+    private File getLogDirectory(String outGff) {
+        if (outGff == null) { return null; }
+        File gffFile = new File(outGff);
+        String name = gffFile.getName();
+        if (name.endsWith(".gz")) { name = name.substring(0, name.length() - 3); }
+        if (name.endsWith(".gff")) { name = name.substring(0, name.length() - 4); }
+        if (name.endsWith(".tmp")) { name = name.substring(0, name.length() - 4); }
+        File parentDir = gffFile.getParentFile();
+        return (parentDir == null) ? new File(name) : new File(parentDir, name);
+    }
+
+    private void appendFalseNegativesToScores(ByteStreamWriter writer) {
+        if (trueGeneSet == null || calledCdsQuads == null) {
+            return;
+        }
+
+        // Find genes in true set that were not in the called set
+        Set<GeneQuad> falseNegatives = new HashSet<>(trueGeneSet);
+        falseNegatives.removeAll(calledCdsQuads);
+
+        for (GeneQuad fn : falseNegatives) {
+            String orfId = fn.contig() + "_" + (fn.start() - 1);
+            int length = fn.stop() - fn.start() + 1;
+            ByteBuilder bb = new ByteBuilder();
+            bb.append(orfId).append(',');
+            bb.append("0.0000").append(','); // Original Score
+            bb.append("0.0000").append(','); // Modified Score
+            bb.append(length).append(','); // Length
+            bb.append("FN").nl(); // Status
+            writer.add(bb, 0); // Use a dummy numeric ID
+        }
     }
 }

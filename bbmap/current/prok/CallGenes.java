@@ -99,46 +99,51 @@ public class CallGenes extends ProkObject {
         }
 		// Brandon 9-15 Assertion
         assert(outGff != null) : "outGff null after parsing. Args: " + Arrays.toString(args);
-        
-		fixExtensions();
-
-		// Brandon 9-15 Assertion
-		assert(outGff != null) : "outGff null after fixExtensions";
-
-        checkFileExistence();
-        checkStatics();
-        
-        ffoutGff=FileFormat.testOutput(outGff, FileFormat.GFF, null, true, overwrite, append, ordered);
-        ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
-        ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
-        ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
-        ffoutScore=FileFormat.testOutput(outScore, FileFormat.TEXT, null, true, overwrite, append, ordered);
-       // Brandon 9-15 Assertion
-  assert(ffoutGff != null) : "ffoutGff null. outGff=" + outGff + " overwrite=" + overwrite + " append=" + append;
-
-        
-        if(ffoutGff!=null){
-            assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
-        }
-        if(ffoutAmino!=null){
-            assert(!ffoutAmino.gff()) : "\nouta is for sequence data.  To output gff, please use out.";
-        }
-        if(ffout16S!=null){
-            assert(!ffout16S.gff()) : "\nout16S is for sequence data.  To output gff, please use out.";
-        }
-        if(ffout18S!=null){
-            assert(!ffout18S.gff()) : "\nout18S is for sequence data.  To output gff, please use out.";
-        }
-        
-        if(geneHistFile==null){geneHistBins=0;}
-        else{
-            assert(geneHistBins>1) : "geneHistBins="+geneHistBins+"; should be >1";
-            assert(geneHistDiv>=1) : "geneHistDiv="+geneHistDiv+"; should be >=1";
-        }
-        geneHist=geneHistBins>1 ? new long[geneHistBins] : null;
-
-        // HELPER HOOK: Initialize the helper with parsed arguments and files
-        helper.initialize(fnaList, outstream, outGff, compareToGff);
+              
+              // HELPER HOOK: Initialize the helper. This creates the log directory.
+              helper.initialize(fnaList, outstream, outGff, compareToGff);
+      
+        fixExtensions();
+      
+        // Brandon 9-15 Assertion
+        assert(outGff != null) : "outGff null after fixExtensions";
+      
+              // Now that the log directory exists, we can set the path for scores.csv
+              if(outScore == null) { //Do not override command line
+                  outScore = helper.generateScoresCsvPath(outGff);
+              }
+      
+              checkFileExistence();
+              checkStatics();
+              
+              ffoutGff=FileFormat.testOutput(outGff, FileFormat.GFF, null, true, overwrite, append, ordered);
+              ffoutAmino=FileFormat.testOutput(outAmino, FileFormat.FA, null, true, overwrite, append, ordered);
+              ffout16S=FileFormat.testOutput(out16S, FileFormat.FA, null, true, overwrite, append, ordered);
+              ffout18S=FileFormat.testOutput(out18S, FileFormat.FA, null, true, overwrite, append, ordered);
+              ffoutScore=FileFormat.testOutput(outScore, FileFormat.TEXT, null, true, overwrite, append, ordered);
+             // Brandon 9-15 Assertion
+        assert(ffoutGff != null) : "ffoutGff null. outGff=" + outGff + " overwrite=" + overwrite + " append=" + append;
+      
+              
+              if(ffoutGff!=null){
+                  assert(!ffoutGff.isSequence()) : "\nout is for gff files.  To output sequence, please use outa.";
+              }
+              if(ffoutAmino!=null){
+                  assert(!ffoutAmino.gff()) : "\nouta is for sequence data.  To output gff, please use out.";
+              }
+              if(ffout16S!=null){
+                  assert(!ffout16S.gff()) : "\nout16S is for sequence data.  To output gff, please use out.";
+              }
+              if(ffout18S!=null){
+                  assert(!ffout18S.gff()) : "\nout18S is for sequence data.  To output gff, please use out.";
+              }
+              
+              if(geneHistFile==null){geneHistBins=0;}
+              else{
+                  assert(geneHistBins>1) : "geneHistBins="+geneHistBins+"; should be >1";
+                  assert(geneHistDiv>=1) : "geneHistDiv="+geneHistDiv+"; should be >=1";
+              }
+              geneHist=geneHistBins>1 ? new long[geneHistBins] : null;
     }
     
     /*--------------------------------------------------------------*/
@@ -416,7 +421,7 @@ public class CallGenes extends ProkObject {
 
         ByteStreamWriter bswScore=makeBSW(ffoutScore);
         if(bswScore!=null){
-            bswScore.forcePrint("ORF_ID,Original_Score,Modified_Score\n");
+            bswScore.forcePrint("ORF_ID,Original_Score,Modified_Score,Length,Status\n");
         }
 
         ConcurrentReadOutputStream rosAmino=makeCros(ffoutAmino);
@@ -848,7 +853,11 @@ private void spawnThreads(final ConcurrentReadInputStream cris, final ByteStream
 					genesOutT += finalOrfs.size();
 					// Step 2: Tell the helper to format the genes and add them to OUR buffer.
 					helper.formatGffOutput(bb, finalOrfs, r1);
-					assert(bb.length() > 0) : "Buffer empty after formatGffOutput call";
+					// This assertion is too strict. It's possible for all ORFs to be filtered out,
+					// resulting in an empty buffer. The assertion should only fail if the initial
+					// list was not empty, but the buffer still is.
+					assert(finalOrfs.isEmpty() || bb.length() > 0) :
+						"Buffer empty after formatGffOutput call, but initial ORF list was not empty. ORF count: " + finalOrfs.size();
 					assert(bswGff != null) : "ByteStreamWriter is null";
 
 					if (geneHistT != null) {

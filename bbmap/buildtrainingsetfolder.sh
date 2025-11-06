@@ -86,9 +86,9 @@ for ref_fasta in "$INFOLDER"/*.fna.gz; do
     # STEP 1: Generate source GFFs
     echo "  [1/3] Generating gene calls..."
     # Get ALL candidates using 'nofilter'
-    callgenes.sh in="$ref_fasta" outgff="$ALL_GFF"  cds nofilter "${PASSTHRU_ARGS[@]}"
+    callgenes.sh in="$ref_fasta" outgff="$ALL_GFF" truegenes="$ref_gff" cds nofilter "${PASSTHRU_ARGS[@]}"
     # Get filtered, high-confidence predictions
-    callgenes.sh in="$ref_fasta" outgff="$PRED_GFF" cds "${PASSTHRU_ARGS[@]}"
+    callgenes.sh in="$ref_fasta" outgff="$PRED_GFF" truegenes="$ref_gff" cds "${PASSTHRU_ARGS[@]}"
 
     # STEP 2: Perform set operations
     echo "  [2/3] Performing set operations..."
@@ -101,10 +101,20 @@ for ref_fasta in "$INFOLDER"/*.fna.gz; do
 
     # STEP 3: Convert to labeled TSV
     echo "  [3/3] Converting to labeled TSV format..."
-    # Convert negatives with label -1, save to a final holding location
+    # Diagnostic: report GFF sizes and VECTOR-containing lines before conversion
+    echo "    Negatives GFF lines: $(wc -l < "$NEGATIVES_GFF" 2>/dev/null || echo 0)"
+    echo "    Negatives GFF VECTOR-containing lines: $(grep -c 'VECTOR=' "$NEGATIVES_GFF" 2>/dev/null || echo 0)"
+    echo "    Positives GFF lines: $(wc -l < "$POSITIVES_GFF" 2>/dev/null || echo 0)"
+    echo "    Positives GFF VECTOR-containing lines: $(grep -c 'VECTOR=' "$POSITIVES_GFF" 2>/dev/null || echo 0)"
+
+    # Convert negatives with label 0, save to a final holding location
     gff2tsv.sh in="$NEGATIVES_GFF" out="$TMPDIR/${base}.negatives.tsv" label=0
     # Convert positives with label 1, save to a final holding location
     gff2tsv.sh in="$POSITIVES_GFF" out="$TMPDIR/${base}.positives.tsv" label=1
+
+    # Diagnostic: report TSV sizes after conversion
+    echo "    Negatives TSV lines: $(wc -l < "$TMPDIR/${base}.negatives.tsv" 2>/dev/null || echo 0)"
+    echo "    Positives TSV lines: $(wc -l < "$TMPDIR/${base}.positives.tsv" 2>/dev/null || echo 0)"
 
     echo "--- Finished processing $base ---"
 done
@@ -120,10 +130,13 @@ echo "Assembling final master training set: $OUT_TSV"
 # Balance operations
 # Count total positives and negatives
 POS_COUNT=$(find "$TMPDIR" -name '*.positives.tsv' -exec cat {} + | wc -l)
+echo "Total positive examples: $POS_COUNT"
 NEG_COUNT=$(find "$TMPDIR" -name '*.negatives.tsv' -exec cat {} + | wc -l)
+echo "Total negative examples: $NEG_COUNT"
 
 # Calculate max allowed negatives (2x positives)
 MAX_NEG=$((POS_COUNT * 2))
+echo "Maximum allowed negatives after balancing: $MAX_NEG"
 
 # If too many negatives, subsample them
 if (( NEG_COUNT > MAX_NEG )); then
