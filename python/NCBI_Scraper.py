@@ -1,9 +1,16 @@
 import os
 import requests
 from bs4 import BeautifulSoup
+import argparse
 
+# --- Argument Parsing ---
+parser = argparse.ArgumentParser(description="Scrape prokaryotic genomes from NCBI.")
+parser.add_argument('--output_dir', type=str, default='NCBI_Datasets', help='The directory to save downloaded files.')
+args = parser.parse_args()
+
+# --- Global Configuration ---
 base_url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/"
-output_dir = "NCBI_Datasets"
+output_dir = args.output_dir
 os.makedirs(output_dir, exist_ok=True)
 
 DEBUG = True  # Set to True for debug output

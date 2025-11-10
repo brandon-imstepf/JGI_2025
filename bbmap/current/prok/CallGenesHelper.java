@@ -1,20 +1,16 @@
 package prok;
 
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.zip.GZIPInputStream;
 import java.util.Collections;
+import java.util.Locale;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 import dna.AminoAcid;
 import ml.CellNet;
@@ -22,12 +18,14 @@ import ml.CellNetParser;
 import stream.ConcurrentReadOutputStream;
 import stream.Read;
 import structures.ByteBuilder;
+import fileIO.ByteFile;
 import fileIO.ByteStreamWriter;
 import tracker.EntropyTracker;
 import java.io.File;
 import java.util.List;
 
 import shared.Shared;
+import shared.LineParser1;
 import gff.GffLine;
 
 public class CallGenesHelper {
@@ -66,6 +64,8 @@ public class CallGenesHelper {
     private static float nnMinScore = 0.0f;
     private static boolean nnAllOrfs = false;
     private static float prefilterCutoff = 0.1f;
+    private static final AtomicLong VECTOR_DEBUG_SEED = new AtomicLong(1L);
+    private static final int BASE_FEATURE_COUNT = 8;
     
     // Debug and assertion counters
     private static int netLoadAssertions = 0;
@@ -75,6 +75,9 @@ public class CallGenesHelper {
     // Thread-local neural network fields
     private CellNet threadNeuralNet = null;
     private float[] threadFeatureVector = null;
+    private boolean vectorDebugEnabled = false;
+    private double vectorDebugProbability = 0.0;
+    private Random vectorDebugRandom = null;
 
     // Logging Fields
     private boolean enableLogging = true;
@@ -148,6 +151,18 @@ public class CallGenesHelper {
         }
         if (a.equals("prefilter_cutoff")) {
             prefilterCutoff = Float.parseFloat(b);
+            return true;
+        }
+        if (a.equals("vectordebug") || a.equals("nnvectordebug")) {
+            vectorDebugEnabled = true;
+            vectorDebugProbability = (b == null || b.isEmpty()) ? 0.01 : Double.parseDouble(b);
+            ensureVectorDebugRandom();
+            return true;
+        }
+        if (a.equals("vectordebugprob") || a.equals("nnvectordebugprob")) {
+            vectorDebugProbability = Double.parseDouble(b);
+            vectorDebugEnabled = vectorDebugProbability > 0;
+            if (vectorDebugEnabled) { ensureVectorDebugRandom(); }
             return true;
         }
         
@@ -229,6 +244,11 @@ public class CallGenesHelper {
             }           
             // Increment assertion counter
             threadCloneAssertions++;
+        }
+        copy.vectorDebugEnabled = this.vectorDebugEnabled;
+        copy.vectorDebugProbability = this.vectorDebugProbability;
+        if (copy.vectorDebugEnabled && copy.vectorDebugProbability > 0) {
+            copy.ensureVectorDebugRandom();
         }
         
         return copy;
@@ -594,30 +614,69 @@ public class CallGenesHelper {
         // Fallback to original score
         return orf.orfScore;
     }
+
+    private void ensureVectorDebugRandom() {
+        if (vectorDebugRandom == null) {
+            vectorDebugRandom = new Random(VECTOR_DEBUG_SEED.getAndIncrement());
+        }
+    }
+
+    private boolean shouldEmitVectorDebug() {
+        return vectorDebugEnabled && vectorDebugProbability > 0.0 && vectorDebugRandom != null
+            && vectorDebugRandom.nextDouble() < vectorDebugProbability;
+    }
+
+    private void emitVectorDebugVector(Orf orf, Read contigRead, float[] featureVector, int usedLength) {
+        if (contigRead == null || featureVector == null || usedLength <= 0) { return; }
+        final String contigIdShort = contigRead.id != null ? contigRead.id.split("\\s+")[0] : "unknown";
+        StringBuilder sb = new StringBuilder();
+        sb.append(contigIdShort);
+        for (int i = 0; i < usedLength && i < featureVector.length; i++) {
+            sb.append('\t');
+            if (i < BASE_FEATURE_COUNT) {
+                sb.append(String.format(Locale.ROOT, "%.6f", featureVector[i]));
+            } else {
+                sb.append(featureVector[i] >= 0.5f ? '1' : '0');
+            }
+        }
+        if (trueGeneSet != null) {
+            GeneQuad quad = new GeneQuad(contigIdShort, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+            sb.append('\t').append(trueGeneSet.contains(quad) ? '1' : '0');
+        }
+        System.err.println("NN_VECTOR\t" + contigIdShort + ":" + (orf.start + 1) + "-" + (orf.stop + 1)
+            + "(" + (orf.strand == 0 ? '+' : '-') + ")\t" + sb);
+    }
     
     // --- STATIC HELPER METHODS ---
     
 private static Map<String, String> readFastaFile(String filePath) throws IOException {
     Map<String, String> sequences = new HashMap<>();
-    try (BufferedReader reader = openBufferedReader(filePath)) {
-        String line;
+    ByteFile bf = null;
+    try {
+        bf = ByteFile.makeByteFile(filePath, true);
+        ByteBuilder currentSequence = new ByteBuilder();
         String currentContigId = null;
-        StringBuilder currentSequence = new StringBuilder();
-        while ((line = reader.readLine()) != null) {
-            if (line.startsWith(">")) {
-                if (currentContigId != null) { 
-                    sequences.put(currentContigId, currentSequence.toString()); 
+        for (byte[] line = bf.nextLine(); line != null; line = bf.nextLine()) {
+            if (line.length == 0) { continue; }
+            if (line[0] == '>') {
+                if (currentContigId != null) {
+                    sequences.put(currentContigId, currentSequence.toString());
                 }
-                // Ensure we only use the ID before the first whitespace.
-                currentContigId = line.substring(1).split("\\s+")[0];
-                currentSequence.setLength(0);
+                int end = 1;
+                while (end < line.length && line[end] > ' ') { end++; }
+                currentContigId = (end > 1) ? new String(line, 1, end - 1) : "";
+                currentSequence.clear();
             } else {
-                currentSequence.append(line.trim());
+                for (byte b : line) {
+                    if (b > ' ') { currentSequence.append(b); }
+                }
             }
         }
-        if (currentContigId != null) { 
-            sequences.put(currentContigId, currentSequence.toString()); 
+        if (currentContigId != null) {
+            sequences.put(currentContigId, currentSequence.toString());
         }
+    } finally {
+        if (bf != null) { bf.close(); }
     }
     return sequences;
 }
@@ -637,33 +696,35 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
     private static TrueGeneData loadTrueGeneSet(String gffFilePath) throws IOException {
         int totalRows = 0, geneRows = 0;
         HashSet<GeneQuad> trueGeneSet = new HashSet<>();
-        try (BufferedReader br = openBufferedReader(gffFilePath)) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (line.startsWith("#") || line.trim().isEmpty()) continue;
+        ByteFile bf = null;
+        LineParser1 lp = new LineParser1('\t');
+        try {
+            bf = ByteFile.makeByteFile(gffFilePath, true);
+            for (byte[] line = bf.nextLine(); line != null; line = bf.nextLine()) {
+                if (line.length == 0 || line[0] == '#') { continue; }
                 totalRows++;
-                String[] cols = line.split("\t");
-                if (cols.length > 7 && cols[2].equalsIgnoreCase("CDS")) {
-                    geneRows++;
-                    try {
-                        String contig = cols[0];
-                        int start = Integer.parseInt(cols[3]);
-                        int stop = Integer.parseInt(cols[4]);
-                        byte strand = (byte) (cols[6].equals("+") ? 0 : 1);
-                        trueGeneSet.add(new GeneQuad(contig, start, stop, strand));
-                    } catch (NumberFormatException e) { /* Malformed line, ignore */ }
+                lp.set(line);
+                if (lp.terms() > 7) {
+                    String type = lp.parseString(2);
+                    if ("CDS".equalsIgnoreCase(type)) {
+                        geneRows++;
+                        try {
+                            String contig = lp.parseString(0);
+                            int start = lp.parseInt(3);
+                            int stop = lp.parseInt(4);
+                            String strandValue = lp.parseString(6);
+                            byte strand = (byte) (strandValue != null && strandValue.length() > 0 && strandValue.charAt(0) == '+' ? 0 : 1);
+                            trueGeneSet.add(new GeneQuad(contig, start, stop, strand));
+                        } catch (Exception e) {
+                            // Malformed line; skip but continue processing
+                        }
+                    }
                 }
             }
+        } finally {
+            if (bf != null) { bf.close(); }
         }
         return new TrueGeneData(trueGeneSet, totalRows, geneRows);
-    }
-    
-    private static BufferedReader openBufferedReader(String filename) throws IOException {
-        if (filename.endsWith(".gz")) {
-            return new BufferedReader(new InputStreamReader(new GZIPInputStream(new FileInputStream(filename))));
-        } else {
-            return new BufferedReader(new FileReader(filename));
-        }
     }
 
     private static float gcRatio(byte[] bases, int from, int to) {
@@ -786,9 +847,13 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
             System.err.println("DEBUG: Neural network called " + scoreModificationCalls + " times. Current ORF: " + orf.start + "-" + orf.stop + ", score: " + originalScore);
         }
         
+        final boolean emitVectorDebug = shouldEmitVectorDebug();
         try {
             // OPTIMIZED: Generate feature vector directly into float array to avoid string operations
-            generateFeatureVectorDirect(orf, contigRead, threadFeatureVector);
+            final int featureLength = generateFeatureVectorDirect(orf, contigRead, threadFeatureVector);
+            if (emitVectorDebug) {
+                emitVectorDebugVector(orf, contigRead, threadFeatureVector, featureLength);
+            }
             
             // Run neural network inference
             threadNeuralNet.applyInput(threadFeatureVector);
@@ -854,7 +919,7 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
      * Optimized feature vector generation that directly populates float array
      * Avoids expensive string operations and parsing
      */
-    private void generateFeatureVectorDirect(Orf orf, Read contigRead, float[] featureVector) {
+    private int generateFeatureVectorDirect(Orf orf, Read contigRead, float[] featureVector) {
         // Get cached contig stats
         String contigIdShort = contigRead.id.split("\\s+")[0];
         ContigStats stats = contigMetrics.get(contigIdShort);
@@ -929,6 +994,7 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
         if (idx > featureVector.length) {
             System.err.println("WARNING: Feature vector overflow. Expected: " + featureVector.length + ", got: " + idx);
         }
+        return idx;
     }
     
     /**
@@ -1012,22 +1078,23 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
 
     private static Map<GeneQuad, GffLine> loadGffToMap(String filePath) throws IOException {
         Map<GeneQuad, GffLine> map = new HashMap<>();
-        try (BufferedReader reader = openBufferedReader(filePath)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("#")) continue;
-                
-                GffLine gffLine = new GffLine(line.getBytes());
-
+        ByteFile bf = null;
+        try {
+            bf = ByteFile.makeByteFile(filePath, true);
+            for (byte[] line = bf.nextLine(); line != null; line = bf.nextLine()) {
+                if (line.length == 0 || line[0] == '#') { continue; }
+                GffLine gffLine = new GffLine(line);
                 if ("CDS".equalsIgnoreCase(gffLine.type)) {
                     try {
                         GeneQuad quad = new GeneQuad(gffLine.seqid, gffLine.start, gffLine.stop, (byte)gffLine.strand);
                         map.put(quad, gffLine);
                     } catch (Exception e) {
-                        System.err.println("Warning: Skipping malformed GFF line: " + line);
+                        System.err.println("Warning: Skipping malformed GFF line: " + new String(line));
                     }
                 }
             }
+        } finally {
+            if (bf != null) { bf.close(); }
         }
         return map;
     }

@@ -55,7 +55,6 @@ public class GffToTsv {
                 if (vectorIndex != -1) {
                     String fullVector = attributes.substring(vectorIndex + 7);
                     
-                    // --- NEW ROBUST LOGIC ---
                     String[] vectorParts = fullVector.split(",");
                     int numericalStartIndex = -1;
 
@@ -81,9 +80,9 @@ public class GffToTsv {
                             tsvBuilder.append(vectorParts[i].trim());
                         }
                         
+                        // The tsvBuilder now contains the full line, including the label from the vector.
+                        // The 'label' argument from the command line is ignored as it's redundant.
                         writer.write(tsvBuilder.toString());
-                        writer.write('\t');
-                        writer.write(label);
                         writer.newLine();
                     }
                     // If no numerical part is found in the vector, we simply skip writing the line.

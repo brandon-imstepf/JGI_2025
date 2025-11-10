@@ -38,50 +38,50 @@ for GENOME_FILE in "${INPUT_DIR}"/*.fna.gz; do
         END {gsub(/,/, "", tp_s); gsub(/,/, "", tp_st); gsub(/,/, "", fp_s); gsub(/,/, "", fp_st); gsub(/,/, "", fn_s); gsub(/,/, "", fn_st); printf "%s,%s,%s,%s,%s,%s", tp_s, tp_st, fp_s, fp_st, fn_s, fn_st}')
     echo "Prodigal,$BASE_NAME,$PRODIGAL_METRICS" >> "${OUTPUT_DIR}/summary_results.csv"
 
-    # --- 2. Run Glimmer (Commented out) ---
-    # echo "  Running Glimmer..."
-    # GLIMMER_SCRIPT_MODIFIED="${OUTPUT_DIR}/g3-iterated-modified.csh"
-    # GLIMMER_TAG="${OUTPUT_DIR}/${BASE_NAME}"
-    # GLIMMER_OUT_GFF="${OUTPUT_DIR}/${BASE_NAME}.glimmer.gff"
-    #
-    # # Create the modified glimmer script
-    # # (This is repeated each loop, but is fast and ensures correctness)
-    # cat << EOF > "$GLIMMER_SCRIPT_MODIFIED"
-    # #!/bin/csh
-    # set genome = \$1
-    # set tag = \$2
-    # set awkpath = "${GLIMMER_DIR}/scripts"
-    # set glimmerpath = "${GLIMMER_DIR}/bin"
-    # set glimmeropts = "-o50 -g110 -t30"
-    # \$glimmerpath/long-orfs -n -t 1.15 \$genome \$tag.longorfs >& /dev/null
-    # \$glimmerpath/extract -t \$genome \$tag.longorfs > \$tag.train
-    # \$glimmerpath/build-icm -r \$tag.icm < \$tag.train >& /dev/null
-    # \$glimmerpath/glimmer3 \$glimmeropts \$genome \$tag.icm \$tag.run1 >& /dev/null
-    # tail -n +2 \$tag.run1.predict > \$tag.coords
-    # set startuse = \`\$glimmerpath/start-codon-distrib -3 \$genome \$tag.coords\`
-    # \$glimmerpath/glimmer3 \$glimmeropts -P \$startuse \$genome \$tag.icm \$tag >& /dev/null
-    # EOF
-    # chmod +x "$GLIMMER_SCRIPT_MODIFIED"
-    #
-    # (cd "$OUTPUT_DIR" && ./"$(basename "$GLIMMER_SCRIPT_MODIFIED")" "${BASE_NAME}.fna" "$BASE_NAME") > /dev/null 2>&1
-    #
-    # # The g3-iterated.csh script uses tail +2, but the .predict file often has a header.
-    # # A more robust solution is to filter out any line that starts with '>' or is empty.
-    # grep -v '^>' "${GLIMMER_TAG}.predict" | grep -v '^$' | awk -v SEQ_ID="$SEQ_ID" 'BEGIN {OFS="\t"} { \
-    #     strand = ($4 ~ /^-/ ? "-" : "+"); \
-    #     print SEQ_ID, "Glimmer3", "CDS", $2, $3, $5, strand, "0", "gene_id \""$1"\";"; \
-    # }' > "$GLIMMER_OUT_GFF"
-    #
-    # GLIMMER_CMP_OUT="${OUTPUT_DIR}/${BASE_NAME}.glimmer.cmp"
-    # java -ea -cp "." gff.CompareGff in="$GLIMMER_OUT_GFF" ref="$TRUTH_GFF" > "$GLIMMER_CMP_OUT" 2>&1
-    #
-    # TP_START=$(grep "True Positive Start:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # TP_STOP=$(grep "True Positive Stop:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # FP_START=$(grep "False Positive Start:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # FP_STOP=$(grep "False Positive Stop:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # FN_START=$(grep "False Negative Start:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # FN_STOP=$(grep "False Negative Stop:" "$GLIMMER_CMP_OUT" | awk '{print $4}')
-    # echo "Glimmer,$BASE_NAME,$TP_START,$TP_STOP,$FP_START,$FP_STOP,$FN_START,$FN_STOP" >> "${OUTPUT_DIR}/summary_results.csv"
+    # --- 2. Run Glimmer ---
+    echo "  Running Glimmer..."
+    GLIMMER_SCRIPT_MODIFIED="${OUTPUT_DIR}/g3-iterated-modified.csh"
+    GLIMMER_TAG="${OUTPUT_DIR}/${BASE_NAME}"
+    GLIMMER_OUT_GFF="${OUTPUT_DIR}/${BASE_NAME}.glimmer.gff"
+
+    # Create (or refresh) a modified Glimmer driver that uses the bundled binaries
+    cat << EOF > "$GLIMMER_SCRIPT_MODIFIED"
+#!/bin/csh
+set genome = \$1
+set tag = \$2
+set awkpath = "${GLIMMER_DIR}/scripts"
+set glimmerpath = "${GLIMMER_DIR}/bin"
+set glimmeropts = "-o50 -g110 -t30"
+\$glimmerpath/long-orfs -n -t 1.15 \$genome \$tag.longorfs >& /dev/null
+\$glimmerpath/extract -t \$genome \$tag.longorfs > \$tag.train
+\$glimmerpath/build-icm -r \$tag.icm < \$tag.train >& /dev/null
+\$glimmerpath/glimmer3 \$glimmeropts \$genome \$tag.icm \$tag.run1 >& /dev/null
+tail -n +2 \$tag.run1.predict > \$tag.coords
+set startuse = \`\$glimmerpath/start-codon-distrib -3 \$genome \$tag.coords\`
+\$glimmerpath/glimmer3 \$glimmeropts -P \$startuse \$genome \$tag.icm \$tag >& /dev/null
+EOF
+    chmod +x "$GLIMMER_SCRIPT_MODIFIED"
+
+    (cd "$OUTPUT_DIR" && ./"$(basename "$GLIMMER_SCRIPT_MODIFIED")" "${BASE_NAME}.fna" "$BASE_NAME") > /dev/null 2>&1
+
+    # Convert the predict file to GFF, normalizing coordinate order for reverse-strand calls
+    grep -v '^>' "${GLIMMER_TAG}.predict" | grep -v '^$' | \
+        awk -v SEQ_ID="$SEQ_ID" 'BEGIN {OFS="\t"} {
+            start=$2; end=$3;
+            if (start > end) { tmp=start; start=end; end=tmp; }
+            strand = ($4 ~ /^-/ ? "-" : "+");
+            print SEQ_ID, "Glimmer3", "CDS", start, end, $5, strand, "0", "gene_id \""$1"\";";
+        }' > "$GLIMMER_OUT_GFF"
+
+    GLIMMER_METRICS=$(java -ea -cp "." gff.CompareGff in="$GLIMMER_OUT_GFF" ref="$TRUTH_GFF" 2>&1 | awk ' \
+        /True Positive Start:/ {tp_s=$4} \
+        /True Positive Stop:/ {tp_st=$4} \
+        /False Positive Start:/ {fp_s=$4} \
+        /False Positive Stop:/ {fp_st=$4} \
+        /False Negative Start:/ {fn_s=$4} \
+        /False Negative Stop:/ {fn_st=$4} \
+        END {gsub(/,/, "", tp_s); gsub(/,/, "", tp_st); gsub(/,/, "", fp_s); gsub(/,/, "", fp_st); gsub(/,/, "", fn_s); gsub(/,/, "", fn_st); printf "%s,%s,%s,%s,%s,%s", tp_s, tp_st, fp_s, fp_st, fn_s, fn_st}')
+    echo "Glimmer,$BASE_NAME,$GLIMMER_METRICS" >> "${OUTPUT_DIR}/summary_results.csv"
 
     # --- 3. Run GeneMarkS2 ---
     echo "  Running GeneMarkS2..."
@@ -89,7 +89,9 @@ for GENOME_FILE in "${INPUT_DIR}"/*.fna.gz; do
     GENEMARK_CMP_OUT="${OUTPUT_DIR}/${BASE_NAME}.genemark.cmp"
 
     perl "$GENEMARK_EXEC" --seq "${OUTPUT_DIR}/${BASE_NAME}.fna" --genome-type bacteria --format gff3 --output "$GENEMARK_OUT_GFF"
-    GENEMARK_METRICS=$(java -ea -cp "." gff.CompareGff in="$GENEMARK_OUT_GFF" ref="$TRUTH_GFF" 2>&1 | awk ' \
+    GENEMARK_CDS_GFF="${GENEMARK_OUT_GFF%.gff}.cds.gff"
+    awk '$3=="CDS"' "$GENEMARK_OUT_GFF" > "$GENEMARK_CDS_GFF"
+    GENEMARK_METRICS=$(java -ea -cp "." gff.CompareGff in="$GENEMARK_CDS_GFF" ref="$TRUTH_GFF" 2>&1 | awk ' \
         /True Positive Start:/ {tp_s=$4} \
         /True Positive Stop:/ {tp_st=$4} \
         /False Positive Start:/ {fp_s=$4} \
