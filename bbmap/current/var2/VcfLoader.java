@@ -10,8 +10,26 @@ import shared.Shared;
 import shared.Tools;
 import structures.ListNum;
 
+/**
+ * Multithreaded loader for VCF and VAR format files.
+ * Uses producer-consumer pattern with one thread reading lines and 
+ * multiple worker threads parsing variants to maximize I/O and CPU efficiency.
+ * 
+ * Supports both custom VAR format and standard VCF format with optional
+ * coverage and extended information parsing.
+ * 
+ * @author Brian Bushnell
+ * @contributor Isla
+ */
 public class VcfLoader {
 	
+	/**
+	 * Creates a VcfLoader for the specified file and format.
+	 * 
+	 * @param fname_ Input filename
+	 * @param scafMap_ Scaffold mapping for variant coordinate resolution
+	 * @param vcfMode_ true for VCF format, false for VAR format
+	 */
 	public VcfLoader(String fname_, ScafMap scafMap_, boolean vcfMode_){
 		fname=fname_;
 		scafMap=scafMap_;
@@ -22,6 +40,15 @@ public class VcfLoader {
 		ffin=FileFormat.testInput(fname, FileFormat.TXT, null, true, false);
 	}
 	
+	/**
+	 * Loads variants from a file, auto-detecting format.
+	 * 
+	 * @param ff Input file format
+	 * @param scafMap Scaffold mapping for coordinate resolution
+	 * @param loadCoverage Whether to parse coverage information from VCF
+	 * @param extendedInfo Whether to parse extended statistical fields
+	 * @return VarMap containing loaded variants
+	 */
 	public static VarMap loadFile(FileFormat ff, ScafMap scafMap, boolean loadCoverage, boolean extendedInfo){
 		final VarMap varMap;
 		if(ff.var()){
@@ -32,6 +59,13 @@ public class VcfLoader {
 		return varMap;
 	}
 	
+	/**
+	 * Loads variants from a VAR format file.
+	 * 
+	 * @param fname Input filename
+	 * @param scafMap Scaffold mapping for coordinate resolution
+	 * @return VarMap containing loaded variants
+	 */
 	public static VarMap loadVarFile(String fname, ScafMap scafMap){
 		VcfLoader loader=new VcfLoader(fname, scafMap, false);
 		ArrayList<ProcessThread> alpt=loader.spawnThreads(false, false);
@@ -39,6 +73,15 @@ public class VcfLoader {
 		return loader.varMap;
 	}
 	
+	/**
+	 * Loads variants from a VCF format file.
+	 * 
+	 * @param fname Input filename
+	 * @param scafMap Scaffold mapping for coordinate resolution
+	 * @param loadCoverage Whether to parse coverage information
+	 * @param extendedInfo Whether to parse extended statistical fields
+	 * @return VarMap containing loaded variants
+	 */
 	public static VarMap loadVcfFile(String fname, ScafMap scafMap, boolean loadCoverage, boolean extendedInfo){
 		VcfLoader loader=new VcfLoader(fname, scafMap, true);
 		ArrayList<ProcessThread> alpt=loader.spawnThreads(loadCoverage, extendedInfo);
@@ -46,7 +89,14 @@ public class VcfLoader {
 		return loader.varMap;
 	}
 	
-	/** Spawn process threads */
+	/**
+	 * Spawns producer and consumer threads for parallel file processing.
+	 * Creates one reader thread (tid=0) and multiple parser threads.
+	 * 
+	 * @param loadCoverage Whether to parse coverage information
+	 * @param extendedInfo Whether to parse extended statistical fields
+	 * @return List of spawned ProcessThread objects
+	 */
 	private ArrayList<ProcessThread> spawnThreads(boolean loadCoverage, boolean extendedInfo){
 		
 		//Do anything necessary prior to processing
@@ -72,6 +122,11 @@ public class VcfLoader {
 		return alpt;
 	}
 	
+	/**
+	 * Waits for all processing threads to complete and aggregates results.
+	 * 
+	 * @param alpt List of ProcessThread objects to wait for
+	 */
 	private void waitForFinish(ArrayList<ProcessThread> alpt){
 		//Wait for completion of all threads
 		boolean allSuccess=true;
@@ -94,6 +149,13 @@ public class VcfLoader {
 		if(!allSuccess){errorState=true;}
 	}
 	
+	/**
+	 * Parses a single line from VAR format file.
+	 * Handles both data lines (variants) and header lines (metadata).
+	 * 
+	 * @param line Raw line bytes
+	 * @return Parsed Var object or null for header lines
+	 */
 	private Var loadVarLine(byte[] line){
 		if(line==null || line.length<1){return null;}
 		if(line[0]!='#'){
@@ -118,11 +180,20 @@ public class VcfLoader {
 		}
 	}
 	
+	/**
+	 * Parses a single line from VCF format file.
+	 * Handles both data lines (variants) and header lines (metadata).
+	 * 
+	 * @param line Raw line bytes
+	 * @param loadCoverage Whether to parse coverage information
+	 * @param loadExtended Whether to parse extended statistical fields
+	 * @return Parsed Var object or null for header lines
+	 */
 	private Var loadVcfLine(byte[] line, boolean loadCoverage, boolean loadExtended){
 		if(line==null || line.length<1){return null;}
 		if(line[0]!='#'){
 			try {
-				return Var.fromVCF(line, scafMap, loadCoverage, loadExtended);
+				return VcfToVar.fromVCF(line, scafMap, loadCoverage, loadExtended);
 			} catch (Exception e) {
 				System.err.println("Unable to parse VCF line: '"+new String(line)+"'");
 				return null;
@@ -148,8 +219,20 @@ public class VcfLoader {
 		}
 	}
 	
+	/**
+	 * Worker thread that either reads file bytes (tid=0) or parses variants (tid>0).
+	 * Implements producer-consumer pattern using ArrayBlockingQueue for coordination.
+	 */
 	private class ProcessThread extends Thread{
 		
+		/**
+		 * Creates a ProcessThread with specified role.
+		 * 
+		 * @param tid_ Thread ID (0=reader, >0=parser)
+		 * @param alpt_ Thread list (only used by reader thread)
+		 * @param loadCoverage_ Whether to parse coverage information
+		 * @param extendedInfo_ Whether to parse extended statistical fields
+		 */
 		ProcessThread(int tid_, ArrayList<ProcessThread> alpt_, boolean loadCoverage_, boolean extendedInfo_){
 			tid=tid_;
 			alpt=(tid==0 ? alpt_ : null);
@@ -157,6 +240,9 @@ public class VcfLoader {
 			extendedInfo=extendedInfo_;
 		}
 		
+		/**
+		 * Main thread execution - either reads bytes or parses variants.
+		 */
 		@Override
 		public void run(){
 			//Do anything necessary prior to processing
@@ -172,16 +258,22 @@ public class VcfLoader {
 			success=true;
 		}
 		
+		/**
+		 * Entry point for byte reading thread (tid=0).
+		 */
 		void processBytes(){
 			processBytes0();
 			
 			success=true;
 		}
 		
+		/**
+		 * Reads file line-by-line and distributes batches to parser threads.
+		 * Handles header lines directly and queues data lines for parsing.
+		 */
 		public final void processBytes0(){
 			if(verbose){outstream.println("tid "+tid+" started processBytes.");}
 
-//			ByteFile.FORCE_MODE_BF1=true;
 			ByteFile.FORCE_MODE_BF2=true;
 			ByteFile bf=ByteFile.makeByteFile(ffin);
 			
@@ -190,7 +282,6 @@ public class VcfLoader {
 			ArrayList<byte[]> list=new ArrayList<byte[]>(LIST_SIZE);
 			for(byte[] line=bf.nextLine(); line!=null; line=bf.nextLine()){
 				assert(line!=null);
-//				outstream.println("a");
 				if(line[0]=='#'){
 					if(vcfMode){loadVcfLine(line, false, false);}
 					else{loadVarLine(line);}
@@ -216,6 +307,12 @@ public class VcfLoader {
 			if(verbose){outstream.println("tid "+tid+" closed stream.");}
 		}
 		
+		/**
+		 * Adds a batch of lines to the processing queue.
+		 * Blocks if queue is full.
+		 * 
+		 * @param list Batch of lines to queue
+		 */
 		final void putBytes(ListNum<byte[]> list){
 			if(verbose){outstream.println("tid "+tid+" putting blist size "+list.size());}
 			while(list!=null){
@@ -223,13 +320,18 @@ public class VcfLoader {
 					inq.put(list);
 					list=null;
 				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
 			}
 			if(verbose){outstream.println("tid "+tid+" done putting blist");}
 		}
 		
+		/**
+		 * Takes a batch of lines from the processing queue.
+		 * Blocks if queue is empty.
+		 * 
+		 * @return Batch of lines to process
+		 */
 		final ListNum<byte[]> takeBytes(){
 			if(verbose){outstream.println("tid "+tid+" taking blist");}
 			ListNum<byte[]> list=null;
@@ -237,7 +339,6 @@ public class VcfLoader {
 				try {
 					list=inq.take();
 				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
 			}
@@ -245,6 +346,10 @@ public class VcfLoader {
 			return list;
 		}
 		
+		/**
+		 * Parser thread main loop - processes batches of variant lines.
+		 * Continues until poison pill is received, then forwards it to next parser.
+		 */
 		void makeVars(){
 			if(verbose){outstream.println("tid "+tid+" started makeVars.");}
 			
@@ -276,17 +381,21 @@ public class VcfLoader {
 
 			putBytes(POISON_BYTES);
 			if(verbose){outstream.println("tid "+tid+" done poisoning bytes.");}
-			
-//			putReads(POISON_READS);
-//			if(verbose){outstream.println("tid "+tid+" done poisoning reads.");}
 		}
 		
 		/*--------------------------------------------------------------*/
+		/*----------------           Fields             ----------------*/
+		/*--------------------------------------------------------------*/
 
+		/** Thread list (only used by reader thread) */
 		final ArrayList<ProcessThread> alpt;
+		/** Thread ID (0=reader, >0=parser) */
 		final int tid;
+		/** Whether to parse coverage information */
 		final boolean loadCoverage;
+		/** Whether to parse extended statistical fields */
 		final boolean extendedInfo;
+		/** Success flag */
 		boolean success=false;
 	}
 	
@@ -294,33 +403,43 @@ public class VcfLoader {
 	/*----------------         Final Fields         ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	/** Primary input file */
+	/** Primary input filename */
 	final String fname;
+	/** Input file format */
 	final FileFormat ffin;
 
+	/** Queue for passing line batches between threads */
 	final ArrayBlockingQueue<ListNum<byte[]>> inq;
 	
+	/** Number of parser threads to spawn */
 	final int threads;
 	
+	/** Header lines from input file */
 	ArrayList<byte[]> header=new ArrayList<byte[]>();
 	
 	/** Print status messages to this output stream */
 	protected PrintStream outstream=System.err;
 	
+	/** Scaffold mapping for coordinate resolution */
 	final ScafMap scafMap;
+	/** Container for loaded variants */
 	final VarMap varMap;
+	/** true for VCF format, false for VAR format */
 	final boolean vcfMode;
 	
+	/** Error state flag */
 	boolean errorState=false;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------        Static Fields         ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	static final ListNum<byte[]> POISON_BYTES=new ListNum<byte[]>(null, -1);
+	/** Poison pill to signal end of processing */
+	static final ListNum<byte[]> POISON_BYTES=new ListNum<byte[]>(null, Long.MAX_VALUE, true, false);
+	/** Batch size for line processing */
 	static final int LIST_SIZE=200;
+	/** Default number of threads */
 	public static int DEFAULT_THREADS=3;
+	/** Verbose output flag */
 	static boolean verbose=false;
-	
-	
 }

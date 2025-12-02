@@ -3,7 +3,7 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified April 30, 2019
+Last modified July 10, 2025
 
 Description:  Filters VCF files by position or other attributes.
 Filtering by optional fields (such as allele frequency) require VCF files
@@ -63,6 +63,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -103,7 +104,7 @@ calcXmx () {
 calcXmx "$@"
 
 filtervcf() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP var2.FilterVCF $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP var2.FilterVCF $@"
 	echo $CMD >&2
 	eval $CMD
 }

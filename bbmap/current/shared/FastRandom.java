@@ -8,11 +8,12 @@ import java.util.Random;
  * Safe for use in constructors and thread initialization.
  * 
  * @author Brian Bushnell
- * @contributor Isla (Highly-customized Claude instance)
+ * @contributor Isla
  * @date May 14, 2025
  */
 public final class FastRandom extends java.util.Random {
 	
+    /** Required for Serializable interface compatibility */
     private static final long serialVersionUID = 1L;
     
     @Override
@@ -96,21 +97,26 @@ public final class FastRandom extends java.util.Random {
         if(bound<=0) {
             throw new IllegalArgumentException("bound must be positive");
         }
+        
         // Fast path for powers of 2
         if((bound & (bound-1))==0) {
             return (int)((bound * (nextLong() >>> 33)) >>> 31);
         }
-        int r, u;
+        
+        // General case for any bound
+        int bits, val;
         do {
-            u = (int)(nextLong() >>> 1);
-            r = u % bound;
-        } while(u - r + (bound - 1) < 0);
-        return r;
+            bits = (int)(nextLong() >>> 33);
+            val = bits % bound;
+        } while(bits-val+(bound-1)<0); // Reject to avoid modulo bias
+        
+        return val;
     }
     
     /**
      * Returns a pseudorandom int value between origin (inclusive) and bound (exclusive).
      */
+    @Override
     public int nextInt(int origin, int bound) {
         if(origin>=bound) {
             throw new IllegalArgumentException("origin must be less than bound");
@@ -121,20 +127,25 @@ public final class FastRandom extends java.util.Random {
     /**
      * Returns a pseudorandom long value between 0 (inclusive) and bound (exclusive).
      */
+    @Override
     public long nextLong(long bound) {
-        if (bound <= 0) {
+        if(bound<=0) {
             throw new IllegalArgumentException("bound must be positive");
         }
-        // Use Java 17+ implementation if available, otherwise fallback
-        // Fallback: rejection sampling
-        long r, m = bound - 1;
-        if ((bound & m) == 0L)  // power of two
-            return nextLong() & m;
-        long u = nextLong() >>> 1;
-        while ((r = u % bound) + (bound - 1) - u < 0L) {
-            u = nextLong() >>> 1;
+        
+        // Fast path for powers of 2
+        if((bound & (bound-1))==0) {
+            return nextLong() & (bound-1);
         }
-        return r;
+        
+        // General case for any bound
+        long bits, val;
+        do {
+            bits = nextLong() >>> 1;
+            val = bits % bound;
+        } while(bits-val+(bound-1)<0); // Reject to avoid modulo bias
+        
+        return val;
     }
     
     /**

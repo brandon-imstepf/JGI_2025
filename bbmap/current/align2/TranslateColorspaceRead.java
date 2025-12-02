@@ -10,17 +10,34 @@ import dna.Data;
 import shared.KillSwitch;
 import shared.Shared;
 import shared.Tools;
+import shared.Vector;
 import stream.Read;
 import stream.SiteScore;
 import var.Variation;
 import var.Varlet;
 
+/**
+ * Provides colorspace sequence translation and realignment for SOLiD sequencing data.
+ * Handles conversion between colorspace and basespace representations with alignment
+ * correction, indel processing, and variant calling support.
+ *
+ * @author Brian Bushnell
+ * @date April 26, 2010
+ */
 public final class TranslateColorspaceRead {
 	
+	/** Constructs a colorspace translator with the specified multiple sequence aligner.
+	 * @param msa The multiple sequence aligner for realignment operations */
 	public TranslateColorspaceRead(MSA msa){
 		msaBS=msa;
 	}
 	
+	/**
+	 * Converts colorspace read alignment data to string representation for debugging.
+	 * @param crbmq Array containing colors, colorspace reference, basespace reference,
+	 * match string, and quality scores
+	 * @return Formatted string representation of the alignment data
+	 */
 	private static CharSequence toString(byte[][] crbmq) {
 		StringBuilder sb=new StringBuilder();
 		for(int i=0; i<2; i++){
@@ -40,6 +57,11 @@ public final class TranslateColorspaceRead {
 		return sb;
 	}
 	
+	/**
+	 * Converts colorspace sequence to string representation.
+	 * @param colors Colorspace sequence data
+	 * @return String representation of colorspace data
+	 */
 	private static String toStringCS(byte[] colors){
 		StringBuilder sb=new StringBuilder(colors.length);
 		for(byte b : colors){
@@ -156,7 +178,7 @@ public final class TranslateColorspaceRead {
 			if(r.length()==(r.stop-r.start+1)){
 				
 				byte[] ref=chacs.getBytes(r.start, r.stop);
-				AminoAcid.reverseComplementBasesInPlace(ref);
+				Vector.reverseComplementInPlaceFast(ref);
 				scoreNoIndel=msa.scoreNoIndelsAndMakeMatchString(r.bases, ref, 0, matchR);
 				r.match=matchR[0];
 			}
@@ -182,7 +204,7 @@ public final class TranslateColorspaceRead {
 
 				byte[] ref=chacs.getBytes(minLoc, maxLoc);
 				//			System.err.println("Aligning:\n"+new String(r.bases)+"\n"+new String(ref));
-				AminoAcid.reverseComplementBasesInPlace(ref);
+				Vector.reverseComplementInPlace(ref);
 
 				//			System.err.println("Aligning:\n"+new String(r.bases)+"\n"+new String(ref));
 				int[] max=msa.fillLimited(r.bases, ref, 0, ref.length-1, scoreNoIndel, r.gaps);
@@ -219,6 +241,15 @@ public final class TranslateColorspaceRead {
 //		assert(r.match[r.match.length-1]!='X') : r.toText(false);
 	}
 	
+	/**
+	 * Performs new-style realignment of a colorspace read with enhanced features.
+	 *
+	 * @param r Read to realign
+	 * @param padding Padding bases around alignment region
+	 * @param recur Whether to allow recursive realignment
+	 * @param minScore Minimum alignment score threshold
+	 * @param forbidIndels Whether to disallow insertions and deletions
+	 */
 	public void realign_new(Read r, int padding, boolean recur, int minScore, boolean forbidIndels){
 		SiteScore ss=r.toSite();
 		TranslateColorspaceRead.realign_new(ss, r.bases, msaBS, padding, recur ? 1 : 0, minScore, forbidIndels, true, r.numericID);
@@ -652,6 +683,11 @@ public final class TranslateColorspaceRead {
 		assert(Read.CHECKSITE(ss, bases, id));
 	}
 	
+	/**
+	 * Validates that all bases in the array are positive values.
+	 * @param bases Array of sequence bases to validate
+	 * @return true if all bases are positive, false otherwise
+	 */
 	private static final boolean checkArray(byte[] bases){
 		for(byte b : bases){
 //			assert(b>0) : Arrays.toString(bases);
@@ -661,6 +697,12 @@ public final class TranslateColorspaceRead {
 	}
 	
 	
+	/**
+	 * Translates colorspace quality scores to basespace quality scores.
+	 * Uses weighted averaging of adjacent colorspace quality values.
+	 * @param qcs Colorspace quality scores
+	 * @return Basespace quality scores with length qcs.length+1
+	 */
 	public static byte[] translateQuality(byte[] qcs){
 		byte[] qbs=new byte[qcs.length+1];
 		qbs[0]=qcs[0];
@@ -673,6 +715,14 @@ public final class TranslateColorspaceRead {
 		return qbs;
 	}
 	
+	/**
+	 * Corrects insertion and deletion artifacts in colorspace alignments.
+	 * Processes match strings to fix alignment inconsistencies and validates results.
+	 *
+	 * @param crbmq Array containing alignment data (colors, references, match, quality)
+	 * @param r Read being processed
+	 * @return Number of indels fixed, or -1 if correction failed
+	 */
 	private static int fixIndels(byte[][] crbmq, Read r){
 		
 		byte[] colors=crbmq[0];
@@ -1511,6 +1561,15 @@ public final class TranslateColorspaceRead {
 	}
 	
 	
+	/**
+	 * Calculates minimum distance from specified position to nearest mismatch.
+	 *
+	 * @param colors Query colorspace sequence
+	 * @param colorRef Reference colorspace sequence
+	 * @param loc Position to measure distance from
+	 * @param limit Maximum distance to search
+	 * @return Minimum distance to nearest mismatch, or limit+1 if no mismatch found
+	 */
 	private static int distToMismatch(byte[] colors, byte[] colorRef, int loc, int limit) {
 		int min=limit+1;
 		int left=Tools.max(0, loc-limit);
@@ -1529,6 +1588,14 @@ public final class TranslateColorspaceRead {
 	}
 	
 	
+	/**
+	 * Verifies match string accuracy against reference sequence with strand handling.
+	 * Reverses complement for minus strand reads during verification process.
+	 *
+	 * @param r Read with match string to verify
+	 * @param loud Whether to print detailed error messages
+	 * @return true if match string is valid, false otherwise
+	 */
 	public static boolean verifyMatchString2(Read r, boolean loud){
 		int maxVars=0;
 		
@@ -1558,8 +1625,8 @@ public final class TranslateColorspaceRead {
 		
 //		byte[] original=Arrays.copyOf(call, call.length);
 		if(r.strand()==Shared.MINUS){
-			AminoAcid.reverseComplementBasesInPlace(r.bases);
-			Tools.reverseInPlace(r.quality);
+			Vector.reverseComplementInPlaceFast(r.bases);
+			Vector.reverseInPlace(r.quality);
 		}
 		
 		
@@ -1582,13 +1649,24 @@ public final class TranslateColorspaceRead {
 		}
 		
 		if(r.strand()==Shared.MINUS){
-			AminoAcid.reverseComplementBasesInPlace(r.bases);
-			Tools.reverseInPlace(r.quality);
+			Vector.reverseComplementInPlace(r.bases);
+			Vector.reverseInPlace(r.quality);
 		}
 		return b;
 	}
 	
 	
+	/**
+	 * Verifies alignment match string against query and reference sequences.
+	 * Checks each position for correct match/mismatch/indel representation.
+	 *
+	 * @param call Query sequence bases
+	 * @param ref Reference sequence bases
+	 * @param match Match string to verify
+	 * @param rstart Starting position in reference
+	 * @param loud Whether to print debugging information on failure
+	 * @return true if match string accurately represents the alignment
+	 */
 	public static boolean verifyMatchString(byte[] call, byte[] ref, byte[] match, int rstart, boolean loud){
 		
 		boolean ok=true;
@@ -1739,8 +1817,8 @@ public final class TranslateColorspaceRead {
 		
 //		byte[] original=Arrays.copyOf(call, call.length);
 		if(read.strand()==Shared.MINUS){
-			AminoAcid.reverseComplementBasesInPlace(call);
-			Tools.reverseInPlace(quality);
+			Vector.reverseComplementInPlaceFast(call);
+			Vector.reverseInPlace(quality);
 		}
 		
 		
@@ -2121,19 +2199,23 @@ public final class TranslateColorspaceRead {
 		//assert(checkArray(call));
 		//Don't exit early and forget to undo this!
 		if(read.strand()==Shared.MINUS){
-			AminoAcid.reverseComplementBasesInPlace(call);
-			Tools.reverseInPlace(quality);
+			Vector.reverseComplementInPlace(call);
+			Vector.reverseInPlace(quality);
 		}
 		//assert(checkArray(call));
 		return vars;
 	}
 	
 
+	/** Multiple sequence aligner instance for basespace alignment operations */
 	public MSA msaBS;
 
+	/** Controls verbose debugging output for colorspace translation operations */
 	public static boolean verbose=false;
 	
+	/** Whether to discard insertions containing no-called bases */
 	public static boolean DISCARD_NOCALLED_INSERTIONS=false;
+	/** Whether to throw exceptions when match string verification fails */
 	public static boolean THROW_EXCEPTION_ON_VERIFY_FAILURE=true; //Throws an exception when "verify match string" fails
 	
 }

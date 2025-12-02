@@ -1,8 +1,2 @@
-*.class
-Xcalcmem.sh
-compile.sh
-libbbtoolsjni.so
-TableLoaderLockFreeU.*
-TableReaderU.*
-BBMask_noSam.*
-TaxApp.*
+current/barcode/prob/
+current/barcode/prob/*.*

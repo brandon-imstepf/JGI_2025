@@ -48,7 +48,7 @@ minreadmapq=4   Ignore alignments with lower mapq.
 contigs=        Comma-delimited list of contig names to include. These 
                 should have no spaces, or underscores instead of spaces.
 secondary=f     Include secondary alignments.
-supplimentary=f Include supplimentary alignments.
+supplementary=f Include supplementary alignments.
 invert=f        Invert sam filters.
 
 Java Parameters:
@@ -60,6 +60,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -100,7 +101,7 @@ calcXmx () {
 calcXmx "$@"
 
 bbrealign() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP var2.Realign $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP var2.Realign $@"
 	echo $CMD >&2
 	eval $CMD
 }

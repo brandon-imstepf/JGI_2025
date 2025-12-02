@@ -94,11 +94,14 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		checkFileExistence(); //Ensure files can be read and written
 		loader.checkInput();
 		
-		BinObject.tree=(sketchContigs || sketchClusters) ? BinObject.loadTree() : null;
-		sketcher=(sketchContigs || sketchClusters || sketchOutput) ? new BinSketcher(16, 2000) : null;
+		BinObject.tree=(sketchContigs || sketchClusters || sketchOutput || GradeBins.useTree) ? BinObject.loadTree() : null;
+		final int minSketchSize=(sketchContigs || sketchClusters ? 2000 : 50000);
+		sketcher=(sketchContigs || sketchClusters || sketchOutput) ? new BinSketcher(16, minClusterSize) : null;
 		binner.sketcher=loader.sketcher=sketcher;
 		Sketch.defaultParams.format=DisplayParams.FORMAT_JSON;
 		KmerProb.load();
+		
+		GradeBins.loadStuff();
 	}
 	
 	/*--------------------------------------------------------------*/
@@ -160,12 +163,12 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			
 			else if(a.equals("clusterbytax") || a.equals("clusterbytaxid")){
 				clusterByTaxid=Parse.parseBoolean(b);
-			}else if(a.equals("clusterbytet") || a.equals("clusterbytetramer")){
-				clusterByTetramer=Parse.parseBoolean(b);
 			}else if(a.equals("refine") || a.equals("refineclusters")){
 				refineClusters=Parse.parseBoolean(b);
 			}else if(a.equals("residue") || a.equals("processresidue")){
 				processResidue=Parse.parseBoolean(b);
+			}else if(a.equals("recluster") || a.equalsIgnoreCase("reclusterClusters")){
+			    reclusterClusters=Parse.parseBoolean(b);
 			}else if(a.equals("purify") || a.equalsIgnoreCase("purifyClusters")){
 				purifyClusters=Parse.parseBoolean(b);
 			}else if(a.equals("fuse") || a.equalsIgnoreCase("fuseclusters")){
@@ -178,10 +181,14 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 				SpectraCounter.call16S=Parse.parseBoolean(b);
 			}else if(a.equalsIgnoreCase("18S") || a.equalsIgnoreCase("call18S")){
 				SpectraCounter.call18S=Parse.parseBoolean(b);
-			}else if(a.equalsIgnoreCase("ssu")){
+			}else if(a.equalsIgnoreCase("ssu") || a.equalsIgnoreCase("callssu")){
 				SpectraCounter.call16S=SpectraCounter.call18S=Parse.parseBoolean(b);
 			}else if(a.equalsIgnoreCase("ssuid") || a.equalsIgnoreCase("minssuid")){
 				Oracle.minSSUID=Float.parseFloat(b);
+			}else if(a.equalsIgnoreCase("hhmult")){
+				Oracle.hhMult=Float.parseFloat(b);
+			}else if(a.equalsIgnoreCase("cagamult")){
+				Oracle.cagaMult=Float.parseFloat(b);
 			}else if(a.equalsIgnoreCase("loadthreads")){
 				SpectraCounter.loadThreadsOverride=Integer.parseInt(b);
 			}else if(a.equalsIgnoreCase("comparethreads")){
@@ -195,6 +202,18 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			}else if(a.equals("aligner") || a.equals("idaligner")){
 				GeneCaller.useIDAligner=(b==null || !("f".equals(b) || "false".equals(b)));
 				if(GeneCaller.useIDAligner) {aligner.Factory.setType(b);}
+			}
+			
+			else if(a.equalsIgnoreCase("quickclade")){
+				GradeBins.runQuickClade=Parse.parseBoolean(b);
+			}else if(a.equalsIgnoreCase("spectra")){
+				GradeBins.spectraFile=b;
+			}else if(a.equalsIgnoreCase("server")){
+				GradeBins.cladeServer=Parse.parseBoolean(b);
+			}else if(a.equalsIgnoreCase("callgenes")){
+				GradeBins.callGenes=Parse.parseBoolean(b);
+			}else if(a.equalsIgnoreCase("usetree")){
+				GradeBins.useTree=Parse.parseBoolean(b);
 			}
 			
 			else if(a.equalsIgnoreCase("sketchcontigs")){
@@ -286,6 +305,11 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		return parser;
 	}
 	
+	/**
+	 * Reprocesses original arguments to update binner and loader configurations.
+	 * Updates network cutoff thresholds and prints final threshold settings.
+	 * Called after initial binning setup to apply dynamic parameter adjustments.
+	 */
 	private void reprocessArgs() {
 		for(int i=0; i<originalArgs.length; i++){
 			String arg=originalArgs[i];
@@ -479,6 +503,27 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			Oracle.bsw=null;
 		}
 		
+		if(reclusterClusters) {
+			t2.start();
+			outstream.println("Reclustering clusters:");
+			fastComp=(binner.fastComparisons.get());
+			slowComp=(binner.slowComparisons.get());
+			int split=binner.recluster(binMap, 
+					Binner.purifyStringency, 10000);
+			fastComparisonsPurify+=(binner.fastComparisons.get()-fastComp);
+			slowComparisonsPurify+=(binner.slowComparisons.get()-slowComp);
+			
+//			if(split>0) {
+//				binMap.clear(true);
+//				binList=Binner.toBinList(contigList, 0);
+//				assert(isValid(binList, false));
+//				binMap.addAll(binList, Binner.minSizeToMerge);
+//			}
+			
+			t2.stop("Split "+split+" clusters:   ");
+			if(printStepwiseCC) {printCC(binMap.contigList, 10000, sizeMap);}
+		}
+		
 		if(purifyClusters) {
 			t2.start();
 			outstream.println("Purifying clusters:");
@@ -546,15 +591,18 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 //			}
 //			if(a.size()<1000 || i>=4) {break;}
 //		}
-		
-		if(report!=null) {GradeBins.printClusterReport(bins, minClusterSize, report);}
+
+		t2.start();
+		ArrayList<BinStats> stats=GradeBins.toBinStats(null, bins, minClusterSize, true, true, true);
+		t2.stop("Analyzing bins:");
+		if(report!=null) {GradeBins.printClusterReport(stats, minClusterSize, report);}
 		outputClusters(outPattern, bins, minClusterSize, minContigsPerCluster);
 		
 		if(verbose){outstream.println("Finished; closing streams.");}
 		
 		//Report timing and results
 		outstream.println();
-		t.stopAndPrint();
+		t.stop("Total Time:");
 
 		long totalComp=binner.slowComparisons.get();
 		fastComp=binner.fastComparisons.get();
@@ -626,8 +674,6 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 //		}
 //		outstream.println();
 //		
-
-		ArrayList<BinStats> stats=GradeBins.toStats(bins, minClusterSize);
 		
 		if(loud && validation) {
 			outstream.println();
@@ -650,12 +696,30 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		}
 	}
 	
+	/**
+	 * Prints clustering completeness and contamination statistics.
+	 * Converts contigs to bins and calculates quality scores for validation.
+	 *
+	 * @param contigs List of contigs to analyze
+	 * @param minSize Minimum size threshold for bin inclusion
+	 * @param sizeMap Mapping of taxonomic IDs to genome sizes
+	 */
 	static void printCC(ArrayList<Contig> contigs, int minSize, IntLongHashMap sizeMap) {
 		ArrayList<Bin> bins=Binner.toBinList(contigs, minSize);
 		String s=GradeBins.toScoreString(bins, minSize, sizeMap);
 		outstream.println(s);
 	}
 	
+	/**
+	 * Formats statistics strings with consistent padding and percentages.
+	 * Creates aligned output for comparison statistics display.
+	 *
+	 * @param term Description label for the statistic
+	 * @param len Minimum length for term padding
+	 * @param a Primary count value
+	 * @param b Secondary count value for percentage calculation
+	 * @return Formatted string with term, count, and percentage
+	 */
 	static String formatString(String term, int len, long a, long b) {
 		float pct=a*100f/(a+b);
 		while(term.length()<len) {term=term+" ";}
@@ -664,6 +728,16 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		return(term+"\t"+apad+"\t"+String.format("%.3f%%", pct));
 	}
 	
+	/**
+	 * Writes clustered contigs to output files using specified pattern.
+	 * Supports individual bin files with % substitution or single combined output.
+	 * Optionally writes small clusters to a separate chaff file.
+	 *
+	 * @param pattern Output file pattern with % for bin numbering
+	 * @param clusters List of bins/clusters to output
+	 * @param minBases Minimum base count threshold for main output
+	 * @param minContigs Minimum contig count threshold for main output
+	 */
 	private void outputClusters(String pattern, ArrayList<? extends Bin> clusters, long minBases, int minContigs) {
 //		if(pattern==null) {return;}
 		if(pattern!=null) {
@@ -681,7 +755,7 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 				chaff=ByteStreamWriter.makeBSW(pattern.replaceFirst("%", "chaff"), overwrite, append, true);
 			}
 			
-			final ByteBuilder bb=new ByteBuilder(8192);
+			final ByteBuilder bb=new ByteBuilder(32768);
 			for(int i=0; i<clusters.size(); i++) {
 				Bin a=clusters.get(i);
 				if(a.size()>=minBases && a.numContigs()>=minContigs) {
@@ -702,7 +776,7 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			}
 			if(chaff!=null) {chaff.poisonAndWait();}
 		}else {
-			final ByteBuilder bb=new ByteBuilder(8192);
+			final ByteBuilder bb=new ByteBuilder(32768);
 			final ByteStreamWriter bsw=ByteStreamWriter.makeBSW(pattern, overwrite, append, true);
 			for(int i=0; i<clusters.size(); i++) {
 				Bin a=clusters.get(i);
@@ -734,17 +808,35 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		}
 	}
 	
+	/**
+	 * Prints a bin to output stream, handling both clusters and single contigs.
+	 * Dispatches to appropriate print method based on bin type.
+	 *
+	 * @param a Bin to print (cluster or single contig)
+	 * @param bsw Output stream writer (may be null)
+	 * @param bb Byte buffer for efficient output
+	 * @param id Numeric identifier for the bin
+	 */
 	private void printBin(Bin a, ByteStreamWriter bsw, ByteBuilder bb, int id) {
 		if(a.isCluster()) {printCluster((Cluster)a, bsw, bb, id);}
 		else {printContig((Contig)a, bsw, bb, id);}
 	}
 	
+	/**
+	 * Prints all contigs in a cluster to the output stream.
+	 * Sorts contigs within cluster and buffers output for efficiency.
+	 *
+	 * @param a Cluster containing multiple contigs
+	 * @param bsw Output stream writer (may be null)
+	 * @param bb Byte buffer for batched output
+	 * @param id Numeric identifier for the cluster
+	 */
 	private void printCluster(Cluster a, ByteStreamWriter bsw, ByteBuilder bb, int id) {
 		ArrayList<Contig> contigs=a.contigs;
 		Collections.sort(contigs);
 		for(Contig c : contigs) {
 			c.appendTo(bb, id);
-			if(bb.length>4096) {
+			if(bb.length>=16384) {
 				if(bsw!=null) {bsw.print(bb);}
 				bb.clear();
 			}
@@ -753,6 +845,14 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 		bb.clear();
 	}
 	
+	/**
+	 * Prints a single contig to the output stream.
+	 *
+	 * @param c Contig to print
+	 * @param bsw Output stream writer (may be null)
+	 * @param bb Byte buffer for output formatting
+	 * @param id Numeric identifier for the contig
+	 */
 	private void printContig(Contig c, ByteStreamWriter bsw, ByteBuilder bb, int id) {
 		c.appendTo(bb, id);
 		if(bsw!=null && !bb.isEmpty()) {bsw.print(bb);}
@@ -861,12 +961,6 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			//Grab the first ListNum of reads
 			ListNum<Read> ln=cris.nextList();
 
-			//Check to ensure pairing is as expected
-			if(ln!=null && !ln.isEmpty()){
-				Read r=ln.get(0);
-//				assert(ffin1.samOrBam() || (r.mate!=null)==cris.paired()); //Disabled due to non-static access
-			}
-
 			//As long as there is a nonempty read list...
 			while(ln!=null && ln.size()>0){
 //				if(verbose){outstream.println("Fetched "+reads.size()+" reads.");} //Disabled due to non-static access
@@ -887,6 +981,11 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 			}
 		}
 		
+		/**
+		 * Processes a batch of reads from the input stream.
+		 * Validates reads, tracks statistics, and filters based on processing results.
+		 * @param ln List container holding reads to process
+		 */
 		void processList(ListNum<Read> ln){
 
 			//Grab the actual read list from the ListNum
@@ -963,29 +1062,46 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 
 	/** Primary output file path; should contain % symbol for bins */
 	private String outPattern=null;
+	/** Whether to write small clusters to a separate chaff file */
 	private boolean writeChaff=false;
 	
 	/** Override output file extension */
 	private String extout=null;
 	
+	/** Output file path for coverage data */
 	private String covOut=null;
+	/** Output file path for feature vectors */
 	static String vectorOut=null;
+	/** Output file path for bin size histogram */
 	private String sizeHist=null;
+	/** Output file path for cluster quality report */
 	private String report=null;
 	
+	/** List of loaded contigs for binning */
 	private ArrayList<Contig> contigList;
 	
+	/** Whether to perform initial clustering by taxonomic ID */
 	boolean clusterByTaxid=false;
-	boolean clusterByTetramer=true;
+	/** Whether to perform grid-based cluster refinement */
 	boolean refineClusters=true;
+	/** Whether to process residual unclustered contigs */
 	boolean processResidue=true;
+	/** Whether to recluster existing clusters for improvement */
+	boolean reclusterClusters=false;
+	/** Whether to remove contaminating contigs from clusters */
 	boolean purifyClusters=true;
+	/** Whether to merge compatible clusters together */
 	boolean fuseClusters=true;
+	/** Number of passes for initial edge-following clustering */
 	int followEdge1Passes=0;
+	/** Number of passes for secondary edge-following clustering */
 	int followEdge2Passes=5;
+	/** Stringency threshold for initial edge-following phase */
 	float edgeStringency1=0.25f;
+	/** Stringency threshold for secondary edge-following phase */
 	float edgeStringency2=1.1f;
 	
+	/** Multiplier for clustering strictness (lower values = more strict) */
 	float strictnessMult=1f;
 	
 	/*--------------------------------------------------------------*/
@@ -1000,18 +1116,28 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 //	/** Number of bases retained */
 //	protected long basesOut=0;
 
+	/** Count of clusters written to output */
 	private long clustersWritten=0;
+	/** Count of contigs written to output */
 	private long contigsWritten=0;
+	/** Count of bases written to output */
 	private long basesWritten=0;
 	
+	/** Data loader for reading input contigs and coverage information */
 	private DataLoader loader;
+	/** Clustering engine for binning contigs into genome-level groups */
 	private Binner binner;
 	
 
+	/** Count of fast comparisons during initial clustering */
 	private long fastComparisonsCreate=0, slowComparisonsCreate=0;
+	/** Count of fast comparisons during cluster refinement */
 	private long fastComparisonsRefine=0, slowComparisonsRefine=0, netComparisonsRefine=0;
+	/** Count of fast comparisons during edge-following phases */
 	private long fastComparisonsEdge=0, midComparisonsEdge=0, slowComparisonsEdge=0, netComparisonsEdge=0;
+	/** Count of fast comparisons during residue processing */
 	private long fastComparisonsResidue=0, slowComparisonsResidue=0;
+	/** Count of fast comparisons during cluster purification */
 	private long fastComparisonsPurify=0, slowComparisonsPurify=0;
 	
 	
@@ -1021,11 +1147,14 @@ public class QuickBin extends BinObject implements Accumulator<QuickBin.ProcessT
 
 //	private final Timer phaseTimer=new Timer();
 	
+	/** Sketching engine for MinHash signatures of contigs and clusters */
 	private final BinSketcher sketcher;
 	
 	@Override
 	public final ReadWriteLock rwlock() {return rwlock;}
+	/** Read-write lock for thread-safe operations */
 	private final ReadWriteLock rwlock=new ReentrantReadWriteLock();
+	/** Original command-line arguments for reprocessing */
 	private String[] originalArgs;
 	
 	/*--------------------------------------------------------------*/

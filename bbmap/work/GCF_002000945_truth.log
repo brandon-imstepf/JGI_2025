@@ -1,0 +1,27 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+Executing prok.CallGenes [in=Validation_NCBI_10/GCF_002000945.1_ASM200094v1_genomic.fna.gz, outgff=bbmap_fresh/work/GCF_002000945_truth.gff, compareto=Validation_NCBI_10/GCF_002000945.1_ASM200094v1_genomic.gff.gz, truegenes=Validation_NCBI_10/GCF_002000945.1_ASM200094v1_genomic.gff.gz, nn=slurm/cycles_trained_8dims_400k_ncbi_total_8f_6l_small_11-12_new.bbnet, nncutoff=0.6, strength=1.0, oracle=truth, oracle_debug=NZ_CP009187.1:17467-18513:-, log=t]
+
+DEBUG: Neural network file set to: slurm/cycles_trained_8dims_400k_ncbi_total_8f_6l_small_11-12_new.bbnet
+DEBUG: Neural network cutoff set to: 0.6
+DEBUG: Neural network strength set to: 1.0
+DEBUG: Neural network called 10000 times. Current ORF: 1219751-1220026, score: 82.58206
+DEBUG: Neural network called 20000 times. Current ORF: 2955772-2956314, score: 164.118
+ORACLE_DEBUG rejecting NZ_CP009187.1:17467-18513- (oracle=0, originalScore=530.3425)
+ORACLE_DEBUG removing NZ_CP009187.1:17467-18513- from final path
+Time:                         	5.912 seconds.
+Reads Processed:           1 	0.00k reads/sec
+Bases Processed:       4411k 	0.75m bases/sec
+Lines Out:              3200
+Bytes Out:              502k
+
+Approx Coding Fraction:	       0.8080
+CDS Out:              	         3620
+16S Out:              	            1
+23S Out:              	            1
+5S Out:               	            1
+tRNA Out:             	           21
+
+True Genes File: Validation_NCBI_10/GCF_002000945.1_ASM200094v1_genomic.gff.gz
+Total Rows detected in .gff = 8486
+.gff Gene Rows = 4168
+Total Matches = 0

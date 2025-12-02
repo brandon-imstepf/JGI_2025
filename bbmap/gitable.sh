@@ -7,8 +7,8 @@ Last modified July 29, 2019
 
 Description:  Creates gitable.int1d from accession files:
 ftp://ftp.ncbi.nih.gov/pub/taxonomy/accession2taxid/*.accession2taxid.gz
-This is for use of gi numbers, which are deprecated by NCBI, and areneither 
-necessary nor recemmended if accession numbers are present.
+This is for use of gi numbers, which are deprecated by NCBI, and are neither 
+necessary nor recommended if accession numbers are present.
 See TaxonomyGuide and fetchTaxonomy.sh for more information.
 
 Usage:  gitable.sh shrunk.dead_nucl.accession2taxid.gz,shrunk.dead_prot.accession2taxid.gz,shrunk.dead_wgs.accession2taxid.gz,shrunk.nucl_gb.accession2taxid.gz,shrunk.nucl_wgs.accession2taxid.gz,shrunk.pdb.accession2taxid.gz,shrunk.prot.accession2taxid.gz gitable.int1d.gz
@@ -21,6 +21,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -64,7 +65,7 @@ calcXmx "$@"
 
 
 gitable() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP tax.GiToTaxid $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP tax.GiToTaxid $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -26,7 +26,7 @@ mincov=0        If positive and depth is below this, change ref to N.
 maxindel=-1     If positive, ignore indels longer than this.
 noframeshifts=f Ignore indels that are not a multiple of 3 in length.
 
-Renaming:
+Renaming parameters:
 name=           Optionally rename sequences to this.
 addnumbers=f    Add _1 and so forth to ensure sequence names are unique.
 prefix=t        Use the name as a prefix to the old name, instead of replacing
@@ -43,6 +43,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -83,7 +84,7 @@ calcXmx () {
 calcXmx "$@"
 
 applyvariants() {
-	local CMD="java $EA $EOOM $z -cp $CP var2.ApplyVariants $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP var2.ApplyVariants $@"
 	echo $CMD >&2
 	eval $CMD
 }

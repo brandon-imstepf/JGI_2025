@@ -18,7 +18,7 @@ shist=<file>    (scorehist) Output for variant score histogram.
 overwrite=f     (ow) Set to false to force the program to abort rather than
 bgzip=f         Use bgzip for gzip compression.
 
-Processing Mode (choose one only):
+Mode Parameters (choose one only):
 subtract=t      Subtract all other files from the first file.
 union=f         Make a union of all files.
 intersection=f  Make an intersection of all files.
@@ -38,6 +38,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -78,7 +79,7 @@ calcXmx () {
 calcXmx "$@"
 
 comparevcf() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP var2.CompareVCF $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP var2.CompareVCF $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -27,7 +27,7 @@ tree=<file>     Specify a TaxTree file like tree.taxtree.gz.
 gi=<file>       Specify a gitable file like gitable.int1d.gz. Only needed
                 if gi numbers will be used.  On Genepool, use 'auto'.
 accession=      Specify one or more comma-delimited NCBI accession to taxid
-                files.  Only needed if accesions will be used; requires ~45GB
+                files.  Only needed if accessions will be used; requires ~45GB
                 of memory.  On Genepool, use 'auto'.
 level=null      Set to a taxonomic level like phylum to just print that level.
 minlevel=-1     For multi-level printing, do not print levels below this.
@@ -51,6 +51,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -91,7 +92,7 @@ calcXmx () {
 calcXmx "$@"
 
 taxonomy() {
-	local CMD="java $EA $EOOM $z -cp $CP tax.PrintTaxonomy $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP tax.PrintTaxonomy $@"
 	echo $CMD >&2
 	eval $CMD
 }

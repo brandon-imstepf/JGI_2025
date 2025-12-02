@@ -6,6 +6,7 @@ import java.util.Arrays;
 import fileIO.FileFormat;
 import fileIO.ReadWrite;
 import shared.Shared;
+import shared.Tools;
 import structures.ListNum;
 
 /**
@@ -21,6 +22,8 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 	/*----------------        Initialization        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Protected constructor for subclasses.
+	 * @param fname_ Input file name or identifier */
 	protected ConcurrentReadInputStream(String fname_){fname=fname_;}
 	
 	/**
@@ -154,11 +157,12 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 			cris=new ConcurrentGenericReadInputStream(ris1, ris2, maxReads);
 			
 		}else if(ff1.samOrBam()){
-			
-			ReadInputStream ris1=new SamReadInputStream(ff1, keepSamHeader, FASTQ.FORCE_INTERLEAVED);
-			ReadInputStream ris2=(ff2==null ? null : new SamReadInputStream(ff2, false, false));
-			cris=new ConcurrentGenericReadInputStream(ris1, ris2, maxReads);
-			
+			int threads=Tools.mid(1, SamStreamer.DEFAULT_THREADS, Shared.threads());
+			ReadInputStream ris1=new SamReadInputStream(ff1, keepSamHeader, threads, maxReads);
+			cris=new ConcurrentGenericReadInputStream(ris1, null, maxReads);
+			assert(!cris.paired()) : "\nff1="+ff1+"\nff2="+ff2+
+				"\nris1="+ris1+"\nris2"+null+"\nris1paired"+ris1.paired()+
+				"\np1="+cris.producers()[0]+"\np2"+cris.producers()[2];
 		}else if(ff1.bread()){
 //			assert(false) : ff1;
 			RTextInputStream rtis=new RTextInputStream(ff1, ff2, maxReads);
@@ -207,6 +211,18 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 	/*----------------         Outer Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Convenience method to read all reads from files into memory.
+	 * Creates stream, starts processing, and collects all reads.
+	 *
+	 * @param maxReads Maximum number of reads or pairs to process
+	 * @param keepSamHeader If input is SAM format, store header in shared object
+	 * @param ff1 Primary input file format (required)
+	 * @param ff2 Secondary input file format (optional, for paired reads)
+	 * @param qf1 Primary quality file path (optional)
+	 * @param qf2 Secondary quality file path (optional)
+	 * @return ArrayList containing all reads from the input files
+	 */
 	public static ArrayList<Read> getReads(long maxReads, boolean keepSamHeader,
 			FileFormat ff1, FileFormat ff2, String qf1, String qf2){
 		ConcurrentReadInputStream cris=getReadInputStream(maxReads, keepSamHeader, ff1, ff2, qf1, qf2, Shared.USE_MPI, Shared.MPI_KEEP_ALL);
@@ -214,6 +230,12 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 		return cris.getReads();
 	}
 	
+	/**
+	 * Reads all remaining reads from this stream into memory.
+	 * Processes lists sequentially, collecting reads and properly
+	 * returning list containers to avoid memory leaks.
+	 * @return ArrayList containing all reads from this stream
+	 */
 	public ArrayList<Read> getReads(){
 		
 		ListNum<Read> ln=nextList();
@@ -244,6 +266,7 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 		started=true;
 	}
 	
+	/** Returns true if the stream has been started */
 	public final boolean started(){return started;}
 
 	
@@ -302,20 +325,30 @@ public abstract class ConcurrentReadInputStream implements ConcurrentReadStreamI
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Buffer length for read processing, from shared configuration */
 	final int BUF_LEN=Shared.bufferLen();;
+	/** Number of buffers for concurrent processing, from shared configuration */
 	final int NUM_BUFFS=Shared.numBuffers();
+	/** Maximum data size per buffer, from shared configuration */
 	final long MAX_DATA=Shared.bufferData();
+	/** Input filename or stream identifier */
 	public final String fname;
+	/** Whether to allow reads of unequal lengths in paired files */
 	public boolean ALLOW_UNEQUAL_LENGTHS=false;
+	/** Whether the stream has been started */
 	boolean started=false;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Static Fields        ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Whether to show progress indicators during processing */
 	public static boolean SHOW_PROGRESS=false;
+	/** Whether to show detailed progress with time intervals */
 	public static boolean SHOW_PROGRESS2=false; //Indicate time in seconds between dots.
+	/** Number of reads between progress updates */
 	public static long PROGRESS_INCR=1000000;
+	/** Whether to remove discarded reads from memory immediately */
 	public static boolean REMOVE_DISCARDED_READS=false;
 	
 }

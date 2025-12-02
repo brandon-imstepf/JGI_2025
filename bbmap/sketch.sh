@@ -16,7 +16,7 @@ Standard parameters:
 in=<file>           A fasta file containing one or more sequences.
 out=<file>          Output filename.  If multiple files are desired it must
                     contain the # symbol.
-blacklist=<file>    Ignore keys in this sketch file.  Additionaly, there are
+blacklist=<file>    Ignore keys in this sketch file.  Additionally, there are
                     built-in blacklists that can be specified:
                        nt:      Blacklist for nt
                        refseq:  Blacklist for Refseq
@@ -59,7 +59,7 @@ density=            If this flag is set (to a number between 0 and 1),
                     genomic kmers are used.  For example, at density=0.001,
                     a 4.5Mbp bacteria will get a 4500-kmer sketch.
 
-Metadata flags (optional; intended for single-sketch mode):
+Metadata parameters (optional; intended for single-sketch mode):
 taxid=-1            Set the NCBI taxid.
 imgid=-1            Set the IMG id.
 spid=-1             Set the JGI sequencing project id.
@@ -69,7 +69,7 @@ fname=              Set fname (normally the file name).
 meta_=              Set an arbitrary metadata field.
                     For example, meta_Month=March.
 
-Taxonomy-specific flags:
+Taxonomy-specific parameters:
 tree=               Specify a taxtree file.  On Genepool, use 'auto'.
 gi=                 Specify a gitable file.  On Genepool, use 'auto'.
 accession=          Specify one or more comma-delimited NCBI accession to
@@ -86,7 +86,7 @@ tossjunk=t          For taxa mode, discard taxonomically uninformative
                     with a tax level NO_RANK, of parent taxid of LIFE.
 silva=f             Parse headers using Silva or semicolon-delimited syntax.
 
-Ribosomal flags, which allow SSU sequences to be attached to sketches:
+Ribosomal parameters, which allow SSU sequences to be attached to sketches:
 processSSU=t        Run gene-calling to detect ribosomal SSU sequences.
 16Sfile=<file>      Optional file of 16S sequences, annotated with TaxIDs.
 18Sfile=<file>      Optional file of 18S sequences, annotated with TaxIDs.
@@ -108,6 +108,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -148,7 +149,7 @@ calcXmx () {
 calcXmx "$@"
 
 sketch() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.SketchMaker $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.SketchMaker $@"
 	echo $CMD >&2
 	eval $CMD
 }

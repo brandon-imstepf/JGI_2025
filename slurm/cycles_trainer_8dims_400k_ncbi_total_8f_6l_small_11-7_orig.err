@@ -19,3 +19,4 @@ Exception in thread "main" java.lang.AssertionError: -49, 357, 1, 354, 358
 	at ml.Trainer.spawnThreads(Trainer.java:872)
 	at ml.Trainer.process(Trainer.java:726)
 	at ml.Trainer.main(Trainer.java:54)
+[2025-11-12T10:12:46.605] error: *** JOB 19671070 ON n0029.dori0 CANCELLED AT 2025-11-12T10:12:46 DUE TO TIME LIMIT ***

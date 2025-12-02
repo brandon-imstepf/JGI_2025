@@ -36,6 +36,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -69,7 +70,7 @@ calcXmx () {
 calcXmx "$@"
 
 countbarcodes() {
-	local CMD="java $EA $EOOM $z -cp $CP barcode.CountBarcodes $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP barcode.CountBarcodes $@"
 	echo $CMD >&2
 	eval $CMD
 }

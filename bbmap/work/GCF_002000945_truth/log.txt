@@ -1,0 +1,10 @@
+False positive rate: 0.000000
+False negative rate: 0.238004
+True positives: 3176
+False positives: 0
+False negatives: 992
+Cutoff: 0.6
+Highest score: 47277.812
+Lowest score: 83.49866
+Average score: 1413.0813625057037
+Median score: 1012.18115

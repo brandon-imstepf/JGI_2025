@@ -5,8 +5,9 @@ import java.util.Arrays;
 import java.util.BitSet;
 
 import dna.Data;
-import fileIO.TextFile;
+import fileIO.ByteFile;
 import shared.KillSwitch;
+import shared.LineParser1;
 import shared.Parse;
 import shared.PreParser;
 import shared.Tools;
@@ -18,6 +19,12 @@ import stream.SiteScore;
 public class CompareSamFiles {
 	
 	
+	/**
+	 * Program entry point that compares two SAM files and outputs reads with differing mapping status.
+	 * Processes command-line arguments to specify input files, quality thresholds, and comparison parameters.
+	 * Uses BitSet structures to track true positives and false positives across both input files.
+	 * @param args Command-line arguments including in1, in2, reads, thresh, quality, parsecustom, blasr
+	 */
 	public static void main(String[] args){
 
 		{//Preparse block for help, config files, and outstream
@@ -74,24 +81,25 @@ public class CompareSamFiles {
 			System.err.println("Warning - number of expected reads was not specified.");
 		}
 
-		TextFile tf1=new TextFile(in1, false);
-		TextFile tf2=null;
-		if(in2!=null){tf2=new TextFile(in2, false);}
+		ByteFile tf1=ByteFile.makeByteFile(in1, false);
+		ByteFile tf2=null;
+		if(in2!=null){tf2=ByteFile.makeByteFile(in2, false);}
 
 		BitSet truePos1=new BitSet((int)reads);
 		BitSet falsePos1=new BitSet((int)reads);
 		BitSet truePos2=new BitSet((int)reads);
 		BitSet falsePos2=new BitSet((int)reads);
 		
-		String s=null;
+		byte[] s=null;
 		
-		TextFile tf;
+		ByteFile tf;
+		LineParser1 lp=new LineParser1('\t');
 		{
 			tf=tf1;
 			for(s=tf.nextLine(); s!=null; s=tf.nextLine()){
-				char c=s.charAt(0);
+				byte c=s[0];
 				if(c!='@'/* && c!=' ' && c!='\t'*/){
-					SamLine sl=new SamLine(s);
+					SamLine sl=new SamLine(lp.set(s));
 					if(sl.primary()){
 						Read r=sl.toRead(parsecustom);
 						if(parsecustom && r.originalSite==null){
@@ -112,9 +120,9 @@ public class CompareSamFiles {
 		if(tf2!=null){
 			tf=tf2;
 			for(s=tf.nextLine(); s!=null; s=tf.nextLine()){
-				char c=s.charAt(0);
+				byte c=s[0];
 				if(c!='@'/* && c!=' ' && c!='\t'*/){
-					SamLine sl=new SamLine(s);
+					SamLine sl=new SamLine(lp.set(s));
 					if(sl.primary()){
 						Read r=sl.toRead(parsecustom);
 						if(parsecustom && r.originalSite==null){
@@ -140,9 +148,9 @@ public class CompareSamFiles {
 			tf=tf1;
 			tf.reset();
 			for(s=tf.nextLine(); s!=null; s=tf.nextLine()){
-				char c=s.charAt(0);
+				byte c=s[0];
 				if(c!='@'/* && c!=' ' && c!='\t'*/){
-					SamLine sl=new SamLine(s);
+					SamLine sl=new SamLine(lp.set(s));
 //					assert(false) : s+", "+truePos1.cardinality()+", "+truePos2.cardinality()+", "+falsePos1.cardinality()+", "+falsePos2.cardinality()+", ";
 					if(sl.primary()){
 						Read r=sl.toRead(parsecustom);
@@ -170,9 +178,9 @@ public class CompareSamFiles {
 			tf=tf2;
 			tf.reset();
 			for(s=tf.nextLine(); s!=null; s=tf.nextLine()){
-				char c=s.charAt(0);
+				byte c=s[0];
 				if(c!='@'/* && c!=' ' && c!='\t'*/){
-					SamLine sl=new SamLine(s);
+					SamLine sl=new SamLine(lp.set(s));
 					if(sl.primary()){
 						Read r=sl.toRead(parsecustom);
 						int id=(int)r.numericID;
@@ -322,6 +330,22 @@ public class CompareSamFiles {
 	
 	
 	
+	/**
+	 * Evaluates whether an alignment represents a correct hit using strict criteria.
+	 * Compares strand, contig/chromosome, and position coordinates within specified threshold.
+	 * Uses absolute position differences for both start and stop coordinates.
+	 *
+	 * @param ss The alignment site score to evaluate
+	 * @param trueChrom True chromosome number
+	 * @param trueStrand True strand orientation
+	 * @param trueStart True start position
+	 * @param trueStop True stop position
+	 * @param thresh Maximum allowed position deviation
+	 * @param originalContig Original contig name from alignment
+	 * @param contig Current contig name
+	 * @param cstart Contig-relative start position
+	 * @return true if alignment meets strict correctness criteria
+	 */
 	public static boolean isCorrectHit(SiteScore ss, int trueChrom, byte trueStrand, int trueStart, int trueStop, int thresh,
 			byte[] originalContig, byte[] contig, int cstart){
 		if(ss.strand!=trueStrand){return false;}
@@ -339,6 +363,22 @@ public class CompareSamFiles {
 	}
 	
 	
+	/**
+	 * Evaluates whether an alignment represents a correct hit using loose criteria.
+	 * Similar to isCorrectHit but uses OR logic for position matching instead of AND.
+	 * Allows hits where either start OR stop position is within threshold.
+	 *
+	 * @param ss The alignment site score to evaluate
+	 * @param trueChrom True chromosome number
+	 * @param trueStrand True strand orientation
+	 * @param trueStart True start position
+	 * @param trueStop True stop position
+	 * @param thresh Maximum allowed position deviation
+	 * @param originalContig Original contig name from alignment
+	 * @param contig Current contig name
+	 * @param cstart Contig-relative start position
+	 * @return true if alignment meets loose correctness criteria
+	 */
 	public static boolean isCorrectHitLoose(SiteScore ss, int trueChrom, byte trueStrand, int trueStart, int trueStop, int thresh,
 			byte[] originalContig, byte[] contig, int cstart){
 		if(ss.strand!=trueStrand){return false;}
@@ -355,33 +395,60 @@ public class CompareSamFiles {
 		return (absdif(ss.start, cstart)<=thresh || absdif(ss.stop, cstop)<=thresh);
 	}
 	
+	/**
+	 * Calculates absolute difference between two integers.
+	 * @param a First integer
+	 * @param b Second integer
+	 * @return Absolute difference |a - b|
+	 */
 	private static final int absdif(int a, int b){
 		return a>b ? a-b : b-a;
 	}
 
+	/** Count of reads correctly mapped using strict criteria */
 	public static int truePositiveStrict=0;
+	/** Count of reads incorrectly mapped using strict criteria */
 	public static int falsePositiveStrict=0;
 	
+	/** Count of reads correctly mapped using loose criteria */
 	public static int truePositiveLoose=0;
+	/** Count of reads incorrectly mapped using loose criteria */
 	public static int falsePositiveLoose=0;
 
+	/** Total count of reads with mapping assignments */
 	public static int mapped=0;
+	/** Count of mapped reads retained after quality filtering */
 	public static int mappedRetained=0;
+	/** Count of reads without mapping assignments */
 	public static int unmapped=0;
 	
+	/** Count of reads discarded during processing */
 	public static int discarded=0;
+	/** Count of reads with ambiguous mapping assignments */
 	public static int ambiguous=0;
 
+	/** Total count of lines processed from input files */
 	public static long lines=0;
+	/** Count of primary alignment records processed */
 	public static long primary=0;
+	/** Count of secondary alignment records processed */
 	public static long secondary=0;
 	
+	/** Minimum mapping quality threshold for read retention */
 	public static int minQuality=3;
 
+	/**
+	 * Enable custom parsing to extract original site information from read names
+	 */
 	public static boolean parsecustom=true;
+	/** Enable error message printing during processing */
 	public static boolean printerr=false;
 
+	/**
+	 * Additional threshold value added to base threshold for loose matching criteria
+	 */
 	public static int THRESH2=20;
+	/** Enable BLASR-specific processing for contig name parsing */
 	public static boolean BLASR=false;
 	
 }

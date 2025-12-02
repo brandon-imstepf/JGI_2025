@@ -2,44 +2,59 @@ package bin;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 
-import bin.SpectraCounter.LoadThread;
 import shared.Parse;
 import shared.Shared;
 import shared.Timer;
 import shared.Tools;
-import structures.IntHashMap;
 import structures.IntHashSet;
-import structures.IntLongHashMap;
 import tax.TaxTree;
 import template.Accumulator;
 import template.ThreadWaiter;
 
+/**
+ * Binning engine for clustering genomic contigs by sequence composition and coverage.
+ * Implements multiple clustering passes with varying stringency to group related sequences.
+ * Uses k-mer, GC, depth, and covariance metrics for similarity assessment.
+ *
+ * @author Brian Bushnell
+ * @date 2025
+ */
 public class Binner extends BinObject implements Accumulator<Binner.CompareThread> {
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------        Initialization        ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/** Constructs a Binner with output stream for status messages.
+	 * @param outstream_ Stream for progress and diagnostic output */
 	Binner(PrintStream outstream_){outstream=outstream_;}
-	
+
+	/**
+	 * Parses command-line arguments to configure binning parameters.
+	 * Handles stringency controls, size thresholds, and clustering behavior settings.
+	 *
+	 * @param arg Full argument string (unused)
+	 * @param a Parameter name
+	 * @param b Parameter value
+	 * @return true if parameter was recognized and processed
+	 */
 	boolean parse(String arg, String a, String b) {
-	
+
 		if(a.equalsIgnoreCase("productMult")){
 			productMult=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("perfectoracle")){
 			PERFECT_ORACLE=Parse.parseBoolean(b);
 		}else if(a.equalsIgnoreCase("banbadmerges")){
 			BAN_BAD_MERGES=Parse.parseBoolean(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("basePasses")){
 			basePasses=Integer.parseInt(b);
 		}else if(a.equalsIgnoreCase("baseRange")){
@@ -47,7 +62,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("residueRange")){
 			residueRange=Integer.parseInt(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("prepass") || a.equalsIgnoreCase("passAA")){
 			runPassAA=Parse.parseBoolean(b);
 		}else if(a.equalsIgnoreCase("runPassA") || a.equalsIgnoreCase("passA")){
@@ -65,7 +80,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("runPassG") || a.equalsIgnoreCase("passG")){
 			runPassG=Parse.parseBoolean(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("overrideSetSamples")){
 			overrideSetSamples=Integer.parseInt(b);
 		}
@@ -83,7 +98,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("maxCovariance1")){
 			maxCovariance1=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("maxTrimerDif2") || a.equalsIgnoreCase("maxTrimerDif") || 
 				a.equalsIgnoreCase("max3merDif")){
 			max3merDif2=Float.parseFloat(b);
@@ -102,24 +117,24 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("minkmerprob") || a.equalsIgnoreCase("minkmerprob2")){
 			minKmerProb2=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("minSimilarity")){
 			minSimilarity=Float.parseFloat(b);
 		}
-		
-//		else if(a.equalsIgnoreCase("minSizeToCluster")){
-//			minSizeToCluster=Parse.parseIntKMG(b);
-//		}else if(a.equalsIgnoreCase("minSizeToRefine")){
-//			minSizeToRefine=Parse.parseIntKMG(b);
-//		}
+
+		//		else if(a.equalsIgnoreCase("minSizeToCluster")){
+		//			minSizeToCluster=Parse.parseIntKMG(b);
+		//		}else if(a.equalsIgnoreCase("minSizeToRefine")){
+		//			minSizeToRefine=Parse.parseIntKMG(b);
+		//		}
 		else if(a.equalsIgnoreCase("minseedsize") || a.equals("minsizeseed") || a.equals("minseed")){
 			minSizeToCompare=minSizeToMerge=Parse.parseIntKMG(b);
 		}else if(a.equalsIgnoreCase("minSizeToCompare")){
 			minSizeToCompare=Parse.parseIntKMG(b);
 		}else if(a.equalsIgnoreCase("minSizeToMerge")){
 			minSizeToMerge=Parse.parseIntKMG(b);
-//		}else if(a.equalsIgnoreCase("minSizeToAdd")){
-//			minSizeToAdd=Parse.parseIntKMG(b);
+			//		}else if(a.equalsIgnoreCase("minSizeToAdd")){
+			//			minSizeToAdd=Parse.parseIntKMG(b);
 		}else if(a.equalsIgnoreCase("minSizeResidue") || a.equalsIgnoreCase("minResidue")){
 			minSizeResidue=Parse.parseIntKMG(b);
 		}else if(a.equalsIgnoreCase("minNetSize")){
@@ -129,7 +144,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("largeNetSize")){
 			largeNetSize=Parse.parseIntKMG(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("residueStringency")){
 			residueStringency=Float.parseFloat(b);
 		}else if(a.equalsIgnoreCase("purifyStringency")){
@@ -151,7 +166,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("tinyMult") || a.equalsIgnoreCase("smallPenalty")){
 			tinyMult=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("maxEdges")){
 			maxEdges=Integer.parseInt(b);
 		}else if(a.equalsIgnoreCase("minEdgeWeight")){
@@ -161,7 +176,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("reciprocalEdges")){
 			reciprocalEdges=Parse.parseBoolean(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("fuseLowerLimit")){
 			fuseLowerLimit=Parse.parseIntKMG(b);
 		}else if(a.equalsIgnoreCase("fuseUpperLimit")){
@@ -169,7 +184,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("fuseStringency")){
 			fuseStringency=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equalsIgnoreCase("lowDepthEdgeRatio")){
 			lowDepthEdgeRatio=Float.parseFloat(b);
 		}else if(a.equalsIgnoreCase("highDepthEdgeRatio")){
@@ -180,7 +195,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				a.equalsIgnoreCase("goodTransitiveEdgeMult")){
 			goodTransEdgeMult=Float.parseFloat(b);
 		}
-		
+
 		else if(a.equals("netcutoff") || a.equals("cutoff")) {
 			netCutoff_small=netCutoff_mid=netCutoff_large=Float.parseFloat(b);
 		}else if(a.equals("netcutoff1") || a.equals("cutoff1")) {
@@ -208,38 +223,56 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}else if(a.equalsIgnoreCase("cutoffMultD")){
 			cutoffMultD=Float.parseFloat(b);
 		}
-		
-//		else if(a.equalsIgnoreCase("mtcompare") || a.equalsIgnoreCase("comparemt")){
-//			multiThreadedCompare=Parse.parseBoolean(b);
-//		}
-		
+
+		//		else if(a.equalsIgnoreCase("mtcompare") || a.equalsIgnoreCase("comparemt")){
+		//			multiThreadedCompare=Parse.parseBoolean(b);
+		//		}
+
 		else {return false;}
-		
+
 		return true;
 	}
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------             Graph            ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/**
+	 * Follows edges between bins to merge highly connected components.
+	 * Uses pairwise alignment scores and edge weights to identify merge candidates.
+	 *
+	 * @param contigs List of all contigs for edge resolution
+	 * @param input Bins to process for edge-based merging
+	 * @param oracle Similarity calculator with configured thresholds
+	 * @return Number of successful merges performed
+	 */
 	public long followEdges(ArrayList<Contig> contigs, ArrayList<? extends Bin> input, Oracle oracle){
-//		outstream.print("Following Edges:  \t");
+		//		outstream.print("Following Edges:  \t");
 		phaseTimer.start();
 		long merges=0;
 		merges=launchThreads(input, null, contigs, FOLLOW_MODE, 0, 0, oracle);
-//		phaseTimer.stopAndPrint();
-//		phaseTimer.start();
-		
+		//		phaseTimer.stopAndPrint();
+		//		phaseTimer.start();
+
 		//This phase can be much slower than edge-following, presumably when clusters get big.
 		if(merges>0) {merges=mergeWithDest(contigs, input);}
-		
+
 		if(merges>0 && loud) {phaseTimer.stop("Merged "+merges+"/"+input.size()+" bins: \t");}
 		return merges;
 	}
-	
+
+	/**
+	 * Executes merges by combining bins with their designated destinations.
+	 * Validates merge targets and performs actual cluster consolidation.
+	 *
+	 * @param contigs Reference contig list
+	 * @param input Bins with dest fields set to merge targets
+	 * @return Number of bins successfully merged
+	 */
 	private int mergeWithDest(ArrayList<Contig> contigs, ArrayList<? extends Bin> input){
 		int x=0, y=0, z=0;
 		
+//		Oracle oracle=new Oracle(1, 2, 1, 1, 1, 1, 1, 0, 0);//Just for the aligner
 		for(Bin a : input) {
 			if(!a.isCluster() && a.cluster()!=null) {a.dest=-1;continue;}
 			if(a.isCluster() && a.numContigs()==0) {a.dest=-1;continue;}
@@ -251,7 +284,10 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				y++;
 				Bin b=contigs.get(a.dest);
 				if(b.cluster()!=null) {b=b.cluster();}
-				if(!b.isEmpty() && !a.sameCluster(b)) {
+				if(b==a) {//Don't merge
+				}else if(b.isEmpty() || a.sameCluster(b)) {//Don't merge
+//				}else if(!oracle.ssuCompatible(a, b)){//Don't merge
+				}else {//Expected case
 					if(a.labelTaxid>=0 && b.labelTaxid>=0) {
 						long minSize=Tools.min(a.size(), b.size());
 						addMerge(minSize, a.labelTaxid==b.labelTaxid);
@@ -289,7 +325,12 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return z;
 	}
-	
+
+	/**
+	 * Counts total number of contigs contained in clustered bins.
+	 * @param list List of bins to examine
+	 * @return Sum of contig counts across all clusters
+	 */
 	private static final int countClustered(ArrayList<? extends Bin> list) {
 		int clustered=0;
 		for(Bin b : list) {
@@ -297,7 +338,15 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return clustered;
 	}
-	
+
+	/**
+	 * Converts contig/cluster list to unified bin list, filtering by size.
+	 * Collapses clusters to single representatives to avoid duplicates.
+	 *
+	 * @param list Input contigs and clusters
+	 * @param minSize Minimum size threshold for inclusion
+	 * @return Filtered list of bins meeting size requirement
+	 */
 	public static final ArrayList<Bin> toBinList(ArrayList<? extends Bin> list, int minSize){
 		ArrayList<Bin> bins=new ArrayList<Bin>();
 		IntHashSet clusterSet=new IntHashSet(255);
@@ -305,26 +354,35 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			Cluster c=a.cluster();
 			long size=(c==null ? a.size() : c.size());
 			if(size<minSize) {continue;}
-			
+
 			if(c==null) {//Contig
 				bins.add(a);
 			}else if(!clusterSet.contains(c.id())){
 				bins.add(c);
 				clusterSet.add(c.id());
 			}
-//			Bin b=bins.get(bins.size()-1);
-//			assert(b.size()>=minSize);//123
+			//			Bin b=bins.get(bins.size()-1);
+			//			assert(b.size()>=minSize);//123
 		}
 		return bins;
 	}
-	
+
+	/**
+	 * Finds best merge target for a bin by following edge weights.
+	 * Evaluates edge strength, reciprocity, and similarity scores to select optimal target.
+	 *
+	 * @param a Source bin seeking merge target
+	 * @param contigs Reference contig list for edge resolution
+	 * @param oracle Similarity calculator for candidate evaluation
+	 * @return ID of best merge target, or -1 if none found
+	 */
 	private int followEdges(Bin a, ArrayList<Contig> contigs, Oracle oracle) {
 		oracle.clear();
 		ArrayList<KeyValue> edges=KeyValue.toList(a.pairMap);//TODO: Slow
 		float bestScore=0;
 		Bin target=null;
 		assert(a.isCluster() || a.cluster()==null);
-		
+
 		int max=(a.isCluster() ? maxEdges : maxEdges+Tools.min(2, maxEdges)*Tools.min(8, a.numContigs()-1));
 		max=Tools.min(max, edges.size());
 		int minWeight=(int)Math.ceil(minEdgeRatio*edges.get(0).value);
@@ -336,9 +394,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			Bin b=(c.cluster()!=null ? c.cluster() : c);
 			if(a==b || target==b) {continue;}
 			int min=Tools.min((int)c.countEdgesTo(a), kv.value);
-//			if(min>minWeight) {min=c.countReciprocalEdges(a);}//Slow
-			
-//			verbose=(a.id()==71 && b.id()==14499);
+			//			if(min>minWeight) {min=c.countReciprocalEdges(a);}//Slow
+
+			//			verbose=(a.id()==71 && b.id()==14499);
 			if(verbose) {
 				System.err.println("a="+a.id()+", b="+b.id()+", c="+c.id()+", v="+kv.value);
 				System.err.println("ca="+c.countEdgesTo(a)+", cb="+c.countEdgesTo(b)+
@@ -347,9 +405,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 						"\naMap="+a.pairMap+"\nbMap="+b.pairMap+"\ncMap="+c.pairMap);
 			}
 			if(min>=minWeight) {
-//				float f=a.similarityTo(b, oracle.stringency0);
+				//				float f=a.similarityTo(b, oracle.stringency0);
 				float f=oracle.similarity(a, b, 1f);
-//				assert(f==f2) : f+", "+f2+", "+a.id()+", "+b.id()+", "+min+", "+minWeight;
+				//				assert(f==f2) : f+", "+f2+", "+a.id()+", "+b.id()+", "+min+", "+minWeight;
 				if(f>bestScore) {
 					target=b;
 					bestScore=f;
@@ -359,14 +417,22 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return target==null ? -1 : target.id();
 	}
-	
+
+	/**
+	 * Finds the cluster with strongest bidirectional edge connection to given bin.
+	 * Used as fallback when similarity-based methods fail to find merge targets.
+	 *
+	 * @param a Source bin seeking connected cluster
+	 * @param contigs Reference contig list
+	 * @return Best connected cluster, or null if none found
+	 */
 	public Cluster findLinkedCluster(Bin a, ArrayList<Contig> contigs) {
 		if(a.pairMap==null) {return null;}
 		assert(a.isCluster() || a.cluster()==null);
 		int bestValue=0;
 		Cluster bestCluster=null;
 		int[] keys=a.pairMap.keys(), values=a.pairMap.values();
-//		final int max=Tools.max(values);
+		//		final int max=Tools.max(values);
 		for(int i=0; i<keys.length; i++) {
 			int key=keys[i];
 			if(key!=a.pairMap.invalid()) {
@@ -387,16 +453,24 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return bestCluster;
 	}
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------            Binning           ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/**
+	 * Creates initial bin map by clustering similar sequences.
+	 * Applies strict similarity thresholds to form high-confidence initial clusters.
+	 *
+	 * @param contigList All contigs to be organized
+	 * @param input Optional pre-sorted bin list, or null to use contigList
+	 * @return BinMap containing initial clusters and residual sequences
+	 */
 	public BinMap makeBinMap(ArrayList<Contig> contigList, ArrayList<? extends Bin> input) {
 		outstream.print("Making BinMap:    \t");
 		phaseTimer.start();
 		makingBinMap=true;
-		
+
 		if(input==null) {
 			input=contigList;
 		}else {
@@ -407,20 +481,20 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		float stringency=1;
 		long contigsAdded=0;
 		long clustersCreated=0;
-		
+
 		for(int i=1; i<input.size(); i++) {
 			assert(input.get(i).size()<=input.get(i-1).size());
 		}
-		
+
 		float[] ret=new float[1];
 		float maxProduct=max4merDif1*maxDepthRatio1*Binner.productMult;
 		Oracle oracle=new Oracle(maxGCDif1, maxDepthRatio1, max3merDif1, max4merDif1, max5merDif1, maxProduct, 
 				maxCovariance1, minKmerProb2, 0);
 		for(Bin a : input) {
 			int initialContigs=a.numContigs();
-//			Cluster c=map.addOrMerge(a, minSizeToCompare*8, minSizeToMerge*4, minSizeToCompare,	
-//					maxKmerDif1, maxDepthRatio1, maxGCDif1, maxCovariance1, stringency, 
-//					TaxTree.SPECIES, true, true, key, ret, 0);
+			//			Cluster c=map.addOrMerge(a, minSizeToCompare*8, minSizeToMerge*4, minSizeToCompare,	
+			//					maxKmerDif1, maxDepthRatio1, maxGCDif1, maxCovariance1, stringency, 
+			//					TaxTree.SPECIES, true, true, key, ret, 0);
 			Cluster c=map.addOrMerge(a, minSizeToCompare*8, minSizeToMerge*4, minSizeToCompare,	
 					oracle, key, 0);
 			if(c==null) {
@@ -453,11 +527,24 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				" clusters and "+contigsAdded+" contigs from "+contigList.size()+" elements.");
 		return map;
 	}
-	
+
+	/**
+	 * Performs single refinement pass to merge compatible clusters.
+	 * Uses relaxed thresholds compared to initial clustering for broader merging.
+	 *
+	 * @param map Bin map to refine
+	 * @param stringency Similarity threshold multiplier (1.0 = default)
+	 * @param taxlevel Taxonomic level for validation (unused)
+	 * @param allowNoTaxID Whether to merge bins without taxonomic IDs (unused)
+	 * @param allowHalfTaxID Whether to merge partially classified bins (unused)
+	 * @param range Search range for candidate clusters
+	 * @param minSize Minimum size for merge consideration
+	 * @return Number of clusters merged in this pass
+	 */
 	public int refineBinMapPass(BinMap map, float stringency, 
 			int taxlevel, boolean allowNoTaxID, boolean allowHalfTaxID, int range, int minSize) {
-//		System.err.println("Merging clusters pass.");
-		
+		//		System.err.println("Merging clusters pass.");
+
 		float maxTrimerDif=max3merDif2*stringency;
 		float maxKmerDif=max4merDif2*stringency;
 		float max5merDif=max5merDif2*stringency;
@@ -465,21 +552,21 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		float maxGCDif=maxGCDif2*stringency;
 		float maxProduct=maxKmerDif*maxDepthRatio*Binner.productMult;
 		float maxCovariance=maxCovariance2*stringency;
-		
+
 		ArrayList<Cluster> clusters=map.toList(false);
 		Collections.sort(clusters);
 		Key key=new Key();
-		
+
 		for(int i=1; i<clusters.size(); i++) {
 			assert(clusters.get(i).size()<=clusters.get(i-1).size());
 		}
-		
-//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+", maxGCDif="+maxGCDif
-//				+", maxProduct="+maxProduct+", allowNoTaxID="+allowNoTaxID+", allowHalfTaxID="+allowHalfTaxID
-//				+", range="+range);
-		
+
+		//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+", maxGCDif="+maxGCDif
+		//				+", maxProduct="+maxProduct+", allowNoTaxID="+allowNoTaxID+", allowHalfTaxID="+allowHalfTaxID
+		//				+", range="+range);
+
 		int merged=0;
-		
+
 		Oracle oracle=new Oracle(maxGCDif, maxDepthRatio, maxTrimerDif, maxKmerDif, max5merDif, 
 				maxProduct, maxCovariance, minKmerProb2, 0);
 		launchThreads(clusters, map, null, REFINE_MODE, range, minSize, oracle);
@@ -490,10 +577,10 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				}
 			}
 		}
-//		assert(false);
-//		assert(map.isValid());
+		//		assert(false);
+		//		assert(map.isValid());
 		if(merged<1) {return 0;}
-		
+
 		for(int i=clusters.size()-1; i>=0; i--) {
 			Cluster a=clusters.get(i);
 			synchronized(a) {
@@ -501,7 +588,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				if(dest>=0 && dest!=a.id()) {
 					Cluster b=map.contigList.get(dest).cluster;
 					synchronized(b) {
-						if(b!=a) {
+						if(b==a) {//Don't merge
+//						}else if(!oracle.ssuCompatible(a, b)){//Don't merge
+						}else {
 							assert(!b.contigSet.contains(a.id));
 							assert(!a.contigSet.contains(b.id));
 							assert(a.id()!=dest && a.id()!=b.id()) : a.id+", "+dest+", "+b.id+", "+(a.id()==dest)+", "+(b.id()==dest)+", "+(a.id()!=b.id());
@@ -526,7 +615,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 
 		map.clear(false);
-//		assert(map.isValid());
+		//		assert(map.isValid());
 		Tools.condense(clusters);
 		Collections.sort(clusters);
 		for(Cluster c : clusters) {
@@ -535,10 +624,18 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		assert(map.isValid());
 		return merged;
 	}
-	
-	public int purify(BinMap map, float stringency, int range, int minSizePurify, int minSizeCompare) {
-//		System.err.println("Merging clusters pass.");
-		
+
+	/**
+	 * Attempts to split large heterogeneous clusters into more homogeneous sub-clusters.
+	 * Uses refined similarity thresholds to identify sequences that don't belong together.
+	 *
+	 * @param map Bin map containing clusters to potentially split
+	 * @param stringency Similarity threshold for sub-clustering
+	 * @param minSizeRecluster Minimum cluster size to consider for splitting
+	 * @return Number of clusters that were successfully split
+	 */
+	public int recluster(BinMap map, float stringency, int minSizeRecluster) {
+
 		float maxTrimerDif=max3merDif2*stringency;
 		float maxKmerDif=max4merDif2*stringency;
 		float max5merDif=max5merDif2*stringency;
@@ -546,11 +643,78 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		float maxGCDif=maxGCDif2*stringency;
 		float maxProduct=maxKmerDif*maxDepthRatio*Binner.productMult;
 		float maxCovariance=maxCovariance2*stringency;
+		assert(isValid(map.toList(true), false));
 		
+		// Collect clusters worth reclustering
+		ArrayList<Cluster> clusters = new ArrayList<Cluster>();
+		{
+			ArrayList<Cluster> clusters0 = map.toList(false);
+			Collections.sort(clusters0);
+			for(Cluster c : clusters0) {
+				if(c.size < minSizeRecluster) break;
+				if(c.numContigs() > 3) { // Need minimum size for meaningful splits
+					clusters.add(c);
+				}
+			}
+		}
+		System.err.println("Recluster Targets: "+clusters.size());
+		if(clusters.isEmpty()){return 0;}
+
+		assert(isValid(map.toList(true), false));
+		Oracle oracle=new Oracle(maxGCDif, maxDepthRatio, maxTrimerDif, maxKmerDif, max5merDif, 
+				maxProduct, maxCovariance, minKmerProb2*0.8f, 0);
+
+		// Launch threads for parallel reclustering
+		launchThreads(clusters, map, null, RECLUSTER_MODE, 0, 0, oracle);
+
+		// Collect results and rebuild map if changes made
+		int splits=0;
+		for(Cluster clust : clusters) {
+			synchronized(clust) {
+				if(clust.wasReclustered) { // Flag set by thread
+					splits++;
+				}
+			}
+		}
+		System.err.println("Reclustered: "+splits);
+
+		if(splits>0) {
+			map.clear(true);
+			ArrayList<Bin> bins = toBinList(map.contigList, 0);
+			Collections.sort(bins);
+			Key key = new Key();
+			for(Bin b : bins) {map.add(b, key);}
+		}
+		assert(isValid(map.toList(true), false));
+		return splits;
+	}
+
+	/**
+	 * Removes outlier contigs from clusters to improve homogeneity.
+	 * Identifies sequences that fit better in other clusters or should remain unclustered.
+	 *
+	 * @param map Bin map containing clusters to purify
+	 * @param stringency Similarity threshold for outlier detection
+	 * @param range Search range for alternative cluster assignments
+	 * @param minSizePurify Minimum cluster size to consider for purification
+	 * @param minSizeCompare Minimum size for comparison targets
+	 * @return Number of contigs removed from their original clusters
+	 */
+	public int purify(BinMap map, float stringency, int range, int minSizePurify, int minSizeCompare) {
+		//		System.err.println("Merging clusters pass.");
+
+		float maxTrimerDif=max3merDif2*stringency;
+		float maxKmerDif=max4merDif2*stringency;
+		float max5merDif=max5merDif2*stringency;
+		float maxDepthRatio=1+((maxDepthRatio2-1)*stringency);
+		float maxGCDif=maxGCDif2*stringency;
+		float maxProduct=maxKmerDif*maxDepthRatio*Binner.productMult;
+		float maxCovariance=maxCovariance2*stringency;
+
 		for(Contig c : map.contigList) {
 			synchronized(c) {c.dest=-1;}
 		}
-		
+
 		ArrayList<Cluster> clusters=new ArrayList<Cluster>();
 		{
 			ArrayList<Cluster> clusters0=map.toList(false);
@@ -562,9 +726,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				}
 			}
 		}
-//		System.err.println("Launching purify on "+clusters.size()+" clusters!");
+		//		System.err.println("Launching purify on "+clusters.size()+" clusters!");
 		if(clusters.isEmpty()) {return 0;}
-		
+
 		int removed=0;
 
 		Oracle oracle=new Oracle(maxGCDif, maxDepthRatio, maxTrimerDif, maxKmerDif, max5merDif, 
@@ -587,7 +751,12 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return removed;
 	}
-	
+
+	/**
+	 * Removes outlier contigs from a single cluster.
+	 * @param clust Target cluster to purify
+	 * @return Number of contigs removed
+	 */
 	int purifyCluster(Cluster clust) {
 		ArrayList<Contig> contigs=clust.contigs;
 		int removed=0;
@@ -614,14 +783,26 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return removed;
 	}
-	
+
+	/**
+	 * Attempts to assign unclustered residual contigs to existing clusters.
+	 * Uses relaxed similarity thresholds to incorporate sequences missed in main clustering.
+	 *
+	 * @param map Bin map with residual sequences to process
+	 * @param stringency Similarity threshold multiplier
+	 * @param taxlevel Taxonomic level for validation (unused)
+	 * @param allowNoTaxID Whether to merge bins without taxonomic IDs (unused)
+	 * @param allowHalfTaxID Whether to merge partially classified bins (unused)
+	 * @param range Search range for target clusters
+	 * @return Number of residual contigs successfully assigned to clusters
+	 */
 	public int processResidue(BinMap map, float stringency, 
 			int taxlevel, boolean allowNoTaxID, boolean allowHalfTaxID, int range) {
-//		assert(map.isValid());
+		//		assert(map.isValid());
 		System.err.println("Processing "+map.residual.size()+" residual contigs.");
 		Timer t=new Timer(outstream, true);
 		if(map.residual.isEmpty()) {return 0;}
-		
+
 		float maxTrimerDif=max3merDif2*stringency;
 		float maxKmerDif=max4merDif2*stringency;
 		float max5merDif=max5merDif2*stringency;
@@ -630,13 +811,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		float maxProduct=maxKmerDif*maxDepthRatio*Binner.productMult;
 		float maxCovariance=maxCovariance2*stringency;
 
-//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+", maxGCDif="+maxGCDif
-//				+", maxProduct="+maxProduct+", allowNoTaxID="+allowNoTaxID+", allowHalfTaxID="+allowHalfTaxID
-//				+", range="+range);
+		//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+", maxGCDif="+maxGCDif
+		//				+", maxProduct="+maxProduct+", allowNoTaxID="+allowNoTaxID+", allowHalfTaxID="+allowHalfTaxID
+		//				+", range="+range);
 		int merged=0;
 		map.residual=toBinList(map.residual, 0);
-//		assert(map.isValid());
-		
+		//		assert(map.isValid());
+
 		int minSize=Tools.max(minSizeToMerge, minClusterSize/5);
 		Oracle oracle=new Oracle(maxGCDif, maxDepthRatio, maxTrimerDif, maxKmerDif, max5merDif, 
 				maxProduct, maxCovariance, minKmerProb2, 0);
@@ -647,14 +828,14 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 		}
 		t.stopAndStart("Found "+merged+" merge targets.");
-		
+
 		if(merged<1) {return 0;}
 		for(int i=0; i<map.residual.size(); i++) {
 			Bin a=map.residual.get(i);
 			if(a.dest>0) {
 				Cluster b=map.contigList.get(a.dest).cluster;
 				assert(a!=b) : "\n"+a.id()+"\n"+b.id()+"\n"+a.dest+"\n"+
-						a.getClass()+"\n"+b.getClass()+"\n"+b.contigSet.contains(a.id());
+				a.getClass()+"\n"+b.getClass()+"\n"+b.contigSet.contains(a.id());
 				if(a.labelTaxid>0 && b.labelTaxid>0) {
 					long smaller=Tools.min(a.size(), b.size());
 					addMerge(smaller, a.labelTaxid==b.labelTaxid);
@@ -670,7 +851,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				map.residual.set(i, null);
 			}
 		}
-		
+
 		Tools.condenseStrict(map.residual);
 		for(ArrayList<Cluster> list : map.map.values()) {
 			Collections.sort(list);
@@ -680,7 +861,18 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		t.stop("Merged "+merged+" contigs into clusters.");
 		return merged;
 	}
-	
+
+	/**
+	 * Finds best cluster assignment for a residual contig.
+	 *
+	 * @param a Residual contig seeking cluster assignment
+	 * @param map Bin map containing potential target clusters
+	 * @param key Reusable key object for hash operations
+	 * @param oracle Similarity calculator
+	 * @param range Search range limit
+	 * @param minSize Minimum target cluster size
+	 * @return Best matching cluster, or null if none suitable
+	 */
 	public Cluster findBestResidualCluster(Bin a, BinMap map, Key key, Oracle oracle, 
 			int range, int minSize) {
 		if(a==null || a.size()<minSizeResidue) {return null;}
@@ -688,7 +880,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		Cluster b=map.findBestCluster(a, minSize2, key, range, oracle);
 		return b;
 	}
-	
+
+	/**
+	 * Performs complete refinement process with multiple passes at different stringencies.
+	 * Executes passes AA through G with increasing tolerance to capture more associations.
+	 * @param map Bin map to refine through multiple passes
+	 * @return Total number of clusters merged across all passes
+	 */
 	public int refineBinMap(BinMap map) {
 		System.err.println("Merging clusters.");
 		if(sketchClusters) {sketcher.sketch(map.toList(false), false);}
@@ -698,12 +896,12 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 		}
 		phaseTimer.start();
-		
+
 		int removedThisPhase=0;
 		int removedTotal=0;
-//		net0small.cutoff+=0.02;
-//		net0mid.cutoff+=0.02;
-//		net0large.cutoff+=0.02;
+		//		net0small.cutoff+=0.02;
+		//		net0mid.cutoff+=0.02;
+		//		net0large.cutoff+=0.02;
 		if(sketchContigs || sketchClusters) {
 			removedThisPhase=refinePhase(map, "aa", 2.5f, TaxTree.SPECIES, false, false, baseRange, minSizeToMerge, 8);
 			removedTotal+=removedThisPhase;
@@ -727,9 +925,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				removedTotal+=removedThisPhase;
 			}
 		}
-//		net0small.cutoff-=0.02;
-//		net0mid.cutoff-=0.02;
-//		net0large.cutoff-=0.02;
+		//		net0small.cutoff-=0.02;
+		//		net0mid.cutoff-=0.02;
+		//		net0large.cutoff-=0.02;
 		if(runPassD) {
 			removedThisPhase=refinePhase(map, "d", 0.9f, -1, true, true, baseRange, minSizeToMerge, basePasses+0);
 			removedTotal+=removedThisPhase;
@@ -738,11 +936,25 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			removedThisPhase=refinePhase(map, "e", 1.0f, -1, true, true, baseRange+2, minSizeToMerge, basePasses+3);
 			removedTotal+=removedThisPhase;
 		}
-		
+
 		phaseTimer.stop("Refinement merged "+removedTotal+" clusters. ");
 		return removedTotal;
 	}
-	
+
+	/**
+	 * Executes multiple refinement passes at specified stringency level.
+	 *
+	 * @param map Bin map to process
+	 * @param phase Phase identifier for logging
+	 * @param stringency Similarity threshold multiplier
+	 * @param taxLevel Taxonomic level (unused)
+	 * @param noTax Allow no taxonomic ID (unused)
+	 * @param halfTax Allow partial taxonomic ID (unused)
+	 * @param range Search range
+	 * @param initialMinSize Base minimum size (scaled by pass number)
+	 * @param passes Number of passes to execute
+	 * @return Total clusters merged in this phase
+	 */
 	int refinePhase(BinMap map, String phase,
 			float stringency, int taxLevel, boolean noTax, boolean halfTax, int range, int initialMinSize, int passes) {
 		Timer t=new Timer(outstream, true);
@@ -752,15 +964,21 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			int removed=refineBinMapPass(map, stringency, taxLevel, noTax, halfTax, range, initialMinSize*pass);
 			removedThisPhase+=removed;
 			if(loud) {
-			System.err.print("Refinement Pass "+pass+phase+": Merged "+removed+"/"+initial+" clusters. ");
-			t.stopAndStart("\t");
+				System.err.print("Refinement Pass "+pass+phase+": Merged "+removed+"/"+initial+" clusters. ");
+				t.stopAndStart("\t");
 			}
 			if(removed<2) {break;}
 		}
 		if(sketchClusters && removedThisPhase>0) {sketcher.sketch(map.toList(false), false);}
 		return removedThisPhase;
 	}
-	
+
+	/**
+	 * Groups bins with identical taxonomic IDs into clusters.
+	 * Creates perfect taxonomic clusters as initial grouping step.
+	 * @param bins Input bins to cluster by taxonomy
+	 * @return Clustered bins with taxonomically identical sequences grouped
+	 */
 	public ArrayList<Bin> clusterByTaxid(ArrayList<? extends Bin> bins){
 		outstream.print("Clustering by Taxid: \t");
 		phaseTimer.start();
@@ -795,25 +1013,34 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 			if(b!=null) {out.add(b);}
 		}
-		
+
 		out.addAll(map.values());
 		Collections.sort(out);
-		
+
 		phaseTimer.stopAndPrint();
 		outstream.println("Made "+clustersMade+" clusters containing "+contigsClustered+"/"+bins.size()+" elements.");
 		return out;
 	}
-	
+
+	/**
+	 * Attempts to merge medium-sized bins that may represent fragments of the same genome.
+	 * Uses very strict similarity requirements to avoid contamination.
+	 *
+	 * @param contigs Reference contig list
+	 * @param input Bins in size range suitable for fusion
+	 * @param stringency Threshold multiplier for fusion decisions
+	 * @return Number of successful fusion events
+	 */
 	public long fuse(ArrayList<Contig> contigs, ArrayList<? extends Bin> input, float stringency){
 		if(loud) {outstream.print("Initiating Fusion:  \t");}
 		phaseTimer.start();
-		
-//		for(int i=1; i<input.size(); i++) {
-//			assert(input.get(i).size()<=input.get(i-1).size());
-//			assert(input.get(i).size()>=fuseLowerLimit);
-//		}
-//		assert(false) : fuseLowerLimit;
-		
+
+		//		for(int i=1; i<input.size(); i++) {
+		//			assert(input.get(i).size()<=input.get(i-1).size());
+		//			assert(input.get(i).size()>=fuseLowerLimit);
+		//		}
+		//		assert(false) : fuseLowerLimit;
+
 		float maxTrimerDif=max3merDif2*stringency;
 		float maxKmerDif=max4merDif2*stringency;
 		float max5merDif=max5merDif2*stringency;
@@ -823,37 +1050,43 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		float maxCovariance=maxCovariance2*stringency;
 		Oracle oracle=new Oracle(maxGCDif, maxDepthRatio, maxTrimerDif, maxKmerDif, max5merDif, 
 				maxProduct, maxCovariance, minKmerProb2, 0);
-		
-//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+
-//				", maxGCDif="+maxGCDif+", maxProduct="+maxProduct+
-//				", maxCovariance="+maxCovariance+", minKmerProb2="+minKmerProb2);
-//		System.err.println("List size: "+input.size());
-		
+
+		//		System.err.println("maxKmerDif="+maxKmerDif+", maxDepthRatio="+maxDepthRatio+
+		//				", maxGCDif="+maxGCDif+", maxProduct="+maxProduct+
+		//				", maxCovariance="+maxCovariance+", minKmerProb2="+minKmerProb2);
+		//		System.err.println("List size: "+input.size());
+
 		long merges=0;
 		merges=launchThreads(input, null, contigs, FUSE_MODE, 0, 0, oracle);
-//		phaseTimer.stopAndPrint();
-//		phaseTimer.start();
-		
+		//		phaseTimer.stopAndPrint();
+		//		phaseTimer.start();
+
 		//This phase can be slow.
 		if(merges>0) {merges=mergeWithDest(contigs, input);}
-		
+
 		if(merges>0 && loud) {phaseTimer.stop("Merged "+merges+"/"+input.size()+" bins: \t");}
 		return merges;
 	}
-	
+
 	/*--------------------------------------------------------------*/
-	
+
+	/**
+	 * Configures similarity thresholds based on expected number of samples.
+	 * Adjusts stringency parameters to account for increased complexity in multi-sample datasets.
+	 * @param samples Expected number of samples in the dataset
+	 * @param mult Additional multiplier for threshold adjustment
+	 */
 	void setSamples(int samples, float mult) {
 		if(overrideSetSamples>0) {samples=overrideSetSamples;}
 		System.err.println("Setting cutoffs for "+samples+" samples.");
 		if(samples<2) {//Single mode //maxkmerdif=0.0060 maxgcdif=0.045
 			max4merDif2=0.0048f;
-//			maxKmerDif2=0.008f;
+			//			maxKmerDif2=0.008f;
 			maxDepthRatio2=1.38f;
 			maxGCDif2=0.032f;
 			minKmerProb2=0.82f;
 			max5merDif2=0.007f;
-			
+
 			fuseStringency=1.6f;
 		}else if(samples<3){//Two mode
 			max4merDif2=0.0065f;
@@ -862,7 +1095,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0040f;//Less than .35 greatly decreases CAMI contam, but less than 0.5 decreases synth3 completeness 
 			minKmerProb2=0.80f;
 			max5merDif2=0.008f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
@@ -873,7 +1106,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0050f;
 			minKmerProb2=0.75f;
 			max5merDif2=0.009f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
@@ -884,13 +1117,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0045f;
 			minKmerProb2=0.7f;
 			max5merDif2=0.010f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
 			purifyStringency=3.0f;
-//			bigMult=0.70f;
-//			hugeMult=0.3f;
+			//			bigMult=0.70f;
+			//			hugeMult=0.3f;
 		}else if(samples<6){//5
 			max4merDif2=0.0095f;
 			maxDepthRatio2=1.45f;
@@ -898,13 +1131,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0035f;
 			minKmerProb2=0.7f;
 			max5merDif2=0.011f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
 			purifyStringency=2.5f;
-//			bigMult=0.70f;
-//			hugeMult=0.25f;
+			//			bigMult=0.70f;
+			//			hugeMult=0.25f;
 		}else if(samples<7){//6
 			max4merDif2=0.0105f;
 			maxDepthRatio2=1.45f;
@@ -912,13 +1145,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0035f;
 			minKmerProb2=0.7f;
 			max5merDif2=0.012f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
 			purifyStringency=2.5f;
-//			bigMult=0.70f;
-//			hugeMult=0.25f;
+			//			bigMult=0.70f;
+			//			hugeMult=0.25f;
 		}else{//7+
 			max4merDif2=0.0115f;
 			maxDepthRatio2=1.45f;
@@ -926,15 +1159,15 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			maxCovariance2=0.0035f;
 			minKmerProb2=0.7f;
 			max5merDif2=0.015f;
-			
+
 			netCutoffUpper=0.65f;
 			netCutoff_small=netCutoff_mid=netCutoff_large=0.5f;
 			fuseStringency=1.6f;
 			purifyStringency=2.5f;
-//			bigMult=0.70f;
-//			hugeMult=0.20f;
+			//			bigMult=0.70f;
+			//			hugeMult=0.20f;
 		}
-		
+
 		if(mult!=1) {
 			float lowMult=((mult-1)*0.5f)+1;
 			float highMult=((mult-1)*2f)+1;
@@ -945,11 +1178,11 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			purifyStringency*=mult;
 			fuseStringency=1+(fuseStringency-1)*mult;
 			smallMult=1+(smallMult-1)*mult;
-			
+
 
 			minKmerProb2=1-smallMult*(1-minKmerProb2);
 			minKmerProb2=Tools.mid(0, minKmerProb2, 1);
-			
+
 			if(mult>1) {
 				hugeMult=1/(1+(1/hugeMult-1)/highMult);
 			}else {
@@ -959,7 +1192,8 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		max3merDif2=max4merDif2*0.625f;
 		max5merDif2=max4merDif2*2.000f;
 	}
-	
+
+	/** Prints current similarity threshold values for diagnostic purposes */
 	void printThresholds(){
 		System.err.println("maxTrimerDif:     "+max3merDif2);
 		System.err.println("maxTetramerDif:   "+max4merDif2);
@@ -971,29 +1205,42 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		System.err.println("netCutoffUpper:   "+netCutoffUpper);
 		System.err.println("fuseStringency:   "+fuseStringency);
 		System.err.println("purifyStringency: "+purifyStringency);
-//		System.err.println("smallThresh:      "+smallThresh);
+		//		System.err.println("smallThresh:      "+smallThresh);
 		System.err.println("smallMult:        "+smallMult);
-//		System.err.println("bigThresh:        "+bigThresh);
+		//		System.err.println("bigThresh:        "+bigThresh);
 		System.err.println("bigMult:          "+bigMult);
 		System.err.println("hugeMult:         "+hugeMult);
 	}
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------     Classes and Threading    ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/**
+	 * Launches parallel comparison threads for binning operations.
+	 * Distributes work across multiple threads and collects results.
+	 *
+	 * @param list Bins to process
+	 * @param map Bin map for cluster lookup
+	 * @param contigs Reference contig list
+	 * @param mode Processing mode (REFINE, RESIDUE, PURIFY, etc.)
+	 * @param range Search range parameter
+	 * @param minSize Minimum size threshold
+	 * @param oracle Similarity calculator template
+	 * @return Total number of merges performed across all threads
+	 */
 	private synchronized long launchThreads(ArrayList<? extends Bin> list, BinMap map, 
 			ArrayList<Contig> contigs, int mode, int range, int minSize, Oracle oracle) {
 
 		//Do anything necessary prior to processing
-		
+
 		//Determine how many threads may be used
 		int threads=Tools.mid(1, list.size()/64, Shared.threads());
 		if(compareThreadsOverride>0) {threads=compareThreadsOverride;}
-		
-//		if(mode==FUSE_MODE) {threads=1;}//123
+
+		//		if(mode==FUSE_MODE) {threads=1;}//123
 		threadMerges=0;
-		
+
 		//Fill a list with LoadThreads
 		ArrayList<CompareThread> alpt=new ArrayList<CompareThread>(threads);
 		for(int i=0; i<threads; i++){
@@ -1001,15 +1248,15 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 					threads, mode, range, minSize, oracle.clone());
 			alpt.add(ct);
 		}
-		
+
 		//Start the threads and wait for them to finish
 		boolean success=ThreadWaiter.startAndWait(alpt, this);
 		assert(success);
 		//Do anything necessary after processing
-		
+
 		return threadMerges;
 	}
-	
+
 	@Override
 	public synchronized void accumulate(CompareThread t) {
 		synchronized(t){
@@ -1028,9 +1275,24 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 
 	@Override
 	public boolean success() {return !errorState;}
-	
+
+	/** Worker thread that performs similarity comparisons and clustering operations.
+	 * Each thread processes a subset of bins using different operational modes. */
 	class CompareThread extends Thread {
-		
+
+		/**
+		 * Creates worker thread for parallel binning operations.
+		 *
+		 * @param list Bins to process
+		 * @param map_ Bin map for cluster operations
+		 * @param contigs_ Reference contig list
+		 * @param tid_ Thread ID for work distribution
+		 * @param threads_ Total number of threads
+		 * @param mode_ Operation mode
+		 * @param range_ Search range parameter
+		 * @param minSize_ Size threshold
+		 * @param oracle_ Similarity calculator
+		 */
 		public CompareThread(ArrayList<? extends Bin> list, BinMap map_, ArrayList<Contig> contigs_, 
 				int tid_, int threads_, int mode_, int range_, int minSize_, Oracle oracle_) {
 			input=list;
@@ -1043,8 +1305,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			minSize=minSize_;
 			oracle=oracle_;
 		}
-		
-		
+
+
+		/** Executes the assigned binning operation based on thread mode */
 		public void run() {
 			synchronized(this) {
 				if(mode==REFINE_MODE) {
@@ -1057,13 +1320,17 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 					follow();
 				}else if(mode==FUSE_MODE) {
 					fuse();
+				}else if(mode==RECLUSTER_MODE) {
+					recluster();
 				}else {
 					throw new RuntimeException("Bad mode: "+mode);
 				}
 			}
 			success=true;
 		}
-		
+
+		/** Follows edges to find merge targets for assigned bins.
+		 * @return Number of merge targets found */
 		private int follow() {
 			for(int i=tid; i<input.size(); i+=threads) {
 				Bin a=input.get(i);
@@ -1078,7 +1345,9 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 			return mergesT;
 		}
-		
+
+		/** Attempts fusion of medium-sized bins in assigned work range.
+		 * @return Number of successful fusions */
 		private int fuse() {
 			for(int i=tid; i<input.size(); i+=threads) {
 				Bin a=input.get(i);
@@ -1092,12 +1361,17 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				mergesT+=(b==null ? 0 : 1);
 				fuseTargets+=(b==null ? 0 : 1);
 			}
-//			System.err.println("fuseSeeks="+fuseSeeks);
-//			System.err.println("fuseCompares="+fuseCompares);
-//			System.err.println("fuseTargets="+fuseTargets);
+			//			System.err.println("fuseSeeks="+fuseSeeks);
+			//			System.err.println("fuseCompares="+fuseCompares);
+			//			System.err.println("fuseTargets="+fuseTargets);
 			return mergesT;
 		}
-		
+
+		/**
+		 * Finds best candidate for fusing with given bin.
+		 * @param a Source bin seeking fusion partner
+		 * @return Best fusion target, or null if none suitable
+		 */
 		private Bin findBestFuseTarget(Bin a) {
 			oracle.best=null;
 			oracle.topScore=-1;
@@ -1110,22 +1384,54 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				if(b==a) {continue;}
 				fuseCompares++;
 				float f=oracle.similarity(a, b, 1);
-//				if(f<=0) {
-//					verbose=true;
-//					oracle.similarity(a, b, 1);
-//					assert(false);
-//				}
+				//				if(f<=0) {
+				//					verbose=true;
+				//					oracle.similarity(a, b, 1);
+				//					assert(false);
+				//				}
 				if(f>oracle.topScore) {
 					assert(f>0) : f;//Actually, could be -1; or clear should set to -1
 					oracle.best=b;
 					oracle.topScore=f;
 				}
 			}
-//			System.err.print('.');
+			//			System.err.print('.');
 			if(oracle.best!=null) {a.dest=oracle.best.id();}
 			return oracle.best;
 		}
-		
+
+		/** Attempts to split heterogeneous clusters in assigned work range.
+		 * @return Number of clusters successfully split */
+		private int recluster() {
+			AbstractRefiner refiner = AbstractRefiner.makeRefiner(oracle, AbstractRefiner.DEFAULT_TYPE);
+
+			for(int i=tid; i<input.size(); i+=threads) {
+				Cluster cluster = (Cluster)input.get(i);
+				synchronized(cluster) {
+					ArrayList<Bin> refined = refiner.refine(cluster);
+					if(refined != null && refined.size() > 1) {
+						// Set dest for each contig to its new cluster's representative (lowest ID)
+						for(Bin newCluster : refined) {
+							int representativeId = Integer.MAX_VALUE;
+							// Find lowest contig ID in this refined cluster
+							for(Contig c : newCluster) {
+								representativeId = Math.min(representativeId, c.id());
+							}
+							// Set all contigs in this refined cluster to point to representative
+							for(Contig c : newCluster) {
+								c.dest = representativeId;
+								cluster.wasReclustered=true;
+							}
+						}
+						mergesT++;
+					}
+				}
+			}
+			return mergesT;
+		}
+
+		/** Purifies clusters by removing outlier contigs in assigned work range.
+		 * @return Number of changes made */
 		private int purify() {
 			for(int i=tid; i<input.size(); i+=threads) {
 				Bin a=input.get(i);
@@ -1136,7 +1442,12 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 			return mergesT;
 		}
-		
+
+		/**
+		 * Purifies single cluster by reassigning poorly fitting contigs.
+		 * @param clust Cluster to purify
+		 * @return Number of contigs reassigned
+		 */
 		private int purifyCluster(Cluster clust) {
 			int changes=0;
 			clust.dest=-1;
@@ -1149,11 +1460,11 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 					if(a.score<0) {
 						a.dest=a.id();
 						changes++;
-//						synchronized(Binner.class) {
-//							oracle.verbose2=true;
-//							oracle.similarity(clust, a, 1);
-//							assert(false);
-//						}
+						//						synchronized(Binner.class) {
+						//							oracle.verbose2=true;
+						//							oracle.similarity(clust, a, 1);
+						//							assert(false);
+						//						}
 					}
 				}
 			}
@@ -1166,7 +1477,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 							if(a.dest<0) {changes++;}
 							a.dest=b.id();
 						}
-//						System.err.print(".");
+						//						System.err.print(".");
 					}else {
 						break;
 					}
@@ -1174,20 +1485,21 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 			}
 			return changes;
 		}
-		
+
+		/** Attempts to assign residual contigs to clusters in assigned work range */
 		private void residue() {
 			for(int i=tid; i<input.size(); i+=threads) {
 				Bin a=input.get(i);
 				synchronized(a) {
 					a.dest=-1;
 					Cluster b=findBestResidualCluster(a, map, key, oracle, range, minSize);
-					
+
 					assert(a!=b);
 					if(b==null) {
 						b=findLinkedCluster(a, map.contigList);
 						assert(a!=b);
 					}
-					
+
 					if(b!=null) {
 						a.dest=b.id;
 						assert(a!=b);
@@ -1197,7 +1509,8 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				}
 			}
 		}
-		
+
+		/** Refines bins by finding better cluster assignments in assigned work range */
 		private void refine() {
 			for(int i=tid; i<input.size(); i+=threads) {
 				Bin a=input.get(i);
@@ -1209,16 +1522,18 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				}
 			}
 		}
-		
+
+		/** Finds best cluster for bin to merge with.
+		 * @param a Bin seeking better cluster assignment */
 		private void refineBin(Bin a) {
 			a.dest=-1;
 			int minSize2=(int)Tools.mid(minSize, a.size(), Integer.MAX_VALUE);
 			Cluster b=map.findBestCluster(a, minSize2, key, range, oracle);
-			
+
 			if(b==null) {
 				//do nothing
 			}else {
-//				assert(a.size()<=b.size());
+				//				assert(a.size()<=b.size());
 				assert(a!=b);
 				assert(a.id()!=b.id);
 				assert(!b.contigSet.contains(a.id()));
@@ -1226,7 +1541,7 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 				a.dest=b.id;
 			}
 		}
-		
+
 		final ArrayList<? extends Bin> input;
 		final BinMap map;
 		final ArrayList<Contig> contigs;
@@ -1234,19 +1549,19 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		final int threads;
 		final int mode;
 
-		
+
 		long fuseCompares=0;
 		long fuseSeeks=0;
 		long fuseTargets=0;
-		
-//		final float maxKmerDif;
-//		final float maxDepthRatio;
-//		final float maxGCDif;
-//		final float maxProduct;
-//		final float maxCovariance;
-//		final int taxLevel;
-//		final boolean allowNoTaxID;
-//		final boolean allowHalfTaxID;
+
+		//		final float maxKmerDif;
+		//		final float maxDepthRatio;
+		//		final float maxGCDif;
+		//		final float maxProduct;
+		//		final float maxCovariance;
+		//		final int taxLevel;
+		//		final boolean allowNoTaxID;
+		//		final boolean allowHalfTaxID;
 		final int range;
 		final int minSize;
 		final Key key=new Key();
@@ -1255,7 +1570,13 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		boolean success=false;
 		int mergesT=0;
 	}
-	
+
+	/**
+	 * Calculates size-based similarity threshold multiplier.
+	 * Applies different standards for tiny, small, large, and huge sequences.
+	 * @param size Sequence size in bases
+	 * @return Multiplier for similarity thresholds
+	 */
 	static float sizeAdjustMult(long size) {
 		float f=sizeAdjustMult2(size);
 		if(size<tinyThresh){// && size>minSizeToCompare) {
@@ -1263,7 +1584,12 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return f;
 	}
-	
+
+	/**
+	 * Core size-adjustment calculation without tiny threshold penalty.
+	 * @param size Sequence size in bases
+	 * @return Base multiplier before tiny threshold adjustment
+	 */
 	static float sizeAdjustMult2(long size) {
 		if(size<smallThresh) {return 1f+smallMult*(smallThresh-size)/(float)smallThresh;}
 		if(size>2*hugeThresh) {return hugeMult;}
@@ -1278,33 +1604,52 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 		}
 		return 1f;
 	}
-	
+
+	/**
+	 * Records merge event for quality assessment.
+	 * @param size Size of smaller merged bin
+	 * @param good Whether merge was taxonomically correct
+	 */
 	void addMerge(long size, boolean good) {
 		int idx=(int)(Tools.log2(size));
 		if(good) {goodMergeSize[idx]++;}
 		else {badMergeSize[idx]++;}
 	}
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Whether to use multiple threads for comparisons */
 	boolean multiThreadedCompare=true;
 
-//	long refinementComparisons=0;
-//	long refinementComparisonsSlow=0;
+	//	long refinementComparisons=0;
+	//	long refinementComparisonsSlow=0;
+	/** Optional sketcher for taxonomic assignment */
 	BinSketcher sketcher;
+	/** Base search range for cluster candidates */
 	int baseRange=1;
+	/** Base number of refinement passes */
 	int basePasses=1;
+	/** Search range for residual contig assignment */
 	int residueRange=3;
+	/** Whether any thread encountered an error */
 	boolean errorState=false;
+	/** Whether to run preliminary pass AA */
 	boolean runPassAA=false;
+	/** Whether to run refinement pass A */
 	boolean runPassA=true;
+	/** Whether to run refinement pass B */
 	boolean runPassB=false;
+	/** Whether to run refinement pass C */
 	boolean runPassC=true;
+	/** Whether to run refinement pass D */
 	boolean runPassD=true;
+	/** Whether to run refinement pass E */
 	boolean runPassE=true;
+	/** Whether to run refinement pass F */
 	boolean runPassF=false;
+	/** Whether to run refinement pass G */
 	boolean runPassG=true;
 
 	long goodMergesFollow=0;
@@ -1326,50 +1671,79 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 
 	long[] goodMergeSize=new long[40];
 	long[] badMergeSize=new long[40];
-	
+
+	/** Main bin map containing all clusters and residual sequences */
 	BinMap binMap;
-	
+
 	/*--------------------------------------------------------------*/
-	
+
+	/** Total merges performed by worker threads */
 	private int threadMerges=0;
+	/** Count of fast preliminary comparisons performed */
 	public AtomicLong fastComparisons=new AtomicLong(0);
+	/** Count of 3-mer composition comparisons performed */
 	public AtomicLong trimerComparisons=new AtomicLong(0);
+	/** Count of 4-mer composition comparisons performed */
 	public AtomicLong tetramerComparisons=new AtomicLong(0);
+	/** Count of detailed similarity calculations performed */
 	public AtomicLong slowComparisons=new AtomicLong(0);
+	/** Count of network-based comparisons performed */
 	public AtomicLong netComparisons=new AtomicLong(0);
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------         Final Fields         ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/** Timer for tracking phase execution times */
 	final Timer phaseTimer=new Timer();
+	/** Output stream for progress and diagnostic messages */
 	final PrintStream outstream;
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------            Static Fields          ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Whether to use perfect similarity oracle for testing */
 	static boolean PERFECT_ORACLE=false;
+	/** Whether to prevent merges known to be taxonomically incorrect */
 	static boolean BAN_BAD_MERGES=false;
-	
+
+	/** Thread mode for cluster refinement operations */
 	static final int REFINE_MODE=0;
+	/** Thread mode for residual contig assignment */
 	static final int RESIDUE_MODE=1;
+	/** Thread mode for cluster purification */
 	static final int PURIFY_MODE=2;
+	/** Thread mode for edge-following operations */
 	static final int FOLLOW_MODE=3;
+	/** Thread mode for bin fusion operations */
 	static final int FUSE_MODE=4;
-	
+	/** Thread mode for cluster splitting operations */
+	static final int RECLUSTER_MODE=5;
+
+	/** Minimum size for bins eligible for fusion */
 	static int fuseLowerLimit=5000;
+	/** Maximum size for bins eligible for fusion */
 	static int fuseUpperLimit=900000;
+	/** Similarity stringency multiplier for fusion decisions */
 	static float fuseStringency=1.5f;
+	/** Similarity stringency multiplier for purification decisions */
 	static float purifyStringency=3f;
-	
+
+	/** Similarity stringency multiplier for residual assignment */
 	static float residueStringency=0.65f;
+	/** Multiplier for combined similarity product thresholds */
 	static float productMult=0.68f;
+	/** Minimum overall similarity required for merging */
 	static float minSimilarity=0.0f;
-	
+
+	/** Maximum number of edges to consider per bin */
 	static int maxEdges=2;
+	/** Minimum edge weight for consideration */
 	static int minEdgeWeight=2;
+	/** Whether to require reciprocal edge connections */
 	static boolean reciprocalEdges=true;
+	/** Minimum ratio of edge weight to maximum edge weight */
 	static float minEdgeRatio=0.4f;
 
 	static float lowDepthEdgeRatio=0.2f;
@@ -1385,14 +1759,14 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 	static float smallMult=2.0f;
 	static int tinyThresh=1000;
 	static float tinyMult=0.72f;
-	
-//	static int minSizeToCluster=0;
-//	static int minSizeToRefine=500;
+
+	//	static int minSizeToCluster=0;
+	//	static int minSizeToRefine=500;
 	/** Size of the bigger one */
-	static int minSizeToCompare=3000;//2000
+	static int minSizeToCompare=2500;
 	/** Size of the smaller one being compared */
-	static int minSizeToMerge=3000;//1500
-//	static int minSizeToAdd=4000;//Should always be the same as minSizeToCompare...
+	static int minSizeToMerge=2500;
+	/** Minimum size for residual contigs to be assigned */
 	static int minSizeResidue=200;
 	static int minNetSize=200;
 	static int midNetSize=3000;
@@ -1409,25 +1783,38 @@ public class Binner extends BinObject implements Accumulator<Binner.CompareThrea
 	static float cutoffMultB=1.7f;
 	static float cutoffMultC=1.6f;
 	static float cutoffMultD=1.2f;
-	
+
 	static int overrideSetSamples=-1;
 	static int compareThreadsOverride=-1;
-	
+
 	//Optimal selection when forming clusters
+	/** Maximum 3-mer composition difference for initial clustering */
 	static float max3merDif1=0.1f;
+	/** Maximum 4-mer composition difference for initial clustering */
 	static float max4merDif1=0.002f;
+	/** Maximum 5-mer composition difference for initial clustering */
 	static float max5merDif1=0.003f;
+	/** Maximum coverage depth ratio for initial clustering */
 	static float maxDepthRatio1=1.05f;
+	/** Maximum GC content difference for initial clustering */
 	static float maxGCDif1=0.015f;
+	/** Maximum coverage covariance for initial clustering */
 	static float maxCovariance1=0.0001f;
-	
+
 	//When merging clusters
+	/** Maximum 3-mer composition difference for cluster merging */
 	static float max3merDif2=0.1f;
+	/** Maximum 4-mer composition difference for cluster merging */
 	static float max4merDif2=0.005f; //.005 for k=4; .012 for k=5; .008 for Euclid
+	/** Maximum 5-mer composition difference for cluster merging */
 	static float max5merDif2=0.007f;
+	/** Maximum coverage depth ratio for cluster merging */
 	static float maxDepthRatio2=1.36f;
+	/** Maximum GC content difference for cluster merging */
 	static float maxGCDif2=0.03f; //0.02f for 1 depth, 0.05 for 4 depths
+	/** Maximum coverage covariance for cluster merging */
 	static float maxCovariance2=0.004f;
+	/** Minimum k-mer probability threshold for cluster merging */
 	static float minKmerProb2=0.9f;
-	
+
 }

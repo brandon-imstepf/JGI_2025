@@ -20,6 +20,12 @@ import structures.ByteBuilder;
  */
 public class SamHeader {
 
+	/**
+	 * Appends SAM header line (@HD) to a ByteBuilder with version and sort order information.
+	 * Sets version to 1.3 or 1.4 based on SamLine.VERSION and sort order to unsorted.
+	 * @param bb ByteBuilder to append header information to
+	 * @return The same ByteBuilder with header line appended
+	 */
 	public static ByteBuilder header0B(ByteBuilder bb){
 		//		if(MAKE_TOPHAT_TAGS){
 		//			return new ByteBuilder("@HD\tVN:"+(VERSION<1.4f ? "1.0" : "1.4")+"\tSO:unsorted");
@@ -30,6 +36,11 @@ public class SamHeader {
 		return bb;
 	}
 
+	/**
+	 * Creates SAM header line (@HD) with version and sort order information.
+	 * Sets version to 1.3 or 1.4 based on SamLine.VERSION and sort order to unsorted.
+	 * @return StringBuilder containing the formatted header line
+	 */
 	public static StringBuilder header0(){
 		//		if(MAKE_TOPHAT_TAGS){
 		//			return new StringBuilder("@HD\tVN:"+(SamLine.VERSION<1.4f ? "1.0" : "1.4")+"\tSO:unsorted");
@@ -38,7 +49,7 @@ public class SamHeader {
 		return sb;
 	}
 
-	static ArrayList<String> scaffolds(int minChrom, int maxChrom, boolean sort){
+	static ArrayList<String> scaffolds(int minChrom, int maxChrom, boolean sort, boolean newline){
 		final ArrayList<String> list=new ArrayList<String>(4000);
 		final StringBuilder sb=new StringBuilder(1000);
 		for(int i=minChrom; i<=maxChrom && i<=Data.numChroms; i++){
@@ -56,7 +67,7 @@ public class SamHeader {
 				//				sb.append("\tLN:"+Tools.min(Integer.MAX_VALUE, (Data.scaffoldLengths[i][j]+1000L)));
 				//				sb.append("\tAS:"+((Data.name==null ? "" : Data.name+" ")+"b"+Data.GENOME_BUILD).replace('\t', ' '));
 
-				sb.append('\n');
+				if(newline) {sb.append('\n');}
 				list.add(sb.toString());
 				sb.setLength(0);
 			}
@@ -65,10 +76,18 @@ public class SamHeader {
 		return list;
 	}
 
+	/**
+	 * Creates sequence dictionary header section with @SQ lines for specified chromosome range.
+	 * Handles scaffold sorting if SamLine.SORT_SCAFFOLDS enabled, otherwise maintains order.
+	 *
+	 * @param minChrom Minimum chromosome number to include
+	 * @param maxChrom Maximum chromosome number to include
+	 * @return StringBuilder containing all @SQ header lines
+	 */
 	public static StringBuilder header1(int minChrom, int maxChrom){
 		StringBuilder sb=new StringBuilder(20000);
 		if(SamLine.SORT_SCAFFOLDS){
-			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true);
+			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true, true);
 			for(int i=0; i<scaffolds.size(); i++){
 				sb.append(scaffolds.get(i));
 				scaffolds.set(i, null);
@@ -99,9 +118,17 @@ public class SamHeader {
 		return sb;
 	}
 
+	/**
+	 * Prints sequence dictionary header section to a PrintWriter.
+	 * Outputs @SQ lines for scaffolds in the specified chromosome range, with optional sorting.
+	 *
+	 * @param minChrom Minimum chromosome number to include
+	 * @param maxChrom Maximum chromosome number to include
+	 * @param pw PrintWriter to output header lines to
+	 */
 	public static void printHeader1(int minChrom, int maxChrom, PrintWriter pw){
 		if(SamLine.SORT_SCAFFOLDS){
-			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true);
+			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true, true);
 			for(int i=0; i<scaffolds.size(); i++){
 				pw.print(scaffolds.set(i, null));
 			}
@@ -133,12 +160,21 @@ public class SamHeader {
 		}
 	}
 
+	/**
+	 * Prints sequence dictionary header section using ByteBuilder for efficient memory usage.
+	 * Flushes buffer to OutputStream when it reaches 32KB to manage memory for large references.
+	 *
+	 * @param minChrom Minimum chromosome number to include
+	 * @param maxChrom Maximum chromosome number to include
+	 * @param bb ByteBuilder for constructing header lines
+	 * @param os OutputStream to write buffered data to
+	 */
 	public static void printHeader1B(int minChrom, int maxChrom, ByteBuilder bb, OutputStream os){
 		if(verbose){System.err.println("printHeader1B("+minChrom+", "+maxChrom+")");}
 
 		if(SamLine.SORT_SCAFFOLDS){
 			if(verbose){System.err.println("Sorting scaffolds");}
-			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true);
+			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true, true);
 			for(int i=0; i<scaffolds.size(); i++){
 				String s=scaffolds.set(i, null);
 				bb.append(s);
@@ -169,7 +205,7 @@ public class SamHeader {
 				bb.append("@SQ\tSN:");//+Data.scaffoldNames[i][j]);
 				if(scafName==null){
 					assert(false) : "scaffoldName["+chrom+"]["+scaf+"] = null";
-					bb.append(scafName);
+					bb.append(scafName); //Possible bug: appending null byte array may cause issues
 				}else{
 					appendScafName(bb, scafName);
 				}
@@ -192,9 +228,17 @@ public class SamHeader {
 		}
 	}
 
+	/**
+	 * Prints sequence dictionary header section to a TextStreamWriter.
+	 * Outputs @SQ lines for scaffolds in the specified chromosome range, with optional sorting.
+	 *
+	 * @param minChrom Minimum chromosome number to include
+	 * @param maxChrom Maximum chromosome number to include
+	 * @param tsw TextStreamWriter to output header lines to
+	 */
 	public static void printHeader1(int minChrom, int maxChrom, TextStreamWriter tsw){
 		if(SamLine.SORT_SCAFFOLDS){
-			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true);
+			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true, true);
 			for(int i=0; i<scaffolds.size(); i++){
 				tsw.print(scaffolds.set(i, null));
 			}
@@ -226,6 +270,12 @@ public class SamHeader {
 		}
 	}
 
+	/**
+	 * Appends scaffold name to StringBuilder, handling prefix removal if configured.
+	 * When Data.scaffoldPrefixes is true, extracts name portion after '$' delimiter.
+	 * @param sb StringBuilder to append scaffold name to
+	 * @param scn Byte array containing the scaffold name
+	 */
 	static void appendScafName(StringBuilder sb, byte[] scn){
 		if(Data.scaffoldPrefixes){
 			int k=0;
@@ -242,6 +292,12 @@ public class SamHeader {
 		}
 	}
 
+	/**
+	 * Appends scaffold name to ByteBuilder, handling prefix removal if configured.
+	 * When Data.scaffoldPrefixes is true, extracts name portion after '$' delimiter.
+	 * @param sb ByteBuilder to append scaffold name to
+	 * @param scn Byte array containing the scaffold name
+	 */
 	static void appendScafName(ByteBuilder sb, byte[] scn){
 		if(Data.scaffoldPrefixes){
 			int k=0;
@@ -256,6 +312,12 @@ public class SamHeader {
 		}
 	}
 
+	/**
+	 * Creates read group (@RG) and program (@PG) header sections.
+	 * Includes read group information if SamLine.READGROUP_ID is set, and program information
+	 * with BBMap version, command line arguments, and JVM parameters.
+	 * @return StringBuilder containing @RG and @PG header lines
+	 */
 	public static StringBuilder header2(){
 		StringBuilder sb=new StringBuilder(1000);
 		//		sb.append("@RG\tID:unknownRG\tSM:unknownSM\tPL:ILLUMINA\n"); //Can cause problems.  If RG is in the header, reads may need extra fields.
@@ -310,6 +372,14 @@ public class SamHeader {
 		return sb;
 	}
 
+	/**
+	 * Appends read group (@RG) and program (@PG) header sections to ByteBuilder.
+	 * Includes read group information if SamLine.READGROUP_ID is set, and program information
+	 * with BBMap version, command line arguments, and JVM parameters.
+	 *
+	 * @param sb ByteBuilder to append header information to
+	 * @return The same ByteBuilder with header sections appended
+	 */
 	public static ByteBuilder header2B(ByteBuilder sb){
 
 		if(SamLine.READGROUP_ID!=null){
@@ -328,7 +398,7 @@ public class SamHeader {
 			sb.append('\n');
 		}
 
-		sb.append("@PG\tID:BBMap\tPN:"+PN+"\tVN:");
+		sb.append("@PG\tID:BBTools\tPN:"+PN+"\tVN:");
 		sb.append(Shared.BBTOOLS_VERSION_STRING);
 //		assert(false) : sb+"\n"+PN;
 		if(Shared.BBMAP_CLASS!=null){
@@ -343,7 +413,8 @@ public class SamHeader {
 					}
 				}
 			}
-			sb.append(" align2."+Shared.BBMAP_CLASS);
+			if(!Shared.BBMAP_CLASS.startsWith(" ")) {sb.append(" align2.");}
+			sb.append(Shared.BBMAP_CLASS);
 			if(Shared.COMMAND_LINE!=null){
 				for(String s : Shared.COMMAND_LINE){
 					sb.append(' ');
@@ -355,7 +426,72 @@ public class SamHeader {
 		return sb;
 	}
 	
+
+
+	private static ArrayList<byte[]> header1B(int minChrom, int maxChrom){
+		if(verbose){System.err.println("printHeader1B("+minChrom+", "+maxChrom+")");}
+		
+		if(SamLine.SORT_SCAFFOLDS){
+			if(verbose){System.err.println("Sorting scaffolds");}
+			ArrayList<String> scaffolds=scaffolds(minChrom, maxChrom, true, false);
+			ArrayList<byte[]> list=new ArrayList<byte[]>(scaffolds.size());
+			for(int i=0; i<scaffolds.size(); i++){
+				String s=scaffolds.set(i, null);
+				list.add(s.getBytes());
+			}
+			return list;
+		}
+
+		if(verbose){System.err.println("Iterating over chroms");}
+		ByteBuilder bb=new ByteBuilder();
+		ArrayList<byte[]> list=new ArrayList<byte[]>();
+		for(int chrom=minChrom; chrom<=maxChrom && chrom<=Data.numChroms; chrom++){
+			final byte[][] inames=Data.scaffoldNames[chrom];
+			final int numScafs=Data.chromScaffolds[chrom];
+			assert(inames.length==numScafs) : "Mismatch between number of scaffolds and names for chrom "+chrom+": "+inames.length+" != "+numScafs;
+			for(int scaf=0; scaf<numScafs; scaf++){
+				final byte[] scafName=inames[scaf];
+				bb.clear();
+				bb.append("@SQ\tSN:");//+Data.scaffoldNames[i][j]);
+				if(scafName==null){
+					assert(false) : "scaffoldName["+chrom+"]["+scaf+"] = null";
+					bb.append(scafName); //Possible bug: appending null byte array may cause issues
+				}else{
+					appendScafName(bb, scafName);
+				}
+				bb.append("\tLN:");
+				bb.append(Tools.min(Integer.MAX_VALUE, (Data.scaffoldLengths[chrom][scaf])));
+				list.add(bb.toBytes());
+			}
+		}
+		return list;
+	}
+	
+	public static ArrayList<byte[]> makeHeaderList(boolean supressHeaderSequences, int MINCHROM, int MAXCHROM) {
+		
+		ArrayList<byte[]> list=new ArrayList<byte[]>(32);
+		
+		ByteBuilder bb=new ByteBuilder(4096);
+		header0B(bb);
+		list.add(bb.toBytes());
+		bb.clear();
+		int a=(MINCHROM==-1 ? 1 : MINCHROM);
+		int b=(MAXCHROM==-1 ? Data.numChroms : MAXCHROM);
+		if(!supressHeaderSequences){
+			for(int chrom=a; chrom<=b; chrom++){
+				ArrayList<byte[]> list2=header1B(chrom, chrom);
+				list.addAll(list2);
+			}
+		}
+		header2B(bb);
+		byte[][] h2b=bb.split('\n');
+		for(byte[] line : h2b) {list.add(line);}
+		return list;
+	}
+	
+	/** Program name identifier used in @PG header lines */
 	public static String PN="BBMap";
+	/** Debug flag for verbose output during header generation */
 	private static final boolean verbose=false;
 
 }

@@ -13,7 +13,7 @@ Standard parameters:
 in=<file>       Input file.
 out=<file>      Output file.
 
-Additional files:
+Additional file parameters:
 tree=auto       Path to TaxTree.
 
 
@@ -25,6 +25,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -65,7 +66,7 @@ calcXmx () {
 calcXmx "$@"
 
 filtersilva() {
-	local CMD="java $EA $EOOM $z -cp $CP prok.FilterSilva $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP prok.FilterSilva $@"
 	echo $CMD >&2
 	eval $CMD
 }

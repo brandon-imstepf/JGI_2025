@@ -23,11 +23,9 @@ expected maximal Q-score of roughly 30 due to the human 1/1000 SNP rate.
 Variations can be ignored by using the callvars flag or providing
 a file of variations.
 
-Usage:
+Usage: calctruequality.sh in=<sam,sam,...sam> path=<directory>
 
-Step 1.  Generate matrices (from mapped sam or bam files):
-calctruequality.sh in=<file,file,...file> path=<directory>
-
+Step 1.  Generate matrices as above.
 Step 2.  Recalibrate reads (any kind of files):
 bbduk.sh in=<file> out=<file> recalibrate
 
@@ -35,7 +33,7 @@ bbduk.sh in=<file> out=<file> recalibrate
 Parameters (and their defaults)
 
 Input parameters:
-in=<file,file>      Sam file or comma-delimited list of files.  Alignments 
+in=<file,file>      Sam/bam file or comma-delimited list of files.  Alignments
                     must use = and X cigar symbols, or have MD tags, or
                     ref must be specified.
 reads=-1            Stop after processing this many reads (if positive).
@@ -64,7 +62,7 @@ usetiles=f          Use per-tile quality statistics to generate matrices.
                     If this is true, the flag must also be used during
                     recalibration (e.g. in BBDuk).
 
-Variation calling:
+Variation calling parameters:
 varfile=<file>      Use the variants in this var file, instead of calling
                     variants.  The format can be produced by CallVariants.
 vcf=<file>          Use the variants in this VCF file, instead of
@@ -75,7 +73,7 @@ ref=                Required for variation-calling.
 
 *** 'Variant-Calling Cutoffs' flags in callvariants.sh are also supported ***
 
-Selecting matrices:
+Matrix-selection parameters:
 loadq102=           For each recalibration matrix, enable or disable that matrix with t/f.
                     You can specify pass1 or pass2 like this: loadq102_p1=f loadq102_p2=t.
                     The default is loadqbp_p1=t loadqbp_p2=t loadqb123_p=t.
@@ -83,7 +81,7 @@ clearmatrices=f     If true, clear all the existing matrix selections.  For exam
                     'clearmatrices loadqbp_p1'
                     This would ignore defaults and select only qbp for the first pass.
 
-Available matrices:
+Avaliable matrix type parameters:
 q102                Quality, leading quality, trailing quality.
 qap                 Quality, average quality, position.
 qbp                 Quality, current base, position.
@@ -107,6 +105,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -147,7 +146,7 @@ calcXmx () {
 calcXmx "$@"
 
 calctruequality() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.CalcTrueQuality $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP jgi.CalcTrueQuality $@"
 	echo $CMD >&2
 	eval $CMD
 }

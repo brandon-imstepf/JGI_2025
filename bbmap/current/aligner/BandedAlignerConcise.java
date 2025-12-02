@@ -1,8 +1,13 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
+ * PRESENTATION-ONLY VERSION - DO NOT USE
+ * This class contains simplified code for publication purposes.
+ * For optimal implementation, see {@link BandedPlusAligner}
+ * 
  *Aligns two sequences to return ANI.
  *Uses only 2 arrays and avoids traceback.
  *Gives an exact answer.
@@ -11,7 +16,7 @@ import java.util.Arrays;
  *Restricts alignment to a fixed band around the diagonal.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class BandedAlignerConcise implements IDAligner{
@@ -51,8 +56,9 @@ public class BandedAlignerConcise implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int subs=0, bandwidth=Math.min(100, 4+Math.max(query.length, ref.length)/8);
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Math.min(60+(int)Math.sqrt(rLen), 4+Math.max(qLen, rLen)/8);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
 			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
@@ -154,9 +160,10 @@ public class BandedAlignerConcise implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	private static AtomicLong loops=new AtomicLong(0);
+	public long loops() {return loops.get();}
+	public void setLoops(long x) {loops.set(x);}
+	public static String output=null;
 
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/

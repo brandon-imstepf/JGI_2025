@@ -11,8 +11,8 @@ Kmer modes (Tadpole or Bloom Filter) require much more memory, and should
 be used with the bbmerge-auto.sh script rather than bbmerge.sh.
 Please read bbmap/docs/guides/BBMergeGuide.txt for more information.
 
-Usage for interleaved files:	bbmerge.sh in=<reads> out=<merged reads> outu=<unmerged reads>
-Usage for paired files:     	bbmerge.sh in1=<read1> in2=<read2> out=<merged reads> outu1=<unmerged1> outu2=<unmerged2>
+Usage (interleaved):	bbmerge.sh in=<reads> out=<merged reads> outu=<unmerged reads>
+Usage (twin files):     bbmerge.sh in1=<read1> in2=<read2> out=<merged reads> outu1=<unmerged1> outu2=<unmerged2>
 
 Input may be stdin or a file, fasta or fastq, raw or gzipped.
 
@@ -112,7 +112,7 @@ adapter=             Specify the adapter sequences used for these reads, if
                      with the adapter1 and adapter2 flags.  adapter=default
                      will use a list of common adapter sequences.
 
-Neural Network Mode:
+Neural Network Mode Parameters:
 nn=t                 Use a neural network for increased merging accuracy.
                      This is highly recommended, but will conflict with
                      strictness and ratiomode flags.  Stringency in nn mode
@@ -122,7 +122,7 @@ cutoff=0.872857      Merge reads with nn score above this value. Lower will
 net=<file>           Optional network to specify (for developer use); the
                      default is bbmap/resources/bbmerge.bbnet.
 
-Ratio Mode: 
+Ratio Mode Parameters: 
 ratiomode=t          Score overlaps based on the ratio of matching to 
                      mismatching bases.
 maxratio=0.09        Max error rate; higher increases merge rate.
@@ -213,6 +213,7 @@ Java Parameters:
 -da                  Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 

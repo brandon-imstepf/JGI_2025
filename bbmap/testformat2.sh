@@ -3,32 +3,26 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified July 10, 2023
+Last modified November 6, 2025
 
 Description:  Reads the entire file to find extended information about the format and contents.
 
 Usage:  testformat2.sh <file>
 
-
 Parameters:
 
 full=t          Process the full file.
 speed=f         Print processing time.
-
 printjunk=f     Print headers of junk reads to stdout.
 zmw=t           Parse PacBio ZMW IDs.
-
 barcodelist=    Optional list of expected barcodes.  May be a filename
                 with one line per barcode, or a comma-delimited literal. 
 printbarcodes=f Print barcodes and counts to stdout.
 edist=f         Calculate barcode edit distance.
-
 printqhist=f    Print quality histogram to stdout.
 printihist=f    Print insert size histogram to stdout.
-
 bhistlen=10k    bhist.txt will be calculated from reads up to this length.
                 To allow all reads, set to 0.
-
 merge=t         Calculate mergability via BBMerge.
 sketch=t        (card) Calculate cardinality via BBSketch.
                 If enabled, also sends the sketch to the refseq server.
@@ -38,7 +32,6 @@ File output parameters (these can be eliminated by setting to null):
 
 junk=junk.txt          Print headers of junk reads to this file.
 barcodes=barcodes.txt  Print barcodes to this file.
-
 hist=t                 False will clear all default histogram files.
 qhist=qhist.txt        Print quality histogram to this file.
 ihist=ihist.txt        Print insert size histogram to this file.
@@ -105,6 +98,7 @@ BarcodeList     List of observed barcodes.
 JunkList        List of headers of problematic reads.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -145,7 +139,7 @@ calcXmx () {
 calcXmx "$@"
 
 testformat() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.TestFormat $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.TestFormat $@"
 #	echo $CMD >&2
 	eval $CMD
 }

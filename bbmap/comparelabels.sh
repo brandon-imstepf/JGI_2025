@@ -15,7 +15,7 @@ and tophitonly.  The assumption is that a header will look like:
 ...in which case the labels CAAC would be compared and found equal.
 
 
-Usage:  comparelables.sh in=<input file> out=<output file>
+Usage:  comparelabels.sh in=<input file> out=<output file>
 
 Input may be fasta or fastq, compressed or uncompressed.
 
@@ -53,6 +53,7 @@ contam         Fraction of reads assigned to a different label, using the
                then contam1=ab/(aa+au+ab) = 2/13 = 153846 PPM.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -87,7 +88,7 @@ calcXmx () {
 calcXmx "$@"
 
 function comparelabels() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP barcode.CompareLabels $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP barcode.CompareLabels $@"
 	echo $CMD >&2
 	eval $CMD
 }

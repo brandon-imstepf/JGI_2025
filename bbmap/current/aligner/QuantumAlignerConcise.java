@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Tools;
 import structures.IntList;
@@ -8,10 +9,10 @@ import structures.IntList;
 /**
  * PRESENTATION-ONLY VERSION - DO NOT USE
  * This class contains simplified code for publication purposes.
- * For functional implementation, see {@link WobbleAligner}
+ * For functional implementation, see {@link QuantumAligner}
  * 
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla, Zephy
  *@date April 24, 2025
  */
 public class QuantumAlignerConcise implements IDAligner{
@@ -107,7 +108,7 @@ public class QuantumAlignerConcise implements IDAligner{
 				final long maxValue=(maxDiagUp&SCORE_MASK)>=leftScore ? maxDiagUp : leftScore;
 				final long scoreDif=prevRowScore-maxValue;// Determines whether j is within score band
 				final int lastPositionAdded=nextList.array[nextList.size-1];
-				final boolean add=j<rLen && (scoreDif<scoreBand || i<topBand);
+				final boolean add=j<=rLen && (scoreDif<scoreBand || i<topBand);
 				final boolean live=(EXTEND_MATCH && isMatch & lastPositionAdded<j+1);
 				curr[j]=(add || live ? maxValue : BAD);// Update or prune current cell
 				prev[j-1]=BAD;//Clear previous row
@@ -176,9 +177,10 @@ public class QuantumAlignerConcise implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	private static AtomicLong loops=new AtomicLong(0);
+	public long loops() {return loops.get();}
+	public void setLoops(long x) {loops.set(x);}
+	public static String output=null;
 
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/

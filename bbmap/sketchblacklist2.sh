@@ -12,9 +12,9 @@ It is advisable to make the input sketches larger than normal,
 e.g. sizemult=2, because new kmers will be introduced in the final
 sketches to replace the blacklisted kmers.
 
-Usage:  sketchblacklist.sh ref=<sketch files> out=<sketch file>
-or      sketchblacklist.sh *.sketch out=<sketch file>
-or      sketchblacklist.sh ref=taxa#.sketch out=<sketch file>
+Usage:  sketchblacklist2.sh ref=<sketch files> out=<sketch file>
+or      sketchblacklist2.sh *.sketch out=<sketch file>
+or      sketchblacklist2.sh ref=taxa#.sketch out=<sketch file>
 
 Standard parameters:
 ref=<file>          Sketch files.
@@ -30,7 +30,7 @@ delta=t             Delta-compress sketches.
 a48=t               Encode sketches as ASCII-48 rather than hex.
 amino=f             Amino-acid mode.
 
-Taxonomy-specific flags:
+Taxonomy-specific parameters:
 tree=               Specify a taxtree file.  On Genepool, use 'auto'.
 gi=                 Specify a gitable file.  On Genepool, use 'auto'.
 accession=          Specify one or more comma-delimited NCBI accession to
@@ -51,6 +51,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -91,7 +92,7 @@ calcXmx () {
 calcXmx "$@"
 
 sketchblacklist() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.BlacklistMaker2 $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.BlacklistMaker2 $@"
 	echo $CMD >&2
 	eval $CMD
 }

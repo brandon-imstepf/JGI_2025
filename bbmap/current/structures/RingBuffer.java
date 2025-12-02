@@ -9,11 +9,16 @@ import shared.Timer;
  * Uses masks for speed, but allows arbitrary logical buffer size.
  * The physical buffer size is rounded up to the next power of two.
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 8, 2025
  */
 public final class RingBuffer {
 	
+	/**
+	 * Test method demonstrating buffer performance.
+	 * Creates a buffer and measures throughput of add/get operations.
+	 * @param args Command-line arguments: [buffer_size] [iteration_count]
+	 */
 	public static void main(String[] args) {
 		int size=Integer.parseInt(args[0]);
 		long iters=Long.parseLong(args[1]), sum=0;
@@ -112,18 +117,28 @@ public final class RingBuffer {
 	 * @return The number of elements, limited by buffer capacity.
 	 */
 	public final int size() {
-		return (int)Math.min(count, mask+1);
+		return (int)Math.min(count, size);
+	}
+	
+	public void clear() {
+		pos=0;
+		//fill(0); //Not needed
 	}
 
 	/*--------------------------------------------------------------*/
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Physical storage array, size is power of two for bit masking */
 	private final long[] array;
+	/** Bit mask for fast modulo operation (array.length - 1) */
 	private final int mask;
+	/** Logical buffer size specified by user */
 	private final int size;
 	
+	/** Current write position in the circular buffer */
 	private int pos=0;
+	/** Total number of elements ever added to the buffer */
 	private long count=0;//Optional
 	
 }

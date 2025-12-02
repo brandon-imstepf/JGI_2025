@@ -10,6 +10,7 @@ Description:  Splits sam reads into 4 output files depending on mapping.
 Usage:  splitsam4way.sh <input> <outplus> <outminus> <outchimeric> <outunmapped>
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -41,7 +42,7 @@ calcXmx () {
 calcXmx "$@"
 
 function split() {
-	local CMD="java $EA $EOOM -Xmx128m -Xms128m -cp $CP jgi.SplitSam4Way $@"
+	local CMD="java $EA $SIMD $EOOM -Xmx128m -Xms128m -cp $CP jgi.SplitSam4Way $@"
 	echo $CMD >&2
 	eval $CMD
 }

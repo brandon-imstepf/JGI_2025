@@ -36,26 +36,68 @@ import shared.Tools;
 import stream.ConcurrentReadOutputStream;
 import stream.ConcurrentReadStreamInterface;
 import stream.MultiCros;
+import stream.Streamer;
+import stream.Writer;
+import stream.bam.BamInputStream;
+import stream.bam.BamOutputStream;
+import stream.bam.BgzfInputStream;
+import stream.bam.BgzfInputStreamMT;
+import stream.bam.BgzfInputStreamMT2;
+import stream.bam.BgzfOutputStream;
+import stream.bam.BgzfOutputStreamMT;
+import stream.bam.BgzfSettings;
 import structures.ByteBuilder;
 
+/**
+ * Comprehensive utility class for reading, writing, and managing file input/output
+ * operations with advanced compression and multi-threading support.
+ * Provides flexible, high-performance file reading and writing methods with support
+ * for multiple compression formats (gzip, zip, bzip2, xz, dsrc) and concurrent
+ * file operations. Handles various file sources including local files, JAR resources,
+ * and standard input/output streams.
+ *
+ * @author Brian Bushnell
+ */
 public class ReadWrite {
 	
 	
+	/**
+	 * Program entry point for file copying functionality.
+	 * Copies source file to destination, ensuring destination does not exist.
+	 * @param args Command-line arguments [source, destination]
+	 */
 	public static void main(String[] args){
 		File f=new File(args[1]);
 		assert(!f.exists()) : "Destination file already exists.";
 		copyFile(args[0], args[1]);
 	}
 	
+	/**
+	 * Writes a character sequence to file asynchronously in a separate thread.
+	 * @param x Character sequence to write
+	 * @param fname Output filename
+	 */
 	public static void writeStringInThread(CharSequence x, String fname){
 		writeStringInThread(x, fname, false);
 	}
 	
+	/**
+	 * Writes a character sequence to file asynchronously in a separate thread.
+	 * @param x Character sequence to write
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file or overwrite
+	 */
 	public static void writeStringInThread(CharSequence x, String fname, boolean append){
 		addThread(1);
 		new Thread(new WriteStringThread(x, fname, append)).start();
 	}
 	
+	/**
+	 * Writes an object to file asynchronously using serialization in a separate thread.
+	 * @param x Object to serialize and write
+	 * @param fname Output filename
+	 * @param allowSubprocess Whether to allow subprocess compression
+	 */
 	public static void writeObjectInThread(Object x, String fname, boolean allowSubprocess){
 		addThread(1);
 		new Thread(new WriteObjectThread(x, fname, allowSubprocess)).start();
@@ -108,6 +150,16 @@ public class ReadWrite {
 		
 	}
 	
+	/**
+	 * Sets file permissions for read, write, and execute access.
+	 *
+	 * @param fname File path
+	 * @param read Whether to grant read permission
+	 * @param write Whether to grant write permission
+	 * @param execute Whether to grant execute permission
+	 * @param ownerOnly Whether permissions apply to owner only
+	 * @return true if permissions were successfully set, false otherwise
+	 */
 	public static boolean setPermissions(String fname, boolean read, boolean write, boolean execute, boolean ownerOnly){
 		File f=new File(fname);
 		if(!f.exists()){return false;}
@@ -121,10 +173,26 @@ public class ReadWrite {
 		return true;
 	}
 
+	/** Writes character sequence to file, overwriting any existing content */
 	public static void writeString(CharSequence x, String fname){writeString(x, fname, false);}
+	/**
+	 * Writes character sequence to file with append option.
+	 * @param x Character sequence to write
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file or overwrite
+	 */
 	public static void writeString(CharSequence x, String fname, boolean append){
 		writeString(x, fname, !append, append);
 	}
+	/**
+	 * Writes character sequence to file with explicit overwrite and append control.
+	 * Handles compressed formats and proper stream closure.
+	 *
+	 * @param x Character sequence to write
+	 * @param fname Output filename
+	 * @param overwrite Whether to allow overwriting existing files
+	 * @param append Whether to append to existing file
+	 */
 	public static void writeString(CharSequence x, String fname, boolean overwrite, boolean append){
 		if(verbose){System.err.println("writeString(x, "+fname+", "+append+")");}
 		File f=new File(fname);
@@ -163,7 +231,16 @@ public class ReadWrite {
 		}
 	}
 
+	/** Writes character sequence to file asynchronously without synchronization */
 	public static void writeStringAsync(CharSequence x, String fname){writeStringAsync(x, fname, false);}
+	/**
+	 * Writes character sequence to file asynchronously without disk synchronization.
+	 * Used by background writer threads to avoid blocking.
+	 *
+	 * @param x Character sequence to write
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file or overwrite
+	 */
 	public static void writeStringAsync(CharSequence x, String fname, boolean append){
 		if(verbose){System.err.println("writeStringAsync(x, "+fname+", "+append+")");}
 		
@@ -201,6 +278,14 @@ public class ReadWrite {
 		}
 	}
 	
+	/**
+	 * Writes an object to file using serialization with disk synchronization.
+	 *
+	 * @param <X> Type of object to write
+	 * @param x Object to serialize and write
+	 * @param fname Output filename
+	 * @param allowSubprocess Whether to allow subprocess compression
+	 */
 	public static <X> void write(X x, String fname, boolean allowSubprocess){
 		if(verbose){System.err.println("write(x, "+fname+", "+allowSubprocess+")");}
 		
@@ -223,6 +308,15 @@ public class ReadWrite {
 		}
 	}
 	
+	/**
+	 * Writes an object to file using serialization without disk synchronization.
+	 * Used by background writer threads.
+	 *
+	 * @param <X> Type of object to write
+	 * @param x Object to serialize and write
+	 * @param fname Output filename
+	 * @param allowSubprocess Whether to allow subprocess compression
+	 */
 	public static <X> void writeAsync(X x, String fname, boolean allowSubprocess){
 		if(verbose){System.err.println("writeAsync(x, "+fname+", "+allowSubprocess+")");}
 		
@@ -243,6 +337,16 @@ public class ReadWrite {
 		}
 	}
 	
+	/**
+	 * Completes reading operations by closing input stream and readers.
+	 * Optionally kills associated subprocesses.
+	 *
+	 * @param is Input stream to close
+	 * @param fname Filename for process identification
+	 * @param killProcess Whether to kill associated subprocess
+	 * @param ra Additional readers to close
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean finishReading(InputStream is, String fname, boolean killProcess, Reader...ra){
 		if(verbose){System.err.println("finishReading("+is+", "+fname+", "+killProcess+", "+ra.length+")");}
 		boolean error=false;
@@ -261,6 +365,15 @@ public class ReadWrite {
 		return error;
 	}
 	
+	/**
+	 * Completes reading operations by closing input stream.
+	 * Optionally kills associated subprocesses.
+	 *
+	 * @param is Input stream to close
+	 * @param fname Filename for process identification
+	 * @param killProcess Whether to kill associated subprocess
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean finishReading(InputStream is, String fname, boolean killProcess){
 		if(verbose){System.err.println("finishReading("+is+", "+fname+", "+killProcess+")");}
 		boolean error=false;
@@ -282,6 +395,16 @@ public class ReadWrite {
 //		return finishWriting(writer, outStream, fname, fname!=null);
 //	}
 	
+	/**
+	 * Completes writing operations by flushing and closing output streams.
+	 * Optionally kills associated subprocesses.
+	 *
+	 * @param writer Print writer to close (may be null)
+	 * @param outStream Output stream to close
+	 * @param fname Filename for process identification
+	 * @param killProcess Whether to kill associated subprocess
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean finishWriting(PrintWriter writer, OutputStream outStream, String fname, boolean killProcess){
 		if(verbose){System.err.println("finishWriting("+writer+", "+outStream+" , "+fname+", "+killProcess+")");}
 		boolean error=false;
@@ -293,6 +416,12 @@ public class ReadWrite {
 		return error;
 	}
 	
+	/**
+	 * Closes output stream and kills associated subprocess if specified.
+	 * @param os Output stream to close
+	 * @param fname Filename for process identification
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean close(OutputStream os, String fname){
 		if(verbose){System.err.println("close("+os+", "+fname+")");}
 		boolean error=false;
@@ -302,6 +431,12 @@ public class ReadWrite {
 		return error;
 	}
 	
+	/**
+	 * Closes output stream with proper handling of compression formats.
+	 * Flushes data and handles special cases for ZIP and XZ streams.
+	 * @param os Output stream to close
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean close(OutputStream os){
 		if(verbose){System.err.println("close("+os+")");}
 		boolean error=false;
@@ -345,10 +480,27 @@ public class ReadWrite {
 		return error;
 	}
 	
+	/**
+	 * Creates output stream from FileFormat specification.
+	 * @param ff FileFormat containing filename and options
+	 * @param buffered Whether to use buffered output
+	 * @return Configured output stream
+	 */
 	public static OutputStream getOutputStream(FileFormat ff, boolean buffered){
 		return getOutputStream(ff.name(), ff.append(), buffered, ff.allowSubprocess());
 	}
 
+	/**
+	 * Creates appropriate output stream based on file extension and compression type.
+	 * Handles gzip, zip, bzip2, xz, dsrc, fqz, alapy, and zstd formats.
+	 * Creates directories as needed and manages subprocess compression.
+	 *
+	 * @param fname Output filename with extension indicating compression type
+	 * @param append Whether to append to existing file
+	 * @param buffered Whether to use buffered output
+	 * @param allowSubprocess Whether to allow external compression tools
+	 * @return Configured output stream for the specified format
+	 */
 	public static OutputStream getOutputStream(String fname, boolean append, boolean buffered, boolean allowSubprocess){
 		
 		if(verbose){
@@ -411,6 +563,34 @@ public class ReadWrite {
 		return getRawOutputStream(fname, append, buffered);
 	}
 	
+	public static OutputStream getBamOutputStream(String fname, boolean append) {
+		int zl=Tools.min(ZIPLEVEL, 6);
+		if(nativeBamOut()) {
+			int threads=Tools.mid(1, Shared.threads(), zl>6 ? 16 : zl>4 ? 16 : zl>3 ? 8 : 4);
+			try{
+				return new BamOutputStream(fname, zl, threads);
+			}catch(IOException e){
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}else if(Data.SAMTOOLS()){
+			int threads=Tools.mid(1, Shared.threads(), zl>4 ? 16 : zl>3 ? 8 : 4);
+			return getOutputStreamFromProcess(fname, "samtools view -@ "+threads+" -S -b -h - ", true, append, true, true);
+		}else if(false && Data.SAMBAMBA()){
+			return ReadWrite.getOutputStreamFromProcess(fname, "sambamba view -S -f bam -h ", true, append, true, true); //Sambamba does not support stdin
+		}
+		throw new RuntimeException("No bam output support available");
+	}
+	
+	/**
+	 * Creates uncompressed file output stream with special handling for stdout/stderr.
+	 * Creates parent directories as needed and handles special filenames.
+	 *
+	 * @param fname Output filename ("stdout", "stderr", or regular path)
+	 * @param append Whether to append to existing file
+	 * @param buffered Whether to use buffered output
+	 * @return Raw file output stream
+	 */
 	public static OutputStream getRawOutputStream(String fname, boolean append, boolean buffered){
 		
 		if(verbose){System.err.println("getRawOutputStream("+fname+", "+append+", "+buffered+")");}
@@ -452,6 +632,16 @@ public class ReadWrite {
 		return fos;
 	}
 	
+	/**
+	 * Creates XZ compressed output stream.
+	 * Currently throws exception as XZ support is disabled.
+	 *
+	 * @param fname Output filename
+	 * @param buffered Whether to use buffered output
+	 * @param allowSubprocess Whether to allow subprocess compression
+	 * @return XZ compressed output stream
+	 * @throws RuntimeException XZ format currently unsupported
+	 */
 	public static OutputStream getXZOutputStream(String fname, boolean buffered, boolean allowSubprocess){
 		final OutputStream raw=getRawOutputStream(fname, false, buffered);
 		if(RAWMODE){return raw;}
@@ -469,6 +659,17 @@ public class ReadWrite {
 //		return null;
 	}
 	
+	/**
+	 * Creates bzip2 compressed output stream using external tools.
+	 * Tries lbzip2, pbzip2, or bzip2 in order of preference.
+	 *
+	 * @param fname Output filename
+	 * @param buffered Whether to use buffered output
+	 * @param append Whether to append (not supported for bzip2)
+	 * @param allowSubprocess Whether to allow subprocess compression
+	 * @return Bzip2 compressed output stream
+	 * @throws RuntimeException if no bzip2 tools are available
+	 */
 	public static OutputStream getBZipOutputStream(String fname, boolean buffered, boolean append, boolean allowSubprocess){
 		if(verbose){System.err.println("getBZipOutputStream("+fname+", "+buffered+", "+append+", "+allowSubprocess+")");}
 //		assert(false) : ReadWrite.ZIPLEVEL+", "+Shared.threads()+", "+MAX_ZIP_THREADS+", "+ZIP_THREAD_MULT+", "+allowSubprocess+", "+USE_PIGZ+", "+Data.PIGZ();
@@ -502,6 +703,15 @@ public class ReadWrite {
 //		}
 	}
 	
+	/**
+	 * Creates DSRC compressed output stream for FASTQ files.
+	 *
+	 * @param fname Output filename
+	 * @param buffered Whether to use buffered output
+	 * @param append Whether to append (not supported for DSRC)
+	 * @return DSRC compressed output stream
+	 * @throws RuntimeException if DSRC tool not available
+	 */
 	public static OutputStream getDsrcOutputStream(String fname, boolean buffered, boolean append){
 		if(verbose){System.err.println("getDsrcOutputStream("+fname+", "+buffered+", "+append+")");}
 		if(RAWMODE){
@@ -514,6 +724,14 @@ public class ReadWrite {
 		throw new RuntimeException("dsrc compression requires dsrc in the path.");
 	}
 	
+	/**
+	 * Creates ZIP compressed output stream using Java's built-in ZIP support.
+	 *
+	 * @param fname Output filename
+	 * @param buffered Whether to use buffered output
+	 * @param allowSubprocess Whether to allow subprocess compression (ignored)
+	 * @return ZIP compressed output stream
+	 */
 	public static OutputStream getZipOutputStream(String fname, boolean buffered, boolean allowSubprocess){
 		if(verbose){System.err.println("getZipOutputStream("+fname+", "+buffered+", "+allowSubprocess+")");}
 		final OutputStream raw=getRawOutputStream(fname, false, buffered);
@@ -532,14 +750,24 @@ public class ReadWrite {
 		return null;
 	}
 	
+	/**
+	 * Creates gzip compressed output stream with tool preference order.
+	 * Prefers bgzip for VCF/SAM files, then pigz for parallel compression,
+	 * falls back to Java's built-in GZIP implementation.
+	 *
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @param allowSubprocess Whether to allow external compression tools
+	 * @return Gzip compressed output stream
+	 */
 	public static OutputStream getGZipOutputStream(String fname, boolean append, boolean allowSubprocess){
-		if(verbose){System.err.println("getGZipOutputStream("+fname+", "+append+", "+allowSubprocess+"); "+USE_BGZIP+", "+Data.BGZIP()+", "+USE_PIGZ+", "+USE_GZIP+", "+RAWMODE);}
-//		assert(false) : ReadWrite.ZIPLEVEL+", "+Shared.threads()+", "+MAX_ZIP_THREADS+", "+ZIP_THREAD_MULT+", "+allowSubprocess+", "+USE_PIGZ+", "+Data.PIGZ();
-		if(FORCE_BGZIP && USE_BGZIP && Data.BGZIP()){return getBgzipStream(fname, append);}
+		if(verbose){System.err.println("getGZipOutputStream("+fname+", "+append+", "+allowSubprocess+"); "+FORCE_BGZIP+", "+USE_BGZIP+", "+Data.BGZIP()+", "+USE_PIGZ+", "+USE_GZIP+", "+RAWMODE);}
+		final boolean bgzip=(USE_BGZIP && (ALLOW_NATIVE_BGZF || Data.BGZIP()));
+		if(bgzip && (FORCE_BGZIP || (PREFER_BGZIP && ZIPLEVEL<10))){return getBgzipStream(fname, append);}
 		if(FORCE_PIGZ || (allowSubprocess && Shared.threads()>=2)){
-			if((fname.endsWith(".vcf.gz") || fname.endsWith(".sam.gz") || (PREFER_BGZIP && ZIPLEVEL<10)) && USE_BGZIP && Data.BGZIP()){return getBgzipStream(fname, append);}
+			if((fname.endsWith(".vcf.gz") || fname.endsWith(".sam.gz") || (PREFER_BGZIP && ZIPLEVEL<10)) && bgzip){return getBgzipStream(fname, append);}
 			if(USE_PIGZ && Data.PIGZ()){return getPigzStream(fname, append);}
-			if(USE_BGZIP && Data.BGZIP()){return getBgzipStream(fname, append);}
+			if(bgzip){return getBgzipStream(fname, append);}
 			if(USE_GZIP && Data.GZIP()/* && (Data.SH() /*|| fname.equals("stdout") || fname.startsWith("stdout."))*/){return getGzipStream(fname, append);}
 		}
 		final OutputStream raw=getRawOutputStream(fname, append, false);
@@ -560,6 +788,14 @@ public class ReadWrite {
 		return null;
 	}
 	
+	/**
+	 * Creates pigz (parallel gzip) output stream with optimized thread and
+	 * compression level settings based on available CPU cores.
+	 *
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Pigz compressed output stream
+	 */
 	public static OutputStream getPigzStream(String fname, boolean append){
 		if(verbose){System.err.println("getPigzStream("+fname+")");}
 //		System.err.println(MAX_ZIP_THREADS); //123
@@ -591,6 +827,11 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates FQZ compressed output stream optimized for FASTQ files.
+	 * @param fname Output filename
+	 * @return FQZ compressed output stream
+	 */
 	public static OutputStream getFqzStream(String fname){
 		if(verbose){System.err.println("getFqzStream("+fname+")");}
 		String command="fqz_comp -s"+Tools.mid(1, ZIPLEVEL, 8)+"+"; //9 gives bad compression
@@ -600,6 +841,11 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates Alapy compressed output stream with compression level selection.
+	 * @param fname Output filename
+	 * @return Alapy compressed output stream
+	 */
 	public static OutputStream getAlapyStream(String fname){
 		if(verbose){System.err.println("getAlapyStream("+fname+")");}
 		String compression=(ZIPLEVEL>6 ? "-l best" : ZIPLEVEL<4 ? "-l fast" : "-l medium");
@@ -609,24 +855,56 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates standard gzip output stream using external gzip command.
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Gzip compressed output stream
+	 */
 	public static OutputStream getGzipStream(String fname, boolean append){
 		if(verbose){System.err.println("getGzipStream("+fname+")");}
 		OutputStream out=getOutputStreamFromProcess(fname, "gzip -c -"+Tools.min(ZIPLEVEL, 9), true, append, true, true);
 		return out;
 	}
 	
+	/**
+	 * Creates bgzip output stream with optimized thread allocation for
+	 * block-gzip format compatible with tabix indexing.
+	 *
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Bgzip compressed output stream
+	 */
 	public static OutputStream getBgzipStream(String fname, boolean append){
 		if(verbose){System.err.println("getBgzipStream("+fname+")");}
 		
 		int threads=Tools.min(MAX_ZIP_THREADS, Tools.max((int)((Shared.threads()+1)*ZIP_THREAD_MULT), 1));
-//		System.err.println(threads); //123
 		threads=Tools.max(1, Tools.min(Shared.threads(), threads));
-//		System.err.println(threads); //123
 		int zl=Tools.mid(ZIPLEVEL, 1, 9);
+//		System.err.println("A: ZIPLEVEL="+ZIPLEVEL+", ALLOW_CHANGE="+ALLOW_ZIPLEVEL_CHANGE+", zl="+zl);
+		if(nativeBgzfOut() || !Data.BGZIP()) {
+			if(zl>5) {zl=5;}//Required for native bgzip.
+			if(ALLOW_ZIPLEVEL_CHANGE){
+				if(zl<4 && zl>0 && threads>=16) {zl=4;}
+			}
+			if(zl<3){threads=Tools.min(threads, 16);}
+			else if(zl<5){threads=Tools.min(threads, 24);}
+			else if(zl<6){threads=Tools.min(threads, 64);}
+//			System.err.println("B: ZIPLEVEL="+ZIPLEVEL+", ALLOW_CHANGE="+ALLOW_ZIPLEVEL_CHANGE+", zl="+zl);
+			final OutputStream raw=getRawOutputStream(fname, append, false);//TODO - should it be true or false?
+			if(RAWMODE){return raw;}
+			OutputStream out;
+			if(!BgzfSettings.USE_MULTITHREADED_BGZF) {out=new BgzfOutputStream(raw);}
+			else {out=new BgzfOutputStreamMT(raw, Tools.mid(1, 64, threads), zl);}
+			return out;
+		}
+		
 		if(ALLOW_ZIPLEVEL_CHANGE && threads>=4 && zl>0 && zl<4){zl=4;}
 		if(zl<3){threads=Tools.min(threads, 12);}
 		else if(zl<5){threads=Tools.min(threads, 16);}
 		else if(zl<7){threads=Tools.min(threads, 32);}//Was 40, but even BBDuk can only sustain ~16
+
+//		System.err.println("C: ZIPLEVEL="+ZIPLEVEL+", ALLOW_CHANGE="+ALLOW_ZIPLEVEL_CHANGE+", zl="+zl);
 		
 //		assert(false) : Data.BGZIP()+", "+Data.PIGZ();
 		String command="bgzip -c "+(append ? "" : "-f ")+(Data.BGZIP_VERSION_levelFlag ? "-l "+zl+" " : "")+(Data.BGZIP_VERSION_threadsFlag ? "-@ "+threads+" " : "");
@@ -655,6 +933,12 @@ public class ReadWrite {
 //
 	
 	//This works correctly, but decompression doesn't
+	/**
+	 * Creates Zstandard compressed output stream with thread optimization.
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Zstd compressed output stream
+	 */
 	public static OutputStream getZstdStream(String fname, boolean append){
 		if(verbose){System.err.println("getZstdStream("+fname+")");}
 		
@@ -673,6 +957,12 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates bzip2 output stream using external bzip2 command.
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Bzip2 compressed output stream
+	 */
 	public static OutputStream getBzip2Stream(String fname, boolean append){
 		if(verbose){System.err.println("getBzip2Stream("+fname+")");}
 		String command="bzip2 -c -"+Tools.min(BZIPLEVEL, 9);
@@ -680,6 +970,12 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates parallel bzip2 output stream with thread optimization.
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Pbzip2 compressed output stream
+	 */
 	public static OutputStream getPbzip2Stream(String fname, boolean append){
 		if(verbose){System.err.println("getPbzip2Stream("+fname+")");}
 		int threads=Tools.min(MAX_ZIP_THREADS, Tools.max((int)((Shared.threads()+1)*ZIP_THREAD_MULT), 1));
@@ -689,6 +985,12 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates lbzip2 output stream for fast bzip2 compression.
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return Lbzip2 compressed output stream
+	 */
 	public static OutputStream getLbzip2Stream(String fname, boolean append){
 		if(verbose){System.err.println("getLbzip2Stream("+fname+")");}
 		String command="lbzip2 -"+Tools.min(BZIPLEVEL, 9);
@@ -696,6 +998,14 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Creates DSRC output stream with compression parameter optimization
+	 * based on compression level. DSRC is specialized for FASTQ files.
+	 *
+	 * @param fname Output filename
+	 * @param append Whether to append to existing file
+	 * @return DSRC compressed output stream
+	 */
 	public static OutputStream getDsrcOutputStream2(String fname, boolean append){
 		if(verbose){System.err.println("getDsrcOutpustream2("+fname+")");}
 		int threads=Tools.min(MAX_ZIP_THREADS, Tools.max((int)((Shared.threads()+1)*ZIP_THREAD_MULT), 1));
@@ -820,6 +1130,11 @@ public class ReadWrite {
 		return out;
 	}
 	
+	/**
+	 * Reads entire file content as a single string with newline preservation.
+	 * @param fname Input filename
+	 * @return Complete file content as string
+	 */
 	public static String readString(String fname){
 		if(verbose){System.err.println("readString("+fname+")");}
 		String x=null;
@@ -851,6 +1166,12 @@ public class ReadWrite {
 		return x;
 	}
 	
+	/**
+	 * Reads serialized object from file with subprocess decompression support.
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow subprocess decompression
+	 * @return Deserialized object
+	 */
 	public static Object readObject(String fname, boolean allowSubprocess){
 		if(verbose){System.err.println("readObject("+fname+")");}
 		Object x=null;
@@ -873,14 +1194,29 @@ public class ReadWrite {
 		return x;
 	}
 	
+	/**
+	 * Creates appropriate input stream based on file extension and compression type.
+	 * Handles gzip, zip, bzip2, dsrc, bam, fqz, alapy, and zstd formats.
+	 * Manages subprocess decompression and special file types.
+	 *
+	 * @param fname Input filename with extension indicating compression type
+	 * @param buffer Whether to use buffered input
+	 * @param allowSubprocess Whether to allow external decompression tools
+	 * @return Configured input stream for the specified format
+	 */
 	public static InputStream getInputStream(String fname, boolean buffer, boolean allowSubprocess){
+		return getInputStream(fname, buffer, allowSubprocess, true);
+	}
+	
+	public static InputStream getInputStream(String fname, boolean buffer, boolean allowSubprocess, 
+			boolean ordered){
 		if(verbose){System.err.println("getInputStream("+fname+", "+buffer+", "+allowSubprocess+")");}
 		boolean xz=fname.endsWith(".xz");
 		boolean gzipped=fname.endsWith(".gz") || fname.endsWith(".gzip");
 		boolean zipped=fname.endsWith(".zip");
 		boolean bzipped=PROCESS_BZ2 && fname.endsWith(".bz2");
 		boolean dsrced=fname.endsWith(".dsrc");
-		boolean bam=fname.endsWith(".bam") && (SAMBAMBA() || Data.SAMTOOLS());
+		boolean bam=fname.endsWith(".bam") && Data.BAM_SUPPORT_IN();
 		boolean fqz=fname.endsWith(".fqz");
 		boolean alapy=fname.endsWith(".ac");
 		boolean zst=fname.endsWith(".zst");
@@ -893,46 +1229,7 @@ public class ReadWrite {
 			if(bzipped){return getBZipInputStream(fname, allowSubprocess);}
 			if(dsrced){return getDsrcInputStream(fname);}
 			if(zst) {return getUnzstdStream(fname);}
-			if(bam){
-				if(SAMBAMBA()){
-					String command="sambamba -q view -h";
-//					new Exception().printStackTrace(); //123
-					if(SAMTOOLS_IGNORE_FLAG!=0){
-						command=command+" --num-filter=0/"+SAMTOOLS_IGNORE_FLAG;
-					}
-					return getInputStreamFromProcess(fname, command, false, true, true);
-				}else{
-					String command="samtools view -h";
-//					new Exception().printStackTrace(); //123
-					if(SAMTOOLS_IGNORE_FLAG!=0){
-						//					command=command+" -F 4";
-						command=command+" -F 0x"+Integer.toHexString(SAMTOOLS_IGNORE_FLAG);
-					}
-					String version=Data.SAMTOOLS_VERSION;
-					if(Shared.threads()>1 && version!=null && version.startsWith("1.") && version.length()>2){
-						try {
-							String[] split=version.split("\\.");
-							int number=-1;
-							try {
-								number=Integer.parseInt(split[1]);
-							} catch (Exception e) {}
-							if(number<0){
-								try {
-									number=Integer.parseInt(split[1].substring(0, 1));
-								} catch (Exception e1) {}
-							}
-							if(number>3){
-								command=command+" -@ 2";
-							}
-						} catch (NumberFormatException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-					//				System.err.println(command);
-					return getInputStreamFromProcess(fname, command, false, true, true);
-				}
-			}
+			if(bam){return getBamInputStream(fname, ordered);}
 
 			if(fqz){return getInputStreamFromProcess(fname, "fqz_comp -d ", false, true, true);}
 			if(alapy){
@@ -943,6 +1240,57 @@ public class ReadWrite {
 		return getRawInputStream(fname, buffer);
 	}
 	
+	public static InputStream getBamInputStream(String fname, boolean ordered) {
+		if(nativeBamIn()) {
+			return new BamInputStream(fname, ordered);
+		}else if(SAMBAMBA()){
+			String command="sambamba -q view -h";//Adding -t 8 did not change speed
+//			new Exception().printStackTrace(); //123
+			if(SAMTOOLS_IGNORE_FLAG!=0){
+				command=command+" --num-filter=0/"+SAMTOOLS_IGNORE_FLAG;
+			}
+			return getInputStreamFromProcess(fname, command, false, true, true);
+		}else{
+			String command="samtools view -h";//Adding -@ 4 or 16 did not change speed
+//			new Exception().printStackTrace(); //123
+			if(SAMTOOLS_IGNORE_FLAG!=0){
+				//					command=command+" -F 4";
+				command=command+" -F 0x"+Integer.toHexString(SAMTOOLS_IGNORE_FLAG);
+			}
+			String version=Data.SAMTOOLS_VERSION;
+			if(Shared.threads()>1 && version!=null && version.startsWith("1.") && version.length()>2){
+				try {
+					String[] split=version.split("\\.");
+					int number=-1;
+					try {
+						number=Integer.parseInt(split[1]);
+					} catch (Exception e) {}
+					if(number<0){
+						try {
+							number=Integer.parseInt(split[1].substring(0, 1));
+						} catch (Exception e1) {}
+					}
+					if(number>3){
+						command=command+" -@ 2";
+					}
+				} catch (NumberFormatException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+			//				System.err.println(command);
+			return getInputStreamFromProcess(fname, command, false, true, true);
+		}
+	}
+	
+	/**
+	 * Creates uncompressed file input stream with support for stdin, JAR resources,
+	 * and automatic file path resolution. Handles special filenames and missing files.
+	 *
+	 * @param fname Input filename ("stdin" or regular path, JAR URLs supported)
+	 * @param buffer Whether to use buffered input
+	 * @return Raw file input stream
+	 */
 	public static InputStream getRawInputStream(String fname, boolean buffer){
 		if(verbose){System.err.println("getRawInputStream("+fname+", "+buffer+")");}
 		
@@ -1031,7 +1379,16 @@ public class ReadWrite {
 		return in;
 	}
 	
+	/** Creates ZIP input stream with default buffering */
 	public static InputStream getZipInputStream(String fname){return getZipInputStream(fname, true);}
+	/**
+	 * Creates ZIP input stream with entry validation.
+	 * Verifies that ZIP entry name matches expected basename.
+	 *
+	 * @param fname Input ZIP filename
+	 * @param buffer Whether to use buffered input
+	 * @return ZIP input stream positioned at first entry
+	 */
 	public static InputStream getZipInputStream(String fname, boolean buffer){
 		if(verbose){System.err.println("getZipInputStream("+fname+", "+buffer+")");}
 		InputStream raw=getRawInputStream(fname, buffer);
@@ -1058,41 +1415,36 @@ public class ReadWrite {
 		return in;
 	}
 	
+	/**
+	 * Creates gzip input stream with tool preference order for decompression.
+	 * Prefers unbgzip for bgzip files, then unpigz for parallel decompression,
+	 * falls back to Java's built-in GZIP implementation.
+	 *
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow external decompression tools
+	 * @param buffer Whether to use buffered input
+	 * @return Gzip decompressed input stream
+	 */
 	public static InputStream getGZipInputStream(String fname, boolean allowSubprocess, boolean buffer){
-		if(verbose){
-			System.err.println("getGZipInputStream("+fname+", "+allowSubprocess+")");
-//			new Exception().printStackTrace(System.err);
+		if(verbose){System.err.println("getGZipInputStream("+fname+", "+allowSubprocess+")");}
+		
+		if(Shared.threads()<2 || Shared.LOW_MEMORY || fname.startsWith("jar:") || 
+				(!allowSubprocess && !ALLOW_NATIVE_BGZF)) {
+			//Use plain gzip stream
+		}else if(USE_UNBGZIP && ALLOW_NATIVE_BGZF && PREFER_NATIVE_BGZF_IN) {
+			return getUnbgzipStream(fname);
+		}else if(allowSubprocess) {
+			if(USE_UNBGZIP && (ALLOW_NATIVE_BGZF || Data.BGZIP())) {return getUnbgzipStream(fname);}
+			if(USE_UNPIGZ && Data.PIGZ()){return getUnpigzStream(fname);}
+			if(USE_GUNZIP && Data.GUNZIP()){return getGunzipStream(fname);}
+			//Fallthrough to plain
 		}
-//		assert(!fname.contains("temp")) : fname+", "+USE_UNBGZIP+", "+allowSubprocess;
-//		assert(!USE_UNPIGZ);
-		if(allowSubprocess && Shared.threads()>2){
-			if(!fname.startsWith("jar:")){
-				if(verbose){
-					System.err.println("Fetching gzip input stream: "+fname+", allowSubprocess="+allowSubprocess+", USE_UNPIGZ="+USE_UNPIGZ+", Data.PIGZ()="+Data.PIGZ());
-				}
-				if((PREFER_UNBGZIP || fname.endsWith(".vcf.gz")) && USE_UNBGZIP && Data.BGZIP()){
-					if(!fname.contains("stdin") && new File(fname).exists()){
-						int magicNumber=getMagicNumber(fname);
-						if(magicNumber==529205252){return getUnbgzipStream(fname);}
-//						System.err.println(magicNumber);
-					}
-				}
-				if(USE_UNPIGZ && Data.PIGZ()){return getUnpigzStream(fname);}
-//				if(USE_UNBGZIP && Data.BGZIP()){return getUnbgzipStream(fname);}
-				if(USE_GUNZIP && Data.GUNZIP()){return getGunzipStream(fname);}
-			}
-		}
-//		assert(false) : "allowSubprocess="+allowSubprocess+", Shared.threads()="+Shared.threads()+", fname="+fname+"\n"
-//				+"PREFER_UNBGZIP="+PREFER_UNBGZIP+", "+"USE_UNBGZIP="+USE_UNBGZIP+", "+"Data.BGZIP()="+Data.BGZIP()+"\n"
-//				+"USE_UNPIGZ="+USE_UNPIGZ+", "+"Data.PIGZ()="+Data.PIGZ()+"\n";
-		InputStream raw=getRawInputStream(fname, buffer);//123
+		
+		InputStream raw=getRawInputStream(fname, buffer);
 		InputStream in=null;
 		try {
 			in=new GZIPInputStream(raw, INBUF);
-		} catch (FileNotFoundException e) {
-			System.err.println("Error when attempting to read "+fname);
-			throw new RuntimeException(e);
-		} catch (IOException e) {
+		} catch (Exception e) {
 			System.err.println("Error when attempting to read "+fname);
 			throw new RuntimeException(e);
 		}
@@ -1100,44 +1452,100 @@ public class ReadWrite {
 		return in;
 	}
 	
+	/**
+	 * Creates gunzip input stream using external gzip command.
+	 * @param fname Input filename
+	 * @return Gunzip decompressed input stream
+	 */
 	public static InputStream getGunzipStream(String fname){
 		if(verbose){System.err.println("getGunzipStream("+fname+")");}
 		return getInputStreamFromProcess(fname, "gzip -c -d", false, true, true);
 	}
 	
+	/**
+	 * Creates unpigz input stream for parallel gzip decompression.
+	 * @param fname Input filename
+	 * @return Unpigz decompressed input stream
+	 */
 	public static InputStream getUnpigzStream(String fname){
 		if(verbose){System.err.println("getUnpigzStream("+fname+")");}
 		return getInputStreamFromProcess(fname, "pigz -c -d", false, true, true);
 	}
 	
+	/**
+	 * Creates unbgzip input stream with thread optimization for
+	 * block-gzip decompression.
+	 * @param fname Input filename
+	 * @return Unbgzip decompressed input stream
+	 */
 	public static InputStream getUnbgzipStream(String fname){
 		if(verbose){System.err.println("getUnbgzipStream("+fname+")");}
-		int threads=Tools.mid(4, 1, Shared.threads());
-		return getInputStreamFromProcess(fname, "bgzip -c -d"+(Data.BGZIP_VERSION_threadsFlag ? " -@ "+threads : ""), false, true, true);
+		boolean stdin=FileFormat.isStdin(fname);
+		boolean bgz=stdin ? true : isBGZip(fname);
+
+		int threads=Tools.mid(BgzfSettings.READ_THREADS, 1, Shared.threads());
+		if(!bgz && !stdin) {threads=2;}
+		
+		if(nativeBgzfIn()) {
+//			System.err.println("Native BGZF");
+			final InputStream in, raw=getRawInputStream(fname, true);
+			if(!BgzfSettings.USE_MULTITHREADED_BGZF) {in=new BgzfInputStream(raw);}
+			else {in=new BgzfInputStreamMT2(raw, threads);}
+			return in;
+		}
+		Data.BGZIP();//Ensure that threads capability was detected
+		return getInputStreamFromProcess(fname, "bgzip -c -d"+
+			(Data.BGZIP_VERSION_threadsFlag ? " -@ "+threads : ""), false, true, true);
 	}
 	
 	//Does not seem to work; just makes a big file somewhere (?).
 	//Very slow, too.
+	/**
+	 * Creates unzstd input stream for Zstandard decompression.
+	 * Note: Currently has performance issues.
+	 * @param fname Input filename
+	 * @return Unzstd decompressed input stream
+	 */
 	public static InputStream getUnzstdStream(String fname){
 		if(verbose){System.err.println("getUnzstdStream("+fname+")");}
 		return getInputStreamFromProcess(fname, "zstd -f -d", false, true, true);
 	}
 	
+	/**
+	 * Creates unpbzip2 input stream for parallel bzip2 decompression.
+	 * @param fname Input filename
+	 * @return Unpbzip2 decompressed input stream
+	 */
 	public static InputStream getUnpbzip2Stream(String fname){
 		if(verbose){System.err.println("getUnpbzip2Stream("+fname+")");}
 		return getInputStreamFromProcess(fname, "pbzip2 -c -d", false, true, true);
 	}
 	
+	/**
+	 * Creates unlbzip2 input stream for fast bzip2 decompression.
+	 * @param fname Input filename
+	 * @return Unlbzip2 decompressed input stream
+	 */
 	public static InputStream getUnlbzip2Stream(String fname){
 		if(verbose){System.err.println("getUnlbzip2Stream("+fname+")");}
 		return getInputStreamFromProcess(fname, "lbzip2 -c -d", false, true, true);
 	}
 	
+	/**
+	 * Creates unbzip2 input stream using external bzip2 command.
+	 * @param fname Input filename
+	 * @return Unbzip2 decompressed input stream
+	 */
 	public static InputStream getUnbzip2Stream(String fname){
 		if(verbose){System.err.println("getUnbzip2Stream("+fname+")");}
 		return getInputStreamFromProcess(fname, "bzip2 -c -d", false, true, true);
 	}
 	
+	/**
+	 * Creates DSRC decompression input stream with thread optimization.
+	 * @param fname Input filename
+	 * @return DSRC decompressed input stream
+	 */
 	public static InputStream getUnDsrcStream(String fname){
 		if(verbose){System.err.println("getUnDsrcStream("+fname+")");}
 		int threads=Tools.min(MAX_ZIP_THREADS, Tools.max((int)((Shared.threads()+1)*ZIP_THREAD_MULT), 1));
@@ -1244,6 +1652,14 @@ public class ReadWrite {
 	}
 	
 	
+	/**
+	 * Creates bzip2 input stream with error handling wrapper.
+	 * Tries available bzip2 decompression tools in preference order.
+	 *
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow external decompression tools
+	 * @return Bzip2 decompressed input stream
+	 */
 	public static InputStream getBZipInputStream(String fname, boolean allowSubprocess){
 		if(verbose){System.err.println("getBZipInputStream("+fname+")");}
 		InputStream in=null;
@@ -1261,6 +1677,15 @@ public class ReadWrite {
 		return in;
 	}
 	
+	/**
+	 * Creates bzip2 input stream using external tools in preference order:
+	 * lbzip2, pbzip2, or bzip2.
+	 *
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow external decompression tools
+	 * @return Bzip2 decompressed input stream
+	 * @throws IOException if no bzip2 tools are available
+	 */
 	private static InputStream getBZipInputStream2(String fname, boolean allowSubprocess) throws IOException{
 		if(verbose){
 			if(verbose){System.err.println("getBZipInputStream("+fname+")");}
@@ -1276,6 +1701,11 @@ public class ReadWrite {
 		throw new IOException("\nlbzip2, pbzip2, or bzip2 must be in the path to read bz2 files:\n"+fname+"\n");
 	}
 	
+	/**
+	 * Creates DSRC input stream with error handling wrapper.
+	 * @param fname Input filename
+	 * @return DSRC decompressed input stream
+	 */
 	public static InputStream getDsrcInputStream(String fname){
 		if(verbose){System.err.println("getDsrcInputStream("+fname+")");}
 		InputStream in=null;
@@ -1293,6 +1723,12 @@ public class ReadWrite {
 		return in;
 	}
 	
+	/**
+	 * Creates DSRC input stream using external DSRC tool.
+	 * @param fname Input filename
+	 * @return DSRC decompressed input stream
+	 * @throws IOException if DSRC tool not available
+	 */
 	private static InputStream getDsrcInputStream2(String fname) throws IOException{
 		if(verbose){
 			if(verbose){System.err.println("getDsrcInputStream2("+fname+")");}
@@ -1303,6 +1739,11 @@ public class ReadWrite {
 		throw new IOException("\nDsrc must be in the path to read Dsrc files:\n"+fname+"\n");
 	}
 	
+	/**
+	 * Creates XZ input stream (currently disabled).
+	 * @param fname Input filename
+	 * @return null (XZ support disabled)
+	 */
 	public static InputStream getXZInputStream(String fname){
 		
 		InputStream in=null;
@@ -1321,6 +1762,12 @@ public class ReadWrite {
 		return in;
 	}
 
+	/**
+	 * Reads entire file as raw byte array without decompression.
+	 * @param fname Input filename
+	 * @return Complete file content as byte array
+	 * @throws IOException if file cannot be read
+	 */
 	public static byte[] readRaw(String fname) throws IOException{
 		InputStream ris=getRawInputStream(fname, false);
 		ByteBuilder bb=new ByteBuilder();
@@ -1334,27 +1781,69 @@ public class ReadWrite {
 		return bb.toBytes();
 	}
 	
+	/**
+	 * Reads and deserializes object with type safety.
+	 *
+	 * @param <X> Expected object type
+	 * @param cx Class type for casting
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow subprocess decompression
+	 * @return Deserialized object of specified type
+	 */
 	public static <X> X read(Class<X> cx, String fname, boolean allowSubprocess){
 		X x=(X)readObject(fname, allowSubprocess);
 		return x;
 	}
 	
+	/**
+	 * Reads and deserializes array with type safety.
+	 *
+	 * @param <X> Expected array element type
+	 * @param cx Element class type for casting
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow subprocess decompression
+	 * @return Deserialized array of specified type
+	 */
 	public static <X> X[] readArray(Class<X> cx, String fname, boolean allowSubprocess){
 		X[] x=(X[])readObject(fname, allowSubprocess);
 		return x;
 	}
 	
+	/**
+	 * Reads and deserializes 2D array with type safety.
+	 *
+	 * @param <X> Expected array element type
+	 * @param cx Element class type for casting
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow subprocess decompression
+	 * @return Deserialized 2D array of specified type
+	 */
 	public static <X> X[][] readArray2(Class<X> cx, String fname, boolean allowSubprocess){
 		X[][] x=(X[][])readObject(fname, allowSubprocess);
 		return x;
 	}
 	
+	/**
+	 * Reads and deserializes 3D array with type safety.
+	 *
+	 * @param <X> Expected array element type
+	 * @param cx Element class type for casting
+	 * @param fname Input filename
+	 * @param allowSubprocess Whether to allow subprocess decompression
+	 * @return Deserialized 3D array of specified type
+	 */
 	public static <X> X[][][] readArray3(Class<X> cx, String fname, boolean allowSubprocess){
 		X[][][] x=(X[][][])readObject(fname, allowSubprocess);
 		return x;
 	}
 	
 	
+	/**
+	 * Extracts base filename by removing path and compression extensions.
+	 * Handles various compression formats including gzip, zip, bzip2, and dsrc.
+	 * @param fname Full file path
+	 * @return Base filename without path or compression extensions
+	 */
 	public static String basename(String fname){
 		fname=fname.replace('\\', '/');
 		boolean xz=fname.endsWith(".xz");
@@ -1371,6 +1860,12 @@ public class ReadWrite {
 		return basename;
 	}
 	
+	/**
+	 * Removes all compression extensions from filename iteratively.
+	 * Handles multiple compression layers.
+	 * @param fname Filename with potential compression extensions
+	 * @return Filename with all compression extensions removed
+	 */
 	public static String rawName(String fname){
 		for(String s : compressedExtensions){
 			while(fname.endsWith(s)){fname=fname.substring(0, fname.length()-s.length());}
@@ -1399,6 +1894,11 @@ public class ReadWrite {
 		return fname.substring(stripped.length());
 	}
 	
+	/**
+	 * Strips both path and extension, returning just the core filename.
+	 * @param fname Full file path
+	 * @return Core filename without path or extension
+	 */
 	public static String stripToCore(String fname){
 		fname=stripPath(fname);
 		return stripExtension(fname);
@@ -1417,6 +1917,11 @@ public class ReadWrite {
 		return fname;
 	}
 	
+	/**
+	 * Extracts directory path from full filename.
+	 * @param fname Full file path
+	 * @return Directory path including trailing separator, or empty string
+	 */
 	public static String getPath(String fname){
 		if(fname==null){return null;}
 		fname=fname.replace('\\', '/');
@@ -1425,6 +1930,11 @@ public class ReadWrite {
 		return "";
 	}
 	
+	/**
+	 * Determines compression type from filename extension.
+	 * @param fname Filename to analyze
+	 * @return Compression type string or null if not compressed
+	 */
 	public static String compressionType(String fname){
 		fname=fname.toLowerCase(Locale.ENGLISH);
 		for(int i=0; i<compressedExtensions.length; i++){
@@ -1433,10 +1943,20 @@ public class ReadWrite {
 		return null;
 	}
 	
+	/**
+	 * Checks if filename indicates a compressed file format.
+	 * @param fname Filename to check
+	 * @return true if filename has compression extension
+	 */
 	public static boolean isCompressed(String fname){
 		return compressionType(fname)!=null;
 	}
 	
+	/**
+	 * Checks if filename indicates SAM format, including compressed SAM.
+	 * @param fname Filename to check
+	 * @return true if filename indicates SAM format
+	 */
 	public static boolean isSam(String fname){
 		fname=fname.toLowerCase(Locale.ENGLISH);
 		if(fname.endsWith(".sam")){return true;}
@@ -1453,6 +1973,14 @@ public class ReadWrite {
 		return fname.substring(x+1).toLowerCase(Locale.ENGLISH);
 	}
 	
+	/**
+	 * Extracts root directory from file path, ensuring trailing separator.
+	 * Throws exception if path doesn't exist.
+	 *
+	 * @param path File or directory path
+	 * @return Root directory path with trailing separator
+	 * @throws RuntimeException if path not found
+	 */
 	public static String parseRoot(String path){
 		File f=new File(path);
 		if(f.isDirectory()){
@@ -1558,7 +2086,18 @@ public class ReadWrite {
 		return false;
 	}
 	
+	/**
+	 * Copies file from source to destination without creating intermediate paths
+	 */
 	public static synchronized void copyFile(String source, String dest){copyFile(source, dest, false);}
+	/**
+	 * Copies file from source to destination with optional path creation.
+	 * Preserves compression format and handles special stream types.
+	 *
+	 * @param source Source file path
+	 * @param dest Destination file path (must not exist)
+	 * @param createPathIfNeeded Whether to create parent directories
+	 */
 	public static synchronized void copyFile(String source, String dest, boolean createPathIfNeeded){
 		
 		assert(!new File(dest).exists()) : "Destination file already exists: "+dest;
@@ -1612,6 +2151,12 @@ public class ReadWrite {
 		RAWMODE=oldRawmode;
 	}
 	
+	/**
+	 * Recursively copies all contents from source directory to destination.
+	 * Creates destination directories as needed and handles nested structures.
+	 * @param from Source directory path
+	 * @param to Destination directory path
+	 */
 	public static void copyDirectoryContents(String from, String to){
 		assert(!from.equalsIgnoreCase(to));
 		
@@ -1698,6 +2243,8 @@ public class ReadWrite {
 		}
 	}
 	
+	/** Returns current count of active write threads.
+	 * @return Number of active threads (running + waiting) */
 	public static final int countActiveThreads(){
 		if(verbose){System.err.println("countActiveThreads()");}
 		synchronized(activeThreads){
@@ -1707,6 +2254,8 @@ public class ReadWrite {
 		}
 	}
 	
+	/** Blocks until all write threads have completed execution.
+	 * Used for synchronizing completion of async write operations. */
 	public static final void waitForWritingToFinish(){
 		if(verbose){System.err.println("waitForWritingToFinish()");}
 		synchronized(activeThreads){
@@ -1724,11 +2273,20 @@ public class ReadWrite {
 		}
 	}
 
-	
+
+	public static final boolean closeStream(Streamer st){return closeStreams(st, (Writer[])null);}
+	/** Closes single concurrent read stream and reports error state */
 	public static final boolean closeStream(ConcurrentReadStreamInterface cris){return closeStreams(cris, (ConcurrentReadOutputStream[])null);}
+	/** Closes single concurrent read output stream and reports error state */
 	public static final boolean closeStream(ConcurrentReadOutputStream ross){return closeStreams((ConcurrentReadStreamInterface)null, ross);}
+	/** Closes multiple concurrent read output streams and reports error state */
 	public static final boolean closeOutputStreams(ConcurrentReadOutputStream...ross){return closeStreams(null, ross);}
 
+	/**
+	 * Closes all streams in MultiCros collection.
+	 * @param mc MultiCros containing streams to close
+	 * @return true if any errors occurred during closure
+	 */
 	public static final boolean closeStreams(MultiCros mc){
 		if(mc==null){return false;}
 		return closeStreams(null, mc.streamList.toArray(new ConcurrentReadOutputStream[0]));
@@ -1747,7 +2305,7 @@ public class ReadWrite {
 		}
 		boolean errorState=false;
 		if(cris!=null){
-			if(verbose){System.err.println("Closing cris; error="+errorState);}
+			if(verbose){System.err.println("Closing cris; error="+errorState+"; c.error="+cris.errorState());}
 			cris.close();
 			errorState|=cris.errorState();
 //			Object[] prods=cris.producers();
@@ -1773,6 +2331,50 @@ public class ReadWrite {
 		return errorState;
 	}
 	
+	/** 
+	 * Close these streams and wait for them to finish.
+	 * @param st An input stream.  May be null.
+	 * @param writers Zero or more output streams.
+	 * @return True if an error was encountered.
+	 */
+	public static final boolean closeStreams(Streamer st, Writer...writers){
+		if(verbose){
+			System.err.println("closeStreams("+st+", "+(writers==null ? "null" : writers.length)+")");
+			new Exception().printStackTrace(System.err);
+		}
+		boolean errorState=false;
+		if(st!=null){
+			if(verbose){System.err.println("Closing cris; error="+errorState+"; c.error="+st.errorState());}
+			st.close();
+			errorState|=st.errorState();
+//			Object[] prods=cris.producers();
+//			for(Object o : prods){
+//				if(o!=null && o.getClass()==ReadInputStream.class){
+//					ReadInputStream ris=(ReadInputStream)o;
+//					ris.
+//				}
+//			}
+			if(verbose){System.err.println("Closed cris; error="+errorState);}
+		}
+		if(writers!=null){
+			for(Writer w : writers){
+				if(w!=null){
+					if(verbose){System.err.println("Closing ros "+w+"; error="+errorState);}
+					w.close();
+					errorState|=(w.errorState() || !w.finishedSuccessfully());
+					if(verbose){System.err.println("Closed ros; error="+errorState);}
+				}
+			}
+		}
+		return errorState;
+	}
+	
+	/**
+	 * Terminates subprocess associated with filename and cleans up resources.
+	 * Waits for process completion and handles pipe threads.
+	 * @param fname Filename used to identify associated process
+	 * @return true if errors occurred during process termination
+	 */
 	public static boolean killProcess(String fname){
 		if(verbose){
 			System.err.println("killProcess("+fname+")");
@@ -1863,6 +2465,35 @@ public class ReadWrite {
 			atp.add(pt);
 		}
 	}
+	
+	public static boolean isBGZip(String fname) {
+		if(fname.startsWith("stdin")) {return false;}
+		int magic=getMagicNumber(fname);
+		return magic==529205252;
+//		byte[] header=getFirst16Bytes(fname);
+//		if(header[10]==0x42 && header[11]==0x43){ //BC subfield
+//			return true; //Is BGZF
+//		}
+	}
+	
+	private static byte[] getFirstNBytes(String fname, int n) {
+		byte[] array=new byte[n];
+		FileInputStream fis;
+		try{
+			fis=new FileInputStream(fname);
+			int read=fis.read(array, 0, n);
+			while(read<n) {
+				int r=fis.read(array, read, n-read);
+				read+=r;
+				if(r<1) {break;}
+			}
+			fis.close();
+			return read<n ? null : array;
+		}catch(Exception e){
+			KillSwitch.exceptionKill(e);
+			return null;
+		}
+	}
 
 	/** 
 	 * Note:
@@ -1888,23 +2519,6 @@ public class ReadWrite {
 			e.printStackTrace();
 		}
 		
-		//This is fine but uses Java11 methods
-//		byte[] array=new byte[4];
-//		int read=0;
-//		try {
-////			read=is.readNBytes(array, 0, 4);
-//			read=is.readNBytes(array, 0, 4);
-//		} catch (IOException e) {
-//			// TODO Auto-generated catch block
-//			e.printStackTrace();
-//		}
-//		assert(read==4) : read;
-//		int x=0;
-//		for(int i=0; i<read; i++){
-//			int b=((int)array[i])&255;
-//			x=(x<<8)|b;
-//		}
-		
 		int x=0;
 		for(int i=0; i<4; i++){
 			try {
@@ -1914,88 +2528,162 @@ public class ReadWrite {
 				e.printStackTrace();
 			}
 		}
-		
+//		System.err.println("Returning "+x);
+//		new Exception().printStackTrace();
 		return x;
+	}
+	
+	public static boolean nativeBamIn() {
+		return ALLOW_NATIVE_BAM_IN && (PREFER_NATIVE_BAM_IN || (!Data.SAMBAMBA() && !Data.SAMTOOLS()));
+	}
+	
+	public static boolean nativeBamOut() {
+		return ALLOW_NATIVE_BAM_OUT && (PREFER_NATIVE_BAM_OUT || (!Data.SAMBAMBA() && !Data.SAMTOOLS()));
+	}
+	
+	public static boolean nativeBgzfIn() {
+		return ALLOW_NATIVE_BGZF && (PREFER_NATIVE_BGZF_IN || !Data.BGZIP_THREADED());
+	}
+	
+	public static boolean nativeBgzfOut() {
+		return ALLOW_NATIVE_BGZF && ((PREFER_NATIVE_BGZF_OUT && ZIPLEVEL<=5) || !Data.BGZIP_THREADED());
 	}
 	
 	/** {active, waiting, running} <br>
 	 * Active means running or waiting.
 	 */
 	public static int[] activeThreads={0, 0, 0};
+	/** Maximum number of concurrent write threads allowed */
 	public static int maxWriteThreads=Shared.threads();
 	
+	/** Whether to enable verbose debugging output for I/O operations */
 	public static boolean verbose=false;
 	
+	/** When true, disables automatic compression and decompression */
 	public static boolean RAWMODE=false; //Does not automatically compress and decompress when true
 
 	//For killing subprocesses that are neither compression nor samtools
+	/** Forces subprocess termination for non-compression/samtools processes */
 	public static boolean FORCE_KILL=false;
 
+	/** Whether to use external gzip command for compression */
 	public static boolean USE_GZIP=false;
+	/** Whether to use bgzip for block-gzip compression */
 	public static boolean USE_BGZIP=true;
+	/** Whether to use pigz for parallel gzip compression */
 	public static boolean USE_PIGZ=true;
+	/** Whether to use external gunzip command for decompression */
 	public static boolean USE_GUNZIP=false;
+	/** Whether to use unbgzip for block-gzip decompression */
 	public static boolean USE_UNBGZIP=true;
+	/** Whether to use unpigz for parallel gzip decompression */
 	public static boolean USE_UNPIGZ=true;
 	
+	public static boolean ALLOW_NATIVE_BGZF=true;
+	public static boolean PREFER_NATIVE_BGZF_IN=true;
+	public static boolean PREFER_NATIVE_BGZF_OUT=false;
+
+	public static boolean USE_READ_STREAM_SAM_WRITER=true;
+	public static boolean ALLOW_NATIVE_BAM_IN=true;
+	public static boolean ALLOW_NATIVE_BAM_OUT=true;
+	public static boolean PREFER_NATIVE_BAM_IN=true;
+	public static boolean PREFER_NATIVE_BAM_OUT=true;
+	
+	/** Forces use of pigz even when other options might be preferred */
 	public static boolean FORCE_PIGZ=false;
+	/** Forces use of bgzip even when other options might be preferred */
 	public static boolean FORCE_BGZIP=false;
 	
+	/** Prefers bgzip over other compression tools when available */
 	public static boolean PREFER_BGZIP=true;
+	/** Prefers unbgzip over other decompression tools when available */
 	public static boolean PREFER_UNBGZIP=true;
 	
+	/** Whether to use external bzip2 command */
 	public static boolean USE_BZIP2=true;
+	/** Whether to use pbzip2 for parallel bzip2 compression */
 	public static boolean USE_PBZIP2=true;
+	/** Whether to use lbzip2 for fast bzip2 compression */
 	public static boolean USE_LBZIP2=true;
+	/** Whether to use DSRC compression for FASTQ files */
 	public static boolean USE_DSRC=true;
+	/** Whether to use FQZ compression for FASTQ files */
 	public static boolean USE_FQZ=true;
+	/** Whether to use Alapy compression */
 	public static boolean USE_ALAPY=true;
+	/** Whether to use sambamba for BAM file processing */
 	public static boolean USE_SAMBAMBA=true;
+	/** Returns true if both USE_SAMBAMBA is enabled and sambamba is available */
 	public static boolean SAMBAMBA(){return USE_SAMBAMBA && Data.SAMBAMBA();}
 	
 //	public static boolean SAMTOOLS_IGNORE_UNMAPPED_INPUT=false;
+	/** SAM flags to ignore when processing BAM files with samtools */
 	public static int SAMTOOLS_IGNORE_FLAG=0;
+	/** SAM flag constant for unmapped reads */
 	public static final int SAM_UNMAPPED=0x4;
+	/** SAM flag constant for duplicate reads */
 	public static final int SAM_DUPLICATE=0x400;
-	public static final int SAM_SUPPLIMENTARY=0x800;
+	public static final int SAM_SUPPLEMENTARY=0x800;
+	/** SAM flag constant for secondary alignments */
 	public static final int SAM_SECONDARY=0x100;
+	/** SAM flag constant for reads that failed quality checks */
 	public static final int SAM_QFAIL=0x200;
 	
+	/** Whether bzip2 format processing is enabled */
 	public static boolean PROCESS_BZ2=true;
+	/** Whether XZ format processing is enabled (currently disabled) */
 	public static final boolean PROCESS_XZ=false;
 	
-	public static final int INBUF=16384;
-	public static final int OUTBUF=16384;
+	/** Default input buffer size in bytes */
+	public static final int INBUF=65536;
+	/** Default output buffer size in bytes */
+	public static final int OUTBUF=65536;
 
 	/** Gzip compression level */
 	public static int ZIPLEVEL=4;
 	/** Bzip2 compression level */
 	public static int BZIPLEVEL=9;
 	private static int MAX_ZIP_THREADS=96;
+	/** Maximum threads for samtools operations */
 	public static int MAX_SAMTOOLS_THREADS=64;
+	/** Block size in KB for pigz compression */
 	public static int PIGZ_BLOCKSIZE=128;
+	/** Number of iterations for pigz optimization (-1 = default) */
 	public static int PIGZ_ITERATIONS=-1;
 
+	/** Whether zip thread multiplier has been explicitly set */
 	public static boolean SET_ZIP_THREAD_MULT=false;
+	/** Whether zip threads have been explicitly set */
 	public static boolean SET_ZIP_THREADS=false;
 	
+	/** Returns maximum number of threads allowed for compression operations */
 	public static int MAX_ZIP_THREADS() {return MAX_ZIP_THREADS;}
+	/** Sets maximum number of compression threads with bounds checking.
+	 * @param x Number of threads (clamped to 1-96 range) */
 	public static void setZipThreads(int x){
 		MAX_ZIP_THREADS=Tools.mid(1, x, 96);
 		SET_ZIP_THREADS=true;
 	}
+	/** Returns compression thread multiplier factor */
 	public static float ZIP_THREAD_MULT() {return ZIP_THREAD_MULT;}
+	/** Sets compression thread multiplier with bounds checking.
+	 * @param x Multiplier factor (clamped to 0.125-1.0 range) */
 	public static void setZipThreadMult(float x){
 		ZIP_THREAD_MULT=Tools.mid(0.125f, x, 1f);
 		SET_ZIP_THREAD_MULT=true;
 	}
 	private static float ZIP_THREAD_MULT=1f;
+	/**
+	 * Whether compression level can be automatically adjusted based on thread count
+	 */
 	public static boolean ALLOW_ZIPLEVEL_CHANGE=true;
 	
+	/** System-specific file separator character */
 	public static final String FILESEP=System.getProperty("file.separator");
 
 	private static final String diskSync=new String("DISKSYNC");
 	
+	/** Set tracking filenames that have been loaded (for debugging) */
 	public static final HashSet<String> loadedFiles=new HashSet<String>();
 
 	private static final String[] compressedExtensions=new String[] {".gz", ".gzip", ".zip", ".bz2", ".xz", ".dsrc", ".fqz", ".ac", ".7z", ".zst"};

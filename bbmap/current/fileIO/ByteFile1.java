@@ -1,12 +1,17 @@
 package fileIO;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 import shared.KillSwitch;
 import shared.Shared;
 import shared.Timer;
 import shared.Tools;
+import shared.Vector;
+import stream.bam.BgzfSettings;
+import structures.IntList;
+import structures.ListNum;
 
 
 /**
@@ -14,10 +19,14 @@ import shared.Tools;
  *
  */
 public final class ByteFile1 extends ByteFile {
-	
-	
+
+
+	/**
+	 * Main method for testing ByteFile1 functionality and performance.
+	 * Supports speed testing and line range reading with optional SIMD acceleration.
+	 * @param args Command-line arguments: [filename] [start_line|"speedtest"] [end_line|"simd"]
+	 */
 	public static void main(String[] args){
-		ByteFile1 tf=new ByteFile1(args.length>0 ? args[0] : "stdin", true);
 		long first=0, last=100;
 		boolean speedtest=false;
 		if(args.length>1){
@@ -37,172 +46,293 @@ public final class ByteFile1 extends ByteFile {
 				last=Integer.parseInt(args[2]);
 			}
 		}
+		if(args.length>3){
+			if(args[3].equalsIgnoreCase("native")){
+				ReadWrite.ALLOW_NATIVE_BGZF=BgzfSettings.USE_MULTITHREADED_BGZF=true;
+			}
+		}
+		ByteFile1 tf=new ByteFile1(args.length>0 ? args[0] : "stdin", true);
 		speedtest(tf, first, last, !speedtest);
-		
+
 		tf.close();
 		tf.reset();
 		tf.close();
-		
-//		tf.reset();
-//		byte[] b=tf.nextLine();
-//		System.err.println(new String(b));
-//		tf.pushBack(b);
-//		b=tf.nextLine();
-//		System.err.println(new String(b));
-//		tf.bstart+=2;
-//		tf.pushBack(b);
-//		b=tf.nextLine();
-//		System.err.println(new String(b));
-//		b=tf.nextLine();
-//		System.err.println(new String(b));
-//		b=tf.nextLine();
-//		System.err.println(new String(b));
-//		b=tf.nextLine();
-//		System.err.println(new String(b));
 	}
-	
-	private static void speedtest(ByteFile1 tf, long first, long last, boolean reprint){
+
+	private static void speedtest(ByteFile1 bf, long first, long last, boolean reprint){
 		Timer t=new Timer();
 		long lines=0;
 		long bytes=0;
-		for(long i=0; i<first; i++){tf.nextLine();}
+		for(long i=0; i<first; i++){bf.nextLine();}
 		if(reprint){
 			for(long i=first; i<last; i++){
-				byte[] s=tf.nextLine();
+				byte[] s=bf.nextLine();
 				if(s==null){break;}
 
 				lines++;
-				bytes+=s.length;
+				bytes+=s.length+1;
 				System.out.println(new String(s));
 			}
-			
+
 			System.err.println("\n");
 			System.err.println("Lines: "+lines);
 			System.err.println("Bytes: "+bytes);
 		}else{
-			for(long i=first; i<last; i++){
-				byte[] s=tf.nextLine();
-				if(s==null){break;}
-				lines++;
-				bytes+=s.length;
+			boolean nextList=false;
+			if(nextList) {
+				for(ListNum<byte[]> ln=bf.nextList(); ln!=null; ln=bf.nextList()){
+					for(byte[] line : ln.list) {
+						lines++;
+						bytes+=line.length+1;
+					}
+				}
+			}else if(!Shared.SIMD) {
+				for(long i=first; i<last; i++){
+					byte[] s=bf.nextLine();
+					if(s==null){break;}
+					lines++;
+					bytes+=s.length+1;
+				}
+			}else {
+				for(long i=first; i<last; i++){
+					byte[] s=bf.nextLineList();
+					if(s==null){break;}
+					lines++;
+					bytes+=s.length+1;
+				}
 			}
 		}
 		t.stop();
-		
+
 		if(!reprint){
 			System.err.println(Tools.timeLinesBytesProcessed(t, lines, bytes, 8));
+			System.err.println("Bytes: "+bytes);
 		}
 	}
-	
+
+	/**
+	 * Constructs ByteFile1 for reading from specified filename.
+	 * @param fname Filename to read from (or "stdin" for standard input)
+	 * @param allowSubprocess_ Whether to allow subprocess execution for compressed files
+	 */
 	public ByteFile1(String fname, boolean allowSubprocess_){
 		this(FileFormat.testInput(fname, FileFormat.TEXT, null, allowSubprocess_, false));
 	}
-	
+
+	/**
+	 * Constructs ByteFile1 with specified FileFormat configuration.
+	 * Opens the input stream immediately upon construction.
+	 * @param ff FileFormat specifying file type and access parameters
+	 */
 	public ByteFile1(FileFormat ff){
 		super(ff);
 		if(verbose){System.err.println("ByteFile1("+ff+")");}
 		is=open();
 	}
-	
+
 	@Override
 	public final void reset(){
 		close();
 		is=open();
 		superReset();
 	}
-	
+
 	@Override
 	public synchronized final boolean close(){
 		if(verbose){System.err.println("Closing "+this.getClass().getName()+" for "+name()+"; open="+open+"; errorState="+errorState);}
 		if(!open){return errorState;}
 		open=false;
 		assert(is!=null);
-//		assert(false) : name()+","+allowSubprocess();
+		//		assert(false) : name()+","+allowSubprocess();
 		errorState|=ReadWrite.finishReading(is, name(), (allowSubprocess() || FileFormat.isBamFile(name())));
-		
+
 		is=null;
 		lineNum=-1;
-//		pushBack=null;
+		//		pushBack=null;
 		if(verbose){System.err.println("Closed "+this.getClass().getName()+" for "+name()+"; open="+open+"; errorState="+errorState);}
 		return errorState;
 	}
-	
+
 	@Override
 	public final byte[] nextLine(){
-//		if(pushBack!=null){//This was making the massive post-Meltdown-patch performance problem more common
-//			byte[] temp=pushBack;
-//			pushBack=null;
-//			return temp;
-//		}
-		
+		if(Shared.SIMD) {return nextLineList();}
 		if(verbose){System.err.println("Reading line "+this.getClass().getName()+" for "+name()+"; open="+open+"; errorState="+errorState);}
-		
+
 		if(!open || is==null){
 			if(Shared.WINDOWS){System.err.println("Attempting to read from a closed file: "+name());}
 			return null;
 		}
 
-//		System.out.println("\nCalled nextLine() for line "+lineNum);
-//		System.out.println("A: bstart="+bstart+", bstop="+bstop);
-		
-		//if(bstart<bstop && lasteol==slasher && buffer[bstart]==slashn){bstart++;}
-//		assert(bstart>=bstop || (buffer[bstart]!=slashn)/*buffer[bstart]>slasher || buffer[bstart]==slashn*/);
 		int nlpos=bstart;
-		
-//		System.out.println("B: bstart="+bstart+", bstop="+bstop+", nlpos="+nlpos);
-//		while(nlpos<bstop && (buffer[nlpos]>slasher || buffer[nlpos]==tab)){nlpos++;}
-		while(nlpos<bstop && buffer[nlpos]!=slashn){nlpos++;}//Another vectorization place
-//		System.out.println("C: bstart="+bstart+", bstop="+bstop+", nlpos="+nlpos);
-		if(nlpos>=bstop){
+
+		while(nlpos<bstop && buffer[nlpos]!=slashn){nlpos++;}
+
+		if(nlpos>=bstop){//At this point we are at the last character which may or may not be a newline
 			nlpos=fillBuffer();
-//			System.out.println("Filled buffer.");
 		}
-//		System.out.println("D: bstart="+bstart+", bstop="+bstop+", nlpos="+nlpos);
-		
-		if(nlpos<0 || bstop<1){
+
+		// Check if buffer is empty after fill attempt
+		if(bstop<1){
 			close();
 			return null;
 		}
 
 		lineNum++;
-		//Limit is the position after the last position to copy.
-		//Limit equals nlpos unless there was a \r before the \n.
-		final int limit=(nlpos>bstart && buffer[nlpos-1]==slashr) ? nlpos-1 : nlpos;
+
+		// Determine the limit for copying
+		// If nlpos >= bstop, we have data but no newline (EOF case) - use bstop
+		// Otherwise, nlpos points to the newline
+		final int limit;
+		if(nlpos >= bstop){
+			// No newline found, but we have data - use everything remaining
+			limit = bstop;
+		} else {
+			// Found newline - exclude it (and any preceding \r)
+			limit = (nlpos>bstart && buffer[nlpos-1]==slashr) ? nlpos-1 : nlpos;
+		}
+
 		if(bstart==limit){//Empty line.
-			bstart=nlpos+1;
-//			System.out.println("E: bstart="+bstart+", bstop="+bstop+", nlpos="+nlpos+", returning='"+printNL(blankLine)+"'");
+			bstart = (nlpos < bstop) ? nlpos+1 : bstop;
 			return blankLine;
 		}
 		
 		byte[] line=KillSwitch.copyOfRange(buffer, bstart, limit);
-//		byte[] line=Arrays.copyOfRange(buffer, bstart, limit);
-//		byte[] line=new String(buffer, bstart, limit-bstart).getBytes();
-//		byte[] line=new byte[limit-bstart];
-//		byte[] line=dummy;
-		
+
 		assert(line.length>0) : bstart+", "+nlpos+", "+limit;
-		bstart=nlpos+1;
-//		System.out.println("F: bstart="+bstart+", bstop="+bstop+", nlpos="+nlpos+", returning='"+printNL(line)+"'");
+
+		// Advance bstart past the newline (if there was one)
+		bstart = (nlpos < bstop) ? nlpos+1 : bstop;
+
+		return line;
+	}
+
+	public final byte[] nextLineList(){
+		if(!open || is==null){
+			if(Shared.WINDOWS){System.err.println("Attempting to read from a closed file: "+name());}
+			return null;
+		}
+
+		if(listPos>=positions.size()){
+			fillBuffer(); // Now handles Vector.findSymbols internally
+		}
+
+		final int nlpos;
+		if(listPos>=positions.size()){//No newlines
+			nlpos=bstop;
+		}else{
+			nlpos=positions.get(listPos++);
+		}
+
+		// Check if buffer is empty after fill attempt
+		if(bstop<1){
+			close();
+			return null;
+		}
+
+		lineNum++;
+
+		// Determine the limit for copying
+		final int limit;
+		if(nlpos>=bstop){
+			limit=bstop;
+		}else{
+			limit=(nlpos>bstart && buffer[nlpos-1]==slashr) ? nlpos-1 : nlpos;
+		}
+
+		if(bstart==limit){//Empty line
+			bstart=(nlpos<bstop) ? nlpos+1 : bstop;
+			return blankLine;
+		}
+		
+		final byte[] line;
+//		if(bstart+1==limit && buffer[bstart]==plus) {//Slows it down
+//			line=plusLine;//Not really safe from modification...
+//			assert(plusLine[0]==plus);
+//		}else {
+			line=KillSwitch.copyOfRange(buffer, bstart, limit);
+//		}
+
+		assert(line.length>0) : bstart+", "+nlpos+", "+limit;
+
+		bstart=(nlpos<bstop) ? nlpos+1 : bstop;
+
 		return line;
 	}
 	
-	final byte[] dummy=new byte[100];
-	
-	private static final String printNL(byte[] b){
-		StringBuilder sb=new StringBuilder();
-		for(int i=0; i<b.length; i++){
-			char c=(char)b[i];
-			if(c=='\n'){
-				sb.append("\\n");
-			}else if(c==slashr){
-				sb.append("\\r");
-			}else{
-				sb.append(c);
+	private final ListNum<byte[]> nextListScalar(){
+		final int listSize=200;
+		final ArrayList<byte[]> list=new ArrayList<byte[]>(listSize);
+		for(int i=0; i<listSize; i++) {
+			byte[] line=nextLine();
+			if(line==null) {
+				close();
+				break;
+			}
+			list.add(line);
+			lineNum++;
+		}
+		return list.isEmpty() ? null : new ListNum<byte[]>(list, nextID++);
+	}
+
+	@Override
+	public final ListNum<byte[]> nextList(){
+		if(!open || is==null){
+			if(Shared.WINDOWS){System.err.println("Attempting to read from a closed file: "+name());}
+			return null;
+		}
+		if(!Shared.SIMD){return nextListScalar();}
+
+		final int slimit=TARGET_LIST_SIZE, blimit=TARGET_LIST_BYTES;
+		final ArrayList<byte[]> list=new ArrayList<byte[]>(slimit);
+		int bytes=0;
+		while(list.size()<slimit && bytes<blimit && open){
+			if(listPos>=positions.size()){
+				fillBuffer();
+
+				// If still no positions after fill, we're done
+				if(positions.size()==0){
+					break;
+				}
+			}
+
+			// Process positions until we have enough lines OR run out of positions
+			final int iters=Math.min(positions.size()-listPos, slimit-list.size());
+			for(int i=0; i<iters && bytes<blimit; i++){
+				final int nlpos=positions.get(listPos++);
+
+				// Check if buffer is empty
+				if(bstop<1){
+					close();
+					break;
+				}
+				lineNum++;
+
+				// Determine the limit for copying
+				final int limit;
+				if(nlpos>=bstop){
+					limit=bstop;
+				}else{
+					limit=(nlpos>bstart && buffer[nlpos-1]==slashr) ? nlpos-1 : nlpos;
+				}
+
+				if(bstart==limit){//Empty line
+					bstart=(nlpos<bstop) ? nlpos+1 : bstop;
+					list.add(blankLine);
+				}else{
+					byte[] line=KillSwitch.copyOfRange(buffer, bstart, limit);
+					assert(line.length>0) : bstart+", "+nlpos+", "+limit;
+					bstart=(nlpos<bstop) ? nlpos+1 : bstop;
+					list.add(line);
+					bytes+=line.length;
+				}
 			}
 		}
-		return sb.toString();
+
+		return list.isEmpty() ? null : new ListNum<byte[]>(list, nextID++);
 	}
-	
+
+	/** Prints the current buffer contents to stderr for debugging.
+	 * Shows line endings as escaped characters. */
 	private final void printBuffer(){
 		for(int i=0; i<bstop; i++){
 			char c=(char)buffer[i];
@@ -215,57 +345,48 @@ public final class ByteFile1 extends ByteFile {
 			}
 		}
 	}
-	
+
+	/**
+	 * Fills the internal buffer from the input stream.
+	 * Handles buffer shifting when partial lines remain from previous reads.
+	 * Dynamically resizes buffer if needed to accommodate long lines.
+	 * @return Position of next newline character, or -1 if end of stream
+	 */
 	private int fillBuffer(){
 		if(bstart<bstop){ //Shift end bytes to beginning
-//			System.err.println("Shift: "+bstart+", "+bstop);
 			assert(bstart>0);
-//			assert(bstop==buffer.length);
 			int extra=bstop-bstart;
 			for(int i=0; i<extra; i++, bstart++){
-//				System.err.print((char)buffer[bstart]);
-				//System.err.print('.');
 				buffer[i]=buffer[bstart];
-//				assert(buffer[i]>=slasher || buffer[i]==tab);
 				assert(buffer[i]!=slashn);
 			}
 			bstop=extra;
-//			System.err.println();
-
-//			{//for debugging only
-//				buffer=new byte[bufferlen];
-//				bstop=0;
-//				bstart=0;
-//			}
 		}else{
 			bstop=0;
 		}
 
 		bstart=0;
+		
+		// Clear SIMD state if applicable
+		if(Shared.SIMD){
+			listPos=0;
+			positions.clear();
+		}
+		
 		int len=bstop;
 		int r=-1;
 		while(len==bstop){//hit end of input without encountering a newline
 			if(bstop==buffer.length){
-//				assert(false) : len+", "+bstop;
 				buffer=KillSwitch.copyOf(buffer, buffer.length*2);
 			}
-			try {
+			try{
 				r=is.read(buffer, bstop, buffer.length-bstop);
-//				byte[] x=new byte[buffer.length-bstop];
-//				r=is.read(x);
-//				if(r>0){
-//					for(int i=0, j=bstop; i<r; i++, j++){
-//						buffer[j]=x[i];
-//					}
-//				}
-			} catch (IOException e) {//java.io.IOException: Stream Closed
-				//TODO: This should be avoided rather than caught.  It happens when a stream is shut down with e.g. "reads=100".
+			}catch(IOException e){
 				if(!Shared.anomaly){
 					e.printStackTrace();
 					System.err.println("open="+open);
 				}
-			} catch (NullPointerException e) {//Can be thrown by java.util.zip.Inflater.ensureOpen(Inflater.java:389)
-				//TODO: This should be avoided rather than caught.  It happens when a stream is shut down with e.g. "reads=100".
+			}catch(NullPointerException e){
 				if(!Shared.anomaly){
 					e.printStackTrace();
 					System.err.println("open="+open);
@@ -273,25 +394,19 @@ public final class ByteFile1 extends ByteFile {
 			}
 			if(r>0){
 				bstop=bstop+r;
-//				//while(len<bstop && (buffer[len]>slasher || buffer[len]==tab)){len++;}//Obsolete; handled old-style Mac convention
-				
 				while(len<bstop && buffer[len]!=slashn){len++;}
-//				len=Vector.find(buffer, slashn, len, bstop); //x0.85 speed in simd mode for short sequences; x1.00 for 150bp fastq
 			}else{
 				len=bstop;
 				break;
 			}
 		}
-		
-//		System.err.println("After Fill: ");
-//		printBuffer();
-//		System.err.println();
-		
-//		System.out.println("Filled buffer; r="+r+", returning "+len);
+
 		assert(r==-1 || buffer[len]==slashn);
 		
-//		System.err.println("lasteol="+(lasteol=='\n' ? "\\n" : lasteol==slashr ? "\\r" : ""+(int)lasteol));
-//		System.err.println("First="+(int)buffer[0]+"\nLastEOL="+(int)lasteol);
+		// Find all newlines with SIMD if enabled
+		if(Shared.SIMD){
+			Vector.findSymbols(buffer, 0, bstop, slashn, positions);
+		}
 		
 		return len;
 	}
@@ -307,7 +422,7 @@ public final class ByteFile1 extends ByteFile {
 			bstart=bstart-line.length;
 			return;
 		}
-		
+
 		int bLen=bstop-bstart;
 		int newLen=bLen+line.length+1;
 		int rShift=line.length+1-bstart;
@@ -317,9 +432,9 @@ public final class ByteFile1 extends ByteFile {
 			//unless special steps are taken to prevent it, like leaving extra space for pushbacks.
 			buffer=Arrays.copyOf(buffer, buffer.length*2);
 		}
-		
+
 		Tools.shiftRight(buffer, rShift);
-		
+
 		for(int i=0; i<line.length; i++){
 			buffer[i]=line[i];
 		}
@@ -327,39 +442,56 @@ public final class ByteFile1 extends ByteFile {
 		bstart=0;
 		bstop=newLen;
 	}
-	
+
+	/**
+	 * Opens the input stream for reading.
+	 * Thread-safe operation that initializes buffer positions and stream state.
+	 * @return Opened InputStream for the file
+	 * @throws RuntimeException if file is already open
+	 */
 	private final synchronized InputStream open(){
 		if(open){
 			throw new RuntimeException("Attempt to open already-opened TextFile "+name());
 		}
 		open=true;
-		is=ReadWrite.getInputStream(name(), BUFFERED, allowSubprocess());
+		is=ReadWrite.getInputStream(name(), BUFFERED, allowSubprocess(), true);
 		bstart=-1;
 		bstop=-1;
 		return is;
 	}
-	
+
 	@Override
 	public boolean isOpen(){return open;}
-	
+
 	@Override
 	public final InputStream is(){return is;}
-	
+
 	@Override
 	public final long lineNum(){return lineNum;}
-	
+
+	/** Flag indicating whether the file is currently open */
 	private boolean open=false;
+	/** Internal buffer for reading file data */
 	private byte[] buffer=new byte[bufferlen];
+	/** Static empty byte array returned for blank lines */
 	private static final byte[] blankLine=new byte[0];
 	private int bstart=0, bstop=0;
+	/** The underlying input stream for reading file data */
 	public InputStream is;
+	/** Current line number being read (0-based, -1 when closed) */
 	public long lineNum=-1;
-	
-	public static boolean verbose=false;
-	public static boolean BUFFERED=false;
-	public static int bufferlen=16384;
+	private IntList positions=new IntList();
+	private int listPos=0;
 
+	/** Flag to enable verbose debugging output */
+	public static boolean verbose=false;
+	/** Flag to enable buffered I/O operations */
+	public static boolean BUFFERED=false;
+	/** Default buffer size in bytes for I/O operations */
+	public static int bufferlen=65536;
+
+	/** Flag indicating whether an error occurred during file operations */
 	private boolean errorState=false;
-	
-	
+
+
 }

@@ -17,8 +17,8 @@ import stream.ConcurrentReadOutputStream;
 import stream.FastaReadInputStream;
 import stream.Read;
 import stream.SamLine;
-import stream.SamReadStreamer;
-import stream.SamStreamer;
+import stream.Streamer;
+import stream.StreamerFactory;
 import structures.ListNum;
 import tracker.ReadStats;
 
@@ -245,12 +245,12 @@ public class FilterSam {
 		Read.VALIDATE_IN_CONSTRUCTOR=Shared.threads()<4;
 		
 		
-		final SamReadStreamer ss;
+		final Streamer ss;
 		//Create a read input stream
 		final ConcurrentReadInputStream cris;
 		if(useStreamer){
 			cris=null;
-			ss=new SamReadStreamer(ffin1, streamerThreads, true, maxReads);
+			ss=StreamerFactory.makeSamOrBamStreamer(ffin1, streamerThreads, true, ordered, maxReads, true);
 			ss.start();
 			if(verbose){outstream.println("Started streamer");}
 		}else{
@@ -359,17 +359,29 @@ public class FilterSam {
 		}
 	}
 	
+	/**
+	 * Converts long value to padded string for aligned output formatting.
+	 * @param s Long value to format
+	 * @param len Target string length for padding
+	 * @return Padded string representation of the number
+	 */
 	private static String pad(long s, int len){
 		return pad(""+s, len);
 	}
 	
+	/**
+	 * Pads string with leading spaces to achieve target length for aligned output.
+	 * @param s String to pad
+	 * @param len Target length for padding
+	 * @return Left-padded string of specified length
+	 */
 	private static String pad(String s, int len){
 		while(s.length()<len){s=" "+s;}
 		return s;
 	}
 	
 	/** Spawn process threads */
-	private void spawnThreads(final ConcurrentReadInputStream cris, final SamStreamer ss, final ConcurrentReadOutputStream ros, final ConcurrentReadOutputStream rosb){
+	private void spawnThreads(final ConcurrentReadInputStream cris, final Streamer ss, final ConcurrentReadOutputStream ros, final ConcurrentReadOutputStream rosb){
 		
 		//Do anything necessary prior to processing
 		
@@ -444,7 +456,7 @@ public class FilterSam {
 	private class ProcessThread extends Thread {
 		
 		//Constructor
-		ProcessThread(final ConcurrentReadInputStream cris_, final SamStreamer ss_, final ConcurrentReadOutputStream ros_, final ConcurrentReadOutputStream rosb_, final int tid_){
+		ProcessThread(final ConcurrentReadInputStream cris_, final Streamer ss_, final ConcurrentReadOutputStream ros_, final ConcurrentReadOutputStream rosb_, final int tid_){
 			cris=cris_;
 			ss=ss_;
 			ros=ros_;
@@ -611,6 +623,14 @@ public class FilterSam {
 			return passesVariantFilter(r1);
 		}
 		
+		/**
+		 * Applies variant-based filtering to determine read retention.
+		 * Examines variant count, type, and cross-references against known variants
+		 * to identify reads containing likely sequencing artifacts vs real variation.
+		 *
+		 * @param r Read containing potential variants to evaluate
+		 * @return true if variants appear legitimate, false if likely artifacts
+		 */
 		private final boolean passesVariantFilter(Read r){
 			if(!r.mapped() || r.bases==null || r.samline==null || r.match==null){return true;}
 			final int vars=(subsOnly ? Read.countSubs(r.match) : Read.countVars(r.match, Var.CALL_SUB, Var.CALL_INS, Var.CALL_DEL));
@@ -648,9 +668,9 @@ public class FilterSam {
 			
 			final ArrayList<Var> list;
 			if(subsOnly){
-				list=CallVariants.findUniqueSubs(r, sl, varMap, scafMap, maxBadAlleleDepth, maxBadAlleleFraction, minBadReadDepth, minEDist);
+				list=AnalyzeVars.findUniqueSubs(r, sl, varMap, scafMap, maxBadAlleleDepth, maxBadAlleleFraction, minBadReadDepth, minEDist);
 			}else{
-				list=CallVariants.findUniqueVars(r, sl, varMap, scafMap, maxBadAlleleDepth, maxBadAlleleFraction, minBadReadDepth, minEDist);
+				list=AnalyzeVars.findUniqueVars(r, sl, varMap, scafMap, maxBadAlleleDepth, maxBadAlleleFraction, minBadReadDepth, minEDist);
 			}
 			if(list==null || list.size()<=maxBadVars){
 				varSumGoodT+=vars;
@@ -689,11 +709,17 @@ public class FilterSam {
 		protected long readsOutT=0;
 		/** Number of good bases processed by this thread */
 		protected long basesOutT=0;
+		/** Sum of quality scores for good reads in this thread */
 		protected double qSumGoodT=0;
+		/** Sum of quality scores for bad reads in this thread */
 		protected double qSumBadT=0;
+		/** Sum of variant counts for good reads in this thread */
 		protected long varSumGoodT=0;
+		/** Sum of variant counts for bad reads in this thread */
 		protected long varSumBadT=0;
+		/** Sum of mapping quality scores for good reads in this thread */
 		protected long mapqSumGoodT=0;
+		/** Sum of mapping quality scores for bad reads in this thread */
 		protected long mapqSumBadT=0;
 		
 		/** True only if this thread has completed successfully */
@@ -702,7 +728,7 @@ public class FilterSam {
 		/** Shared input stream */
 		private final ConcurrentReadInputStream cris;
 		/** Shared input stream */
-		private final SamStreamer ss;
+		private final Streamer ss;
 		/** Good output stream */
 		private final ConcurrentReadOutputStream ros;
 		/** Bad output stream */
@@ -730,7 +756,9 @@ public class FilterSam {
 	private String varFile=null;
 	/** Variant file path */
 	private String vcfFile=null;
+	/** Map of known variants loaded from VCF or variant file */
 	private VarMap varMap=null;
+	/** Map of scaffold/chromosome names and lengths */
 	private ScafMap scafMap=null;
 	
 	/*--------------------------------------------------------------*/
@@ -750,7 +778,9 @@ public class FilterSam {
 	private int minBadReadDepth=2;
 	/** Ignore vars within this distance of the ends */
 	private int minEDist=5;
+	/** Organism ploidy level for variant calling */
 	private int ploidy=1;
+	/** Whether to apply prefiltering during variant calling */
 	private boolean prefilter=false;
 
 	/** Number of reads processed */
@@ -770,22 +800,30 @@ public class FilterSam {
 	/** Number of good bases processed */
 	protected long basesOut=0;
 
+	/** Sum of base quality scores for retained reads */
 	protected double bqSumGood=0;
+	/** Sum of base quality scores for discarded reads */
 	protected double bqSumBad=0;
 //	protected double adSumGood=0;
 //	protected double adSumBad=0;
 //	protected double rdSumGood=0;
 //	protected double rdSumBad=0;
 	
+	/** Sum of variant counts for retained reads */
 	protected long varSumGood=0;
+	/** Sum of variant counts for discarded reads */
 	protected long varSumBad=0;
+	/** Sum of mapping quality scores for retained reads */
 	protected long mapqSumGood=0;
+	/** Sum of mapping quality scores for discarded reads */
 	protected long mapqSumBad=0;
 
 	/** Quit after processing this many input reads; -1 means no limit */
 	private long maxReads=-1;
 	
+	/** Whether to use SamStreamer instead of ConcurrentReadInputStream */
 	static boolean useStreamer=true;
+	/** Number of threads for SamStreamer processing */
 	static int streamerThreads=3;
 	
 	/*--------------------------------------------------------------*/
@@ -800,6 +838,7 @@ public class FilterSam {
 	/** Secondary output file */
 	private final FileFormat ffoutBad;
 	
+	/** Whether filtering is limited to substitutions only (no indels) */
 	private final boolean subsOnly;
 	
 	/*--------------------------------------------------------------*/

@@ -8,7 +8,7 @@ Last modified May 14, 2024
 Description: Counts and summarizes the number of reads with each barcode,
 using class BarcodeStats.  Can also do barcode assignment.
 
-Usage:   countbarcodes.sh in=<file> counts=<file>
+Usage:   countbarcodes2.sh in=<file> counts=<file>
 
 Input may be stdin or a fasta or fastq file, raw or gzipped.
 
@@ -43,6 +43,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -76,7 +77,7 @@ calcXmx () {
 calcXmx "$@"
 
 countbarcodes() {
-	local CMD="java $EA $EOOM $z -cp $CP barcode.CountBarcodes2 $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP barcode.CountBarcodes2 $@"
 	echo $CMD >&2
 	eval $CMD
 }

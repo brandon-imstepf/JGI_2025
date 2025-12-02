@@ -2,9 +2,10 @@ package jgi;
 
 import java.io.PrintStream;
 
+import fileIO.ByteFile;
 import fileIO.FileFormat;
-import fileIO.TextFile;
 import fileIO.TextStreamWriter;
+import shared.LineParser1;
 import shared.PreParser;
 import shared.Shared;
 import shared.Timer;
@@ -18,6 +19,8 @@ import stream.SamLine;
  */
 public class SplitSam4Way {
 	
+	/** Program entry point for SAM file splitting utility.
+	 * @param args Command-line arguments: input SAM file and four output file paths */
 	public static void main(String[] args){
 		SplitSam4Way x=new SplitSam4Way(args);
 		
@@ -25,12 +28,22 @@ public class SplitSam4Way {
 		Shared.closeStream(x.outstream);
 	}
 	
+	/** Prints usage instructions and command-line syntax to the output stream.
+	 * Shows the required arguments and explains that unwanted outputs can use 'null'. */
 	private void printOptions(){
 		outstream.println("Syntax:\n");
 		outstream.println("java -ea -Xmx128m -cp <path> jgi.SplitSam4Way <input> <out plus> <out minus> <out chimeric> <out unmapped>");
 		outstream.println("If you do not want one of the output files, use the word 'null'.\n");
 	}
 	
+	/**
+	 * Constructs and executes the SAM file splitting operation.
+	 * Parses input SAM file and categorizes reads into four output streams:
+	 * plus strand, minus strand, chimeric, and unmapped reads.
+	 * Reads are categorized based on mapping status, mate pairing, and strand orientation.
+	 *
+	 * @param args Command-line arguments containing input file and four output file paths
+	 */
 	public SplitSam4Way(String[] args){
 		
 		{//Preparse block for help, config files, and outstream
@@ -53,8 +66,9 @@ public class SplitSam4Way {
 		String fminus=args[2];
 		String fchimeric=args[3];
 		String funmapped=args[4];
-		
-		TextFile tf=new TextFile(fin, true);
+
+		ByteFile tf=ByteFile.makeByteFile(fin, true);
+		LineParser1 lp=new LineParser1('\t');
 		TextStreamWriter plus=("null".equalsIgnoreCase(fplus) ? null : new TextStreamWriter(fplus, true, false, true, FileFormat.SAM));
 		TextStreamWriter minus=("null".equalsIgnoreCase(fminus) ? null : new TextStreamWriter(fminus, true, false, true, FileFormat.SAM));
 		TextStreamWriter chimeric=("null".equalsIgnoreCase(fchimeric) ? null : new TextStreamWriter(fchimeric, true, false, true, FileFormat.SAM));
@@ -65,31 +79,31 @@ public class SplitSam4Way {
 		if(chimeric!=null){chimeric.start();}
 		if(unmapped!=null){unmapped.start();}
 		
-		for(String line=tf.nextLine(); line!=null; line=tf.nextLine()){
-			if(line.charAt(0)=='@'){
-				if(plus!=null){plus.println(line);}
-				if(minus!=null){minus.println(line);}
-				if(chimeric!=null){chimeric.println(line);}
-				if(unmapped!=null){unmapped.println(line);}
+		for(byte[] bytes=tf.nextLine(); bytes!=null; bytes=tf.nextLine()){
+			if(bytes[0]=='@'){
+				if(plus!=null){plus.println(bytes);}
+				if(minus!=null){minus.println(bytes);}
+				if(chimeric!=null){chimeric.println(bytes);}
+				if(unmapped!=null){unmapped.println(bytes);}
 			}else{
-				SamLine sl=new SamLine(line);
+				SamLine sl=new SamLine(lp.set(bytes));
 				reads++;
 //				bases+=sl.seq.length();
 				bases+=sl.seq.length;
 				
 				if(!sl.mapped() || !sl.nextMapped() || !sl.hasMate() || !sl.primary()){
-					if(unmapped!=null){unmapped.println(line);}
+					if(unmapped!=null){unmapped.println(bytes);}
 					ureads++;
 //					System.out.println("unmapped: "+sl.mapped()+", "+sl.nextMapped()+", "+sl.hasMate()+", "+!sl.primary());
 				}else if(!sl.pairedOnSameChrom() || sl.strand()==sl.nextStrand()){
-					if(chimeric!=null){chimeric.println(line);}
+					if(chimeric!=null){chimeric.println(bytes);}
 					creads++;
 //					System.out.println("chimeric: "+sl.pairedOnSameChrom()+", "+(sl.strand()==sl.nextStrand())+", "+sl.strand()+", "+sl.nextStrand()+", "+new String(sl.rname())+", "+new String(sl.rnext()));
 				}else if((sl.firstFragment() ? sl.strand() : sl.nextStrand())==Shared.PLUS){
-					if(plus!=null){plus.println(line);}
+					if(plus!=null){plus.println(bytes);}
 					preads++;
 				}else if((sl.firstFragment() ? sl.strand() : sl.nextStrand())==Shared.MINUS){
-					if(minus!=null){minus.println(line);}
+					if(minus!=null){minus.println(bytes);}
 					mreads++;
 				}else{
 					throw new RuntimeException("Unhandled case: "+sl.firstFragment()+", "+sl.lastFragment()+", "+sl.strand()+", "+sl.nextStrand()+"\n"+sl+"\n");
@@ -110,6 +124,7 @@ public class SplitSam4Way {
 		outstream.println("Unmapped Reads:     "+ureads);
 	}
 	
+	/** Output stream for progress messages and statistics */
 	private PrintStream outstream=System.err;
 	
 }

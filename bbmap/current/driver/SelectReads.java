@@ -1,8 +1,9 @@
 package driver;
 
+import fileIO.ByteFile;
+import fileIO.ByteStreamWriter;
 import fileIO.ReadWrite;
-import fileIO.TextFile;
-import fileIO.TextStreamWriter;
+import shared.LineParser1;
 import shared.Parse;
 import shared.Shared;
 import shared.Tools;
@@ -18,6 +19,14 @@ import stream.SamLine;
  */
 public final class SelectReads {
 	
+	/**
+	 * Program entry point for read selection based on CIGAR operations.
+	 * Takes command-line arguments: input_file output_file [symbol] [min_length] [max_reads]
+	 * Processes SAM file and outputs reads containing specified operations above minimum length.
+	 *
+	 * @param args Command-line arguments: input SAM file, output SAM file,
+	 * optional CIGAR symbol (M/S/D/I/C), optional minimum length, optional max reads
+	 */
 	public static void main(String[] args){
 		
 		assert(args.length>=2) : "Need 2 file names: <input> <output>";
@@ -43,16 +52,17 @@ public final class SelectReads {
 		final int index=Tools.indexOf(new char[] {'M','S','D','I','C'}, symbol);
 		assert(index>=0) : "Symbol (3rd argument) must be M, S, D, I, C (for match string symbols) or M, =, X, D, N, I, S, H, P (for cigar symbols).";
 		
-		TextFile tf=new TextFile(args[0], true);
-		TextStreamWriter tsw=new TextStreamWriter(args[1], false, false, true);
+		ByteFile tf=ByteFile.makeByteFile(args[0], true);
+		LineParser1 lp=new LineParser1('\t');
+		ByteStreamWriter tsw=new ByteStreamWriter(args[1], false, false, true);
 		tsw.start();
 		
-		for(String line=tf.nextLine(); line!=null; line=tf.nextLine()){
-			if(line.charAt(0)=='@'){
+		for(byte[] line=tf.nextLine(); line!=null; line=tf.nextLine()){
+			if(line[0]=='@'){
 				tsw.println(line);
 			}else{
 				if((reads=reads-1)<0){break;}
-				SamLine sl=new SamLine(line);
+				SamLine sl=new SamLine(lp.set(line));
 				if(testLine(sl, minlen, index)){
 					tsw.println(line);
 				}
@@ -64,6 +74,15 @@ public final class SelectReads {
 	}
 	
 	
+	/**
+	 * Tests if a SAM line contains the specified CIGAR operation above minimum length.
+	 * Parses CIGAR string and checks if the operation at the given index meets length requirement.
+	 *
+	 * @param sl The SAM line to test
+	 * @param minlen Minimum length required for the operation
+	 * @param index Index of the CIGAR operation to check (0=M, 1=S, 2=D, 3=I, 4=C)
+	 * @return true if the line contains the operation above minimum length, false otherwise
+	 */
 	private static boolean testLine(SamLine sl, int minlen, int index){
 		assert(sl!=null);
 		if(!sl.mapped() || sl.cigar==null){return false;}

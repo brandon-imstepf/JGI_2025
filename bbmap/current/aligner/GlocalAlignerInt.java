@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  *Aligns two sequences to return ANI.
@@ -8,7 +9,7 @@ import java.util.Arrays;
  *Identity is approximate.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 19, 2024
  */
 public class GlocalAlignerInt implements IDAligner{
@@ -25,6 +26,7 @@ public class GlocalAlignerInt implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor */
 	public GlocalAlignerInt() {}
 	
 	/*--------------------------------------------------------------*/
@@ -64,6 +66,7 @@ public class GlocalAlignerInt implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 
 		// Create arrays for current and previous rows
 		int[] prev=new int[rLen+1], curr=new int[rLen+1];
@@ -75,6 +78,7 @@ public class GlocalAlignerInt implements IDAligner{
 		for(int i=1; i<=qLen; i++) {
 			// First column-gap in reference
 			curr[0]=i*INS;
+			mloops+=rLen;
 
 			for(int j=1; j<=rLen; j++) {
 				byte q=query[i-1];
@@ -96,7 +100,6 @@ public class GlocalAlignerInt implements IDAligner{
 				int maxValue=(maxDiagUp & SCORE_MASK) >= leftScore ? maxDiagUp : leftScore;
 
 				curr[j]=maxValue;
-				loops++;
 			}
 
 			// Swap rows
@@ -178,31 +181,48 @@ public class GlocalAlignerInt implements IDAligner{
 		return id;
 	}
 	
-	@Override
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
+	/** Thread-safe counter for tracking alignment loop iterations */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the loop counter for performance monitoring */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for performance monitoring.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Output string for debugging or result storage */
+	public static String output=null;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/
 	/*--------------------------------------------------------------*/
 
 	// Position will use the lower 15 bits (sufficient for 32kbp)
+	/** Number of bits reserved for position storage in packed integers */
 	private static final int POSITION_BITS=15;
+	/** Bit mask for extracting position from packed score/position integers */
 	private static final int POSITION_MASK=(1 << POSITION_BITS)-1;
+	/** Bit mask for extracting score from packed score/position integers */
 	private static final int SCORE_MASK=~POSITION_MASK;
+	/** Number of bits to shift for score extraction from packed integers */
 	private static final int SCORE_SHIFT=POSITION_BITS;
 
 	// Equal weighting for operations
+	/** Score value for matching bases in alignment matrix */
 	private static final int MATCH=1 << SCORE_SHIFT;
+	/** Penalty score for mismatched bases in alignment matrix */
 	private static final int MISMATCH=(-1)*(1 << SCORE_SHIFT);
+	/** Penalty score for insertions in alignment matrix */
 	private static final int INS=(-1)*(1 << SCORE_SHIFT);
+	/** Penalty score for deletions in alignment matrix */
 	private static final int DEL=(-1)*(1 << SCORE_SHIFT);
+	/** Neutral score for alignments involving ambiguous bases (N) */
 	private static final int N_SCORE=0;
+	/** Very negative score indicating invalid or impossible alignment states */
 	private static final int BAD=Integer.MIN_VALUE/2;
 
 	// Run modes
+	/** Debug flag for printing alignment operations */
 	private static final boolean PRINT_OPS=false;
+	/** Flag indicating whether this is a global alignment algorithm */
 	public static final boolean GLOBAL=false;
 
 

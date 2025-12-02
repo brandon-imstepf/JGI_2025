@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Shared;
 import shared.Tools;
@@ -17,7 +18,7 @@ import structures.RingBuffer;
  *Band dynamically widens and narrows in response to sequence identity.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 7, 2025
  */
 public class WobblePlusAligner2 implements IDAligner{
@@ -34,6 +35,7 @@ public class WobblePlusAligner2 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor */
 	public WobblePlusAligner2() {}
 
 	/*--------------------------------------------------------------*/
@@ -57,7 +59,7 @@ public class WobblePlusAligner2 implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Tools.mid(6, 1+Math.max(query.length, ref.length)/20, 16);
+		int bandwidth=Tools.mid(7, 1+Math.max(query.length, ref.length)/24, 24);
 		int subs=0;
 		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
 			subs+=(query[i]!=ref[i] ? 1 : 0);
@@ -86,6 +88,7 @@ public class WobblePlusAligner2 implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
@@ -142,8 +145,7 @@ public class WobblePlusAligner2 implements IDAligner{
 			maxPos=0;
 			
 			if(Shared.SIMD) {
-				shared.SIMDAlign.alignBandVector(q, ref, bandStart, bandEnd, prev, curr,
-						MATCH, N_SCORE, SUB, INS);
+				shared.SIMDAlign.alignBandVector(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 				// Process only cells within the band
 				for(int j=bandStart; j<=bandEnd; j++){
@@ -182,7 +184,7 @@ public class WobblePlusAligner2 implements IDAligner{
 			}
 			
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 			
 			// Swap rows
 			long[] temp=prev;
@@ -192,6 +194,7 @@ public class WobblePlusAligner2 implements IDAligner{
 		}
 		if(viz!=null) {viz.shutdown();}// Terminate visualizer
 		if(GLOBAL) {maxPos=rLen;maxScore=prev[rLen-1]+DEL_INCREMENT;}//The last cell may be empty 
+		loops.addAndGet(mloops);
 		return postprocess(maxScore, maxPos, qLen, rLen, posVector);
 	}
 	
@@ -281,9 +284,14 @@ public class WobblePlusAligner2 implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Counter for total alignment matrix cells processed across all alignments */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns total number of alignment matrix cells processed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for alignment statistics.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output path for alignment visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -291,26 +299,41 @@ public class WobblePlusAligner2 implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits for encoding position information in packed scores */
 	private static final int POSITION_BITS=21;
+	/** Number of bits for encoding deletion count in packed scores */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount for score portion of packed values */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position from packed scores */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed scores */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting score portion from packed values */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for matching bases */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substitutions */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Base score penalty for deletions */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for aligning ambiguous bases (N characters) */
 	private static final long N_SCORE=0L;
+	/** Sentinel value for invalid/uninitialized alignment scores */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined score penalty and position increment for deletions */
 	private static final long DEL_INCREMENT=DEL+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Debug flag for printing alignment operation statistics */
 	private static final boolean PRINT_OPS=false;
+	/** Flag for global vs local alignment mode */
 	public static final boolean GLOBAL=false;
 
 }

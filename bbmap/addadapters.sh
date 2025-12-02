@@ -37,6 +37,7 @@ arc=f               Add reverse-complemented adapters as well as forward.
 rate=0.5            Add adapters to this fraction of reads.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -70,7 +71,7 @@ calcXmx () {
 calcXmx "$@"
 
 function addadapters() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.AddAdapters $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.AddAdapters $@"
 	echo $CMD >&2
 	eval $CMD
 }

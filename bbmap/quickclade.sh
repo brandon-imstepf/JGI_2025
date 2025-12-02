@@ -3,7 +3,7 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified May 4, 2025
+Last modified October 12, 2025
 
 Description:  Assigns taxonomy to query sequences by comparing kmer
 frequencies to those in a reference database.  Developed for taxonomic
@@ -25,6 +25,9 @@ quickclade.sh bins
 or
 quickclade.sh contigs.fa percontig out=results.tsv usetree
 
+For accuracy evaluation:
+quickclade.sh printmetrics usetree genomesdir out=null includeself=f
+
 
 File Parameters:
 in=<file,file>  Query files or directories.  Loose file or directory names are
@@ -35,16 +38,20 @@ ref=<file,file> Reference files; the current default is:
                 It is plaintext, human-readable, and pretty small.
 out=stdout      Set to a file to redirect output.  Only the query results will
                 be written here; progress messages will still go to stderr.
+server          Use this flag to send kmer spectra to a remote server if you do not
+                have a local database.
 
 Basic Parameters:
 percontig       Run one query per contig instead of per file.
 minlen=0        Ignore sequences shorter than this in percontig mode.
 hits=1          Print this many top hits per query.
-steps=7         Only search up to this many GC intervals (of 0.01) away from
+steps=6         Only search up to this many GC intervals (of 0.01) away from
                 the query GC.
 oneline         Print results one line per query, tab-delimited.
 callssu=f       Call 16S and 18S for alignment to reference SSU.
                 This will affect the top hit ordering only if hits>1.
+server=f        Send spectra to server instead of using a local reference.
+                Enabled automatically if there is no local reference.
 
 Advanced Parameters (mainly for benchmarking):
 printmetrics    Output accuracy statistics; mainly useful for labeled data.
@@ -58,17 +65,20 @@ maxk=5          Can be set to 4 or 3 to restrict kmer frequency comparisons
                 to smaller kmers.  This may improve accuracy for small
                 sequences/bins, but slightly reduces accuracy for large
                 sequences/bins.
-ccm=1.0         Threshold for using pentamers; lower is faster.
-ccm2=1.5        Threshold for using tetramers.
-gcdif=0.07      Initial maximum GC difference.
-strdif=0.10     Initial maximum strandedness difference.
+ccm=1.2         Threshold for using pentamers; lower is faster.
+ccm2=1.6        Threshold for using tetramers.
+gcdif=0.04      Initial maximum GC difference.
 gcmult=0.5      Max GC difference as a fraction of best 5-mer difference.
+strdif=0.12     Initial maximum strandedness difference.
 strmult=1.2     Max strandedness difference as a fraction of best 5-mer diff.
+hhdif=0.025     Maximum HH metric difference.
+cagadif=0.017   Maximum CAGA metric differece.
 ee=t            Early exit; increases speed.
 entropy         Calculate entropy for queries.  Slow; negligible utility.
 heap=1          Number of intermediate comparisons to store.
 usetree         Load a taxonomic tree for better grading for labeled data.
 aligner=quantum Options include ssa2, glocal, drifting, banded, crosscut.
+
 Distance Metrics:
 abs             Use absolute difference of kmer frequencies.
 cos             Use 1-cosine similarity of kmer frequencies.
@@ -79,6 +89,7 @@ Note:  The distance metric strongly impacts ccm, gcmult, and strmult.
        Defaults are optimized for abscomp.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -116,7 +127,7 @@ calcXmx () {
 calcXmx "$@"
 
 quickclade() {
-	local CMD="java $EA $EOOM $SIMD $XMX $XMS -cp $CP bin.CladeSearcher $@"
+	local CMD="java $EA $EOOM $SIMD $XMX $XMS -cp $CP clade.CladeSearcher $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -1,10 +1,39 @@
 package var2;
 
+import ml.CellNet;
 import shared.Parse;
 import shared.Tools;
 
+/**
+* Comprehensive filtering system for genetic variants based on multiple quality metrics.
+* This is the core decision-making class that determines which variants are genuine
+* versus sequencing artifacts or low-confidence calls.
+* 
+* Implements a multi-tier filtering approach:
+* 1. Fast preliminary filters (read depth, max quality scores)
+* 2. Comprehensive statistical analysis (pairing rates, strand bias, coverage)
+* 3. Complex scoring algorithms (phred scores, allele fractions)
+* 4. Proximity-based filtering (nearby variant detection)
+* 
+* The passesFilter() method is the primary integration point where all statistical
+* evidence is evaluated. This is also the natural insertion point for machine learning
+* models that could supplement or replace traditional statistical filters.
+* 
+* @author Brian Bushnell
+* @contributor Isla
+*/
 public class VarFilter {
 	
+	/**
+	* Parses command-line arguments to configure filtering parameters.
+	* Handles a comprehensive set of filtering options with intelligent defaults
+	* and automatic unit conversion (e.g., percentages to fractions).
+	* 
+	* @param a Argument key (lowercase)
+	* @param b Argument value
+	* @param arg Original argument string
+	* @return true if argument was recognized and parsed
+	*/
 	public boolean parse(String a, String b, String arg){
 		if(a.equals("minreads") || a.equals("minad") || a.equals("minalleledepth") || a.equals("mincount")){
 			minAlleleDepth=Integer.parseInt(b);
@@ -93,6 +122,10 @@ public class VarFilter {
 		return true;
 	}
 	
+	/**
+	 * Resets all filtering parameters to permissive defaults.
+	 * Useful for starting with a clean slate or disabling all filters.
+	 */
 	public void clear(){
 		minAlleleDepth=-1;
 		maxAlleleDepth=Integer.MAX_VALUE;
@@ -123,8 +156,12 @@ public class VarFilter {
 		failNearby=false;
 	}
 	
-	
-	public void setFrom(VarFilter filter) {
+	/**
+	 * Copies all filtering parameters from another VarFilter.
+	 * Useful for creating filtered copies or applying consistent parameters.
+	 * @param filter Source VarFilter to copy parameters from
+	 */
+	public void setFrom(VarFilter filter){
 		minAlleleDepth=filter.minAlleleDepth;
 		maxAlleleDepth=filter.maxAlleleDepth;
 		minCov=filter.minCov;
@@ -151,6 +188,20 @@ public class VarFilter {
 		maxIdentity=filter.maxIdentity;
 	}
 	
+	/**
+	 * Fast preliminary filtering using only simple numeric thresholds.
+	 * This method provides rapid screening of variants before more expensive
+	 * statistical calculations. Used for initial filtering in high-throughput scenarios.
+	 * 
+	 * Checks basic quality metrics that don't require division or complex calculations:
+	 * - Read depth (allele count)
+	 * - Maximum base quality observed
+	 * - Maximum end distance (position within reads)
+	 * - Maximum mapping quality
+	 * 
+	 * @param v Variant to evaluate
+	 * @return true if variant passes preliminary filters
+	 */
 	public boolean passesFast(Var v){
 		if(v.forced()){return true;}
 		final int count=v.alleleCount();
@@ -158,82 +209,135 @@ public class VarFilter {
 		if(v.baseQMax<minMaxQuality){return false;}
 		if(v.endDistMax<minMaxEdist){return false;}
 		if(v.mapQMax<minMaxMapq){return false;}
-//		final int cov=v.coverage();
-//		if(cov<minCov || cov>maxCov){return false;}
 		return true;
 	}
 	
-	public boolean passesFilter(Var v, double pairingRate, double totalQualityAvg,
-			double totalMapqAvg, double readLengthAvg, int ploidy, ScafMap map, boolean considerNearby){
+	/**
+	* Comprehensive variant filtering using all available statistical evidence.
+	* 
+	* This is the core filtering method that integrates multiple lines of evidence
+	* to determine variant quality. The method implements a layered filtering approach:
+	* 
+	* 1. DEPTH FILTERS: Checks read count and coverage depth
+	* 2. QUALITY FILTERS: Evaluates base quality, mapping quality, alignment identity
+	* 3. PROXIMITY FILTERS: Considers nearby variant density (potential sequencing errors)
+	* 4. STATISTICAL FILTERS: Analyzes pairing rates, strand bias, average qualities
+	* 5. ALLELE FRACTION FILTERS: Evaluates variant frequency in the population
+	* 6. INTEGRATED SCORING: Uses phred-scaled composite scores
+	* 
+	* The method uses several optimization strategies:
+	* - Early returns for forced variants (user-specified high-confidence calls)
+	* - Fast rejection based on simple thresholds before expensive calculations
+	* - Multiplication-based comparisons instead of division (count*threshold > sum)
+	* - Conditional evaluation of expensive metrics only when thresholds are set
+	* 
+	* NEURAL NETWORK INTEGRATION POINT:
+	* This method represents the natural insertion point for machine learning models.
+	* A neural network could either:
+	* 1. Replace this entire method with learned decision boundaries
+	* 2. Supplement the statistical filters with additional evidence
+	* 3. Provide a final confidence score alongside traditional filtering
+	* 
+	* The method already calculates all the statistical features that would be
+	* useful for ML training: coverage, quality scores, strand bias, proximity metrics, etc.
+	* 
+	* @param v Variant to evaluate
+	* @param pairingRate Overall proper pairing rate from sequencing run
+	* @param totalQualityAvg Average base quality from the entire dataset
+	* @param totalMapqAvg Average mapping quality from the entire dataset  
+	* @param readLengthAvg Average read length from the sequencing run
+	* @param ploidy Sample ploidy (typically 1 or 2)
+	* @param map Scaffold mapping for coordinate-based calculations
+	* @param considerNearby Whether to apply proximity-based filtering
+	* @return true if variant passes all filtering criteria
+	*/
+	public boolean passesFilter(Var v, double pairingRate, double totalQualityAvg, double totalMapqAvg, 
+			double readLengthAvg, int ploidy, ScafMap map, CellNet net, boolean considerNearby){
+		
+		//TIER 1: BASIC DEPTH AND COVERAGE FILTERING
+		//These are fast checks that eliminate obviously bad variants early
 		final int count=v.alleleCount();
-		//System.err.println("a0: "+count+", "+v.r1minus+", "+ v.r1plus+", "+ v.r2minus+", "+ v.r2plus);
-//		assert(false) : v.r1minus+", "+ v.r1plus+", "+ v.r2minus+", "+ v.r2plus;
 		if(count<minAlleleDepth || count>maxAlleleDepth){return false;}
 		final int cov=v.coverage();
 		if(cov<minCov || cov>maxCov){return false;}
+		
+		//TIER 2: MAXIMUM QUALITY THRESHOLDS
+		//Check that at least one supporting read had acceptable quality metrics
 		if(v.baseQMax<minMaxQuality){return false;}
 		if(v.endDistMax<minMaxEdist){return false;}
 		if(v.mapQMax<minMaxMapq){return false;}
+		if(v.idMax*0.001f<minMaxIdentity){return false;}
+		
+		//TIER 3: PROXIMITY-BASED FILTERING
+		//Filter variants in regions with high variant density (potential sequencing errors)
 		if(considerNearby && failNearby){
 			assert(v.nearbyVarCount>=0) : "Nearby vars were not counted.";
 			if(v.nearbyVarCount>maxNearbyCount){return false;}
 		}
+
+		//TIER 4: STATISTICAL QUALITY FILTERS
+		//These use averaged metrics across all supporting reads
+		//Optimization: Use multiplication instead of division for better performance
+		//(count*threshold>sum) is equivalent to (sum/count<threshold) but faster
 		
-		//System.err.println("d");
-		if(v.idMax*0.001f<minMaxIdentity){return false;}
-		//System.err.println("e");
-
-		//Slower, uses division.
-//		if(pairingRate>0 && minPairingRate>0 && v.pairingRate()<minPairingRate){return false;}
-//		if(minStrandRatio>0 && v.strandRatio()<minStrandRatio){return false;}
-//		if(minAvgQuality>0 && v.baseQAvg()<minAvgQuality){return false;}
-//		if(minAvgEdist>0 && v.edistAvg()<minAvgEdist){return false;}
-//		if(minAvgMapq>0 && v.mapQAvg()<minAvgMapq){return false;}
-
 		if(pairingRate>0 && minPairingRate>0 && count*minPairingRate>v.properPairCount){return false;}
-		//System.err.println("f");
 		if(minAvgQuality>0 && count*minAvgQuality>v.baseQSum){return false;}
-		//System.err.println("g");
 		if(minAvgEdist>0 && count*minAvgEdist>v.endDistSum){return false;}
-		//System.err.println("h");
 		if(minAvgMapq>0 && count*minAvgMapq>v.mapQSum){return false;}
-		//System.err.println("i");
 		if(minIdentity>0 && count*minIdentity*1000>v.idSum){return false;}
-		//System.err.println("j");
 		
+		//Upper bounds on quality metrics (detect potential systematic biases)
 		if(maxAvgQuality<Integer.MAX_VALUE && count*maxAvgQuality<v.baseQSum){return false;}
-		//System.err.println("k");
 		if(maxAvgMapq<Integer.MAX_VALUE && count*maxAvgMapq<v.mapQSum){return false;}
-		//System.err.println("l");
 		if(maxIdentity<Integer.MAX_VALUE && count*maxIdentity*1000<v.idSum){return false;}
-		//System.err.println("m");
 		
+		//TIER 5: STRAND BIAS DETECTION
+		//This requires division but is crucial for detecting sequencing artifacts
 		if(minStrandRatio>0 && v.strandRatio()<minStrandRatio){return false;}
-		//System.err.println("n");
 		
+		//TIER 6: ALLELE FRACTION FILTERING
+		//Evaluates variant frequency within the population/sample
+		//Uses revised allele fraction if available (corrects for insertion length bias)
 		if(minAlleleFraction>0 && v.coverage()>0){
 			final double af=v.revisedAlleleFraction==-1 ? v.alleleFraction() : v.revisedAlleleFraction;
 			if(af<minAlleleFraction){return false;}
 		}
-		//System.err.println("o");
 		if(maxAlleleFraction<Integer.MAX_VALUE && v.coverage()>0){
 			final double af=v.revisedAlleleFraction==-1 ? v.alleleFraction() : v.revisedAlleleFraction;
 			if(af>maxAlleleFraction){return false;}
 		}
-		//System.err.println("p");
 		
+		//TIER 7: INTEGRATED SCORING
+		//This is the most expensive calculation - a composite phred score that integrates
+		//multiple lines of evidence using sophisticated statistical models
 		if(minScore>0 || maxScore<Integer.MAX_VALUE){
-			double phredScore=v.phredScore(pairingRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map);
-//			assert(false) : minScore+", "+maxScore+", "+phredScore+"\n"
-//					+pairingRate+", "+totalQualityAvg+", "+totalMapqAvg+", "+readLengthAvg+", "+rarity+", "+ploidy+"\n"+
-//					v.toBasicHeader()+"\n"+v.toString()+"\n"+v.count();
+			double phredScore=v.phredScore(pairingRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map, null);
+			if(net!=null){
+				if(phredScore<minScore*0.5f){return false;}
+				float[] vec=FeatureVectorMaker.toVector(v, pairingRate, totalQualityAvg, totalMapqAvg, readLengthAvg, ploidy, map);
+				net.applyInput(vec);
+				float output=net.feedForward();
+				output=Tools.mid(0, output, 1);
+				//Convert NN output to phred score multiplier: cutoff->1.0, 0.0->0.1, 1.0->1.9
+				float multiplier=(output<=net.cutoff) ?
+					0.1f+(0.9f*output/net.cutoff) :
+					1.0f+(0.9f*(output-net.cutoff)/(1.0f-net.cutoff));
+				
+				phredScore*=multiplier;
+			}
 			if(phredScore<minScore || phredScore>maxScore){return false;}
 		}
-		//System.err.println("q");
 		
 		return true;
 	}
 	
+	/**
+	 * Returns a formatted string representation of all filter parameters.
+	 * Useful for logging, debugging, and reproducibility documentation.
+	 * @param pairingRate Overall pairing rate for context
+	 * @param ploidy Sample ploidy for context  
+	 * @return Formatted parameter summary
+	 */
 	public String toString(double pairingRate, int ploidy){
 		StringBuilder sb=new StringBuilder();
 		
@@ -261,38 +365,74 @@ public class VarFilter {
 		return sb.toString();
 	}
 
+	/*--------------------------------------------------------------*/
+	/*----------------           Fields             ----------------*/
+	/*--------------------------------------------------------------*/
+
+	//DEPTH FILTERING PARAMETERS
+	/** Minimum number of reads supporting the variant allele */
 	public int minAlleleDepth=2;
+	/** Maximum number of reads supporting the variant allele */
 	public int maxAlleleDepth=Integer.MAX_VALUE;
+	/** Minimum total coverage at the variant position */
 	public int minCov=-1;
+	/** Maximum total coverage at the variant position */
 	public int maxCov=Integer.MAX_VALUE;
 	
+	//MAXIMUM QUALITY THRESHOLDS (at least one read must exceed these)
+	/** Minimum base quality score observed among supporting reads */
 	public int minMaxQuality=15;
+	/** Minimum end distance (position within read) observed among supporting reads */
 	public int minMaxEdist=20;
+	/** Minimum mapping quality observed among supporting reads */
 	public int minMaxMapq=0;
+	/** Minimum alignment identity observed among supporting reads */
 	public double minMaxIdentity=0;
 	
+	//STATISTICAL FILTERING PARAMETERS
+	/** Minimum proper pairing rate among supporting reads */
 	public double minPairingRate=0.1;
+	/** Minimum strand ratio (balance between + and - strands) */
 	public double minStrandRatio=0.1;
+	/** Minimum composite phred score for the variant */
 	public double minScore=20;
+	/** Maximum composite phred score for the variant */
 	public double maxScore=Integer.MAX_VALUE;
+	/** Minimum average base quality among supporting reads */
 	public double minAvgQuality=12;
+	/** Maximum average base quality among supporting reads */
 	public double maxAvgQuality=Integer.MAX_VALUE;
+	/** Minimum average end distance among supporting reads */
 	public double minAvgEdist=10;
+	/** Minimum average mapping quality among supporting reads */
 	public double minAvgMapq=0;
+	/** Maximum average mapping quality among supporting reads */
 	public double maxAvgMapq=Integer.MAX_VALUE;
+	/** Minimum allele fraction (variant frequency in the sample) */
 	public double minAlleleFraction=0.1;
+	/** Maximum allele fraction (variant frequency in the sample) */
 	public double maxAlleleFraction=Integer.MAX_VALUE;
+	/** Minimum average alignment identity among supporting reads */
 	public double minIdentity=0;
+	/** Maximum average alignment identity among supporting reads */
 	public double maxIdentity=Integer.MAX_VALUE;
+	/** Expected rarity of variants in the population (affects scoring) */
 	public double rarity=1;
 	
-	public int maxNearbyCount=1;//Max nearby allowed before being flagged or failed
+	//PROXIMITY-BASED FILTERING PARAMETERS
+	/** Maximum number of nearby variants allowed before flagging/failing */
+	public int maxNearbyCount=1;
+	/** Distance threshold for considering variants "nearby" */
 	public int nearbyDist=20;
+	/** Minimum gap between variants to avoid proximity penalties */
 	public int nearbyGap=2;
 	
+	/** Whether to flag variants with too many nearby variants */
 	public boolean flagNearby=false;
+	/** Whether to fail/reject variants with too many nearby variants */
 	public boolean failNearby=false;
+	/** Whether to penalize scores of variants with nearby variants */
 	public boolean penalizeNearby=false;
+	/** Whether to count nearby variants (enables proximity-based filtering) */
 	public boolean countNearbyVars=true;
-	
 }

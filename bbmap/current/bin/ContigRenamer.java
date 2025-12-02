@@ -23,9 +23,9 @@ import stream.ConcurrentReadOutputStream;
 import stream.FastaReadInputStream;
 import stream.Read;
 import stream.SamLine;
-import stream.SamLineStreamer;
 import stream.SamReadInputStream;
-import stream.SamStreamer;
+import stream.Streamer;
+import stream.StreamerFactory;
 import structures.ByteBuilder;
 import structures.FloatList;
 import structures.IntList;
@@ -88,7 +88,7 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		ReadWrite.setZipThreads(Shared.threads());
 		
 		samFilter.includeUnmapped=false;
-		samFilter.includeSupplimentary=false;
+		samFilter.includeSupplementary=false;
 		samFilter.includeDuplicate=false;
 		samFilter.includeNonPrimary=false;
 		samFilter.includeQfail=false;
@@ -289,13 +289,16 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		}
 	}
 	
+	/**
+	 * Processes SAM/BAM alignment files to extract coverage and taxonomic information
+	 */
 	private void processSam() {
 
 		for(int i=0; i<in.size(); i++) {
 			FileFormat ffin=FileFormat.testInput(in.get(i), FileFormat.SAM, extin, true, true);
 
 			//Create a read input stream
-			SamStreamer ss=makeStreamer(ffin);
+			Streamer ss=makeStreamer(ffin);
 
 			if(scafMap.isEmpty()) {scafMap=makeScafMap();}
 
@@ -309,6 +312,9 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		}
 	}
 	
+	/**
+	 * Processes CAMI format taxonomic profile files to extract contig annotations
+	 */
 	private void processCami() {
 		LineParser1 lp=new LineParser1('\t');
 		ArrayList<byte[]> lines=ByteFile.toLines(cami);
@@ -329,6 +335,8 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		}
 	}
 	
+	/** Creates input stream for reading reference contigs.
+	 * @return Configured input stream for reference file */
 	private ConcurrentReadInputStream makeRefCris(){
 		ConcurrentReadInputStream cris=ConcurrentReadInputStream.getReadInputStream(maxReads, true, ffref, null);
 		cris.start(); //Start the stream
@@ -338,14 +346,19 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		return cris;
 	}
 	
-	private SamStreamer makeStreamer(FileFormat ff){
+	private Streamer makeStreamer(FileFormat ff){
 		if(ff==null){return null;}
-		SamStreamer ss=new SamLineStreamer(ff, streamerThreads, true, maxReads);
+		Streamer ss=StreamerFactory.makeSamOrBamStreamer(ff, streamerThreads, true, false, maxReads, false);
 		ss.start(); //Start the stream
 		if(verbose){outstream.println("Started Streamer");}
 		return ss;
 	}
 	
+	/**
+	 * Creates scaffold map from SAM header @SQ lines.
+	 * Parses scaffold names and lengths from the header.
+	 * @return Map of scaffold names to Scaf objects
+	 */
 	private static HashMap<String, Scaf> makeScafMap() {
 		//@SQ	SN:foo	LN:999
 		LineParser4 lp=new LineParser4("\t:\t:");
@@ -366,6 +379,8 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		return map;
 	}
 	
+	/** Creates output stream for writing renamed contigs.
+	 * @return Configured output stream or null if no output specified */
 	private ConcurrentReadOutputStream makeCros(){
 		if(ffout==null){return null;}
 
@@ -382,7 +397,7 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 	/*--------------------------------------------------------------*/
 	
 	/** Spawn process threads */
-	private void spawnThreads(final SamStreamer ss){
+	private void spawnThreads(final Streamer ss){
 		
 		//Do anything necessary prior to processing
 		
@@ -422,6 +437,7 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 	/*----------------         Inner Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Reads reference contigs and outputs them with renamed headers */
 	private void processReference(){
 		ConcurrentReadInputStream cris=makeRefCris();
 		ConcurrentReadOutputStream ros=makeCros();
@@ -448,11 +464,21 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		errorState|=ReadWrite.closeStreams(cris, ros);
 	}
 	
+	/**
+	 * Extracts the first word from a string, up to the first whitespace.
+	 * @param s Input string
+	 * @return Substring up to first whitespace, or entire string if no whitespace found
+	 */
 	static String toShortName(String s) {
 		int idx=Tools.indexOfWhitespace(s);
 		return idx<0 ? s : s.substring(0, idx);
 	}
 	
+	/**
+	 * Extracts the first word from a byte array, up to the first whitespace.
+	 * @param s Input byte array
+	 * @return String up to first whitespace, or entire array if no whitespace found
+	 */
 	static String toShortName(byte[] s) {
 		int idx=Tools.indexOfWhitespace(s);
 		return idx<0 ? new String(s) : new String(s, 0, idx);
@@ -504,7 +530,7 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 	class ProcessThread extends Thread {
 		
 		//Constructor
-		ProcessThread(final SamStreamer ss_, final int tid_){
+		ProcessThread(final Streamer ss_, final int tid_){
 			ss=ss_;
 			tid=tid_;
 		}
@@ -535,6 +561,11 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 			
 		}
 		
+		/**
+		 * Processes a list of SAM alignment records.
+		 * Updates counters and adds alignments to scaffold data.
+		 * @param ln List of SamLine records to process
+		 */
 		void processList(ListNum<SamLine> ln){
 
 			//Grab the actual read list from the ListNum
@@ -555,6 +586,8 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 			}
 		}
 		
+		/** Adds alignment record to the appropriate scaffold if it passes filters.
+		 * @param sl SamLine alignment record to process */
 		private void addLine(SamLine sl) {
 			if(samFilter!=null && !samFilter.passesFilter(sl)){return;}
 			String key=sl.rnameS();
@@ -572,24 +605,42 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 		boolean success=false;
 		
 		/** Shared input stream */
-		private final SamStreamer ss;
+		private final Streamer ss;
 		/** Thread ID */
 		final int tid;
 	}
 	
+	/**
+	 * Represents a scaffold/contig with associated mapping statistics.
+	 * Accumulates coverage data and taxonomic information from aligned reads.
+	 * Thread-safe for concurrent access during processing.
+	 */
 	private static class Scaf {
 		
+		/**
+		 * Constructs scaffold object with name and length.
+		 * @param shortName_ Scaffold name
+		 * @param length_ Scaffold length in bases
+		 */
 		Scaf(String shortName_, int length_) {
 			name=shortName_;
 			length=length_;
 		}
 		
+		/**
+		 * Adds alignment record to this scaffold's statistics.
+		 * Extracts taxonomic ID and increments coverage counters.
+		 * @param sl Alignment record to add
+		 */
 		void add(SamLine sl) {
 			int taxid=TaxTree.parseHeaderStatic2(sl.qname, null);
 			int length=sl.length();
 			synchronized(this) {map.increment(taxid, length);}
 		}
 		
+		/**
+		 * Calculates final coverage statistics and determines dominant taxonomic assignment
+		 */
 		void process() {
 			
 			final int[] keys=map.keys();
@@ -615,11 +666,16 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 			covList.add(cov);
 		}
 		
+		/** Scaffold name */
 		final String name;
+		/** Scaffold length in bases */
 		final int length;
 		
+		/** Maps taxonomic IDs to total mapped bases */
 		IntLongHashMap map=new IntLongHashMap(7);
+		/** List of taxonomic IDs assigned to this scaffold */
 		IntList tidList=new IntList(2);
+		/** List of coverage values for this scaffold */
 		FloatList covList=new FloatList(2);
 		
 	}
@@ -633,6 +689,7 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 	/** Contig input file path */
 	private String ref=null;
 
+	/** CAMI format input file path */
 	private String cami=null;
 	
 	/** Primary output file path */
@@ -658,22 +715,29 @@ public class ContigRenamer implements Accumulator<ContigRenamer.ProcessThread> {
 	/** Quit after processing this many input reads; -1 means no limit */
 	private long maxReads=-1;
 
+	/** Delimiter string used between contig name and annotations */
 	private String delimiter=" ";
+	/** If true, replace original contig names with generic names */
 	private boolean wipe=false;
+	/** If true, append coverage information to contig names */
 	private boolean addDepth=true;
+	/** If true, append taxonomic ID information to contig names */
 	private boolean addTid=true;
 	
 	/*--------------------------------------------------------------*/
 	
 	/** Threads dedicated to reading the sam file */
-	private int streamerThreads=SamStreamer.DEFAULT_THREADS;
+	private int streamerThreads=-1;
 	
+	/** Filter for SAM alignment records */
 	public final SamFilter samFilter=new SamFilter();
 	
+	/** Map of scaffold names to Scaf objects for tracking statistics */
 	public HashMap<String, Scaf> scafMap=new HashMap<String, Scaf>();
 	
 	@Override
 	public final ReadWriteLock rwlock() {return rwlock;}
+	/** Read-write lock for thread synchronization */
 	private final ReadWriteLock rwlock=new ReentrantReadWriteLock();
 	
 	/*--------------------------------------------------------------*/

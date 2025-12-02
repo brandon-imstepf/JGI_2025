@@ -19,7 +19,7 @@ in=<file>           Input reads.
 in2=<file>          Use this if 2nd read of pairs are in a different file.
 path=null           Set to the directory to use for all output files.
 
-Reference file paths:
+Reference file path parameters:
 rqcfilterdata=      Path to unzipped RQCFilterData directory.  Default is /global/projectb/sandbox/gaag/bbtools/RQCFilterData
 ref=<file,file>     Comma-delimited list of additional reference files for filtering via BBDuk.
 
@@ -188,6 +188,7 @@ chastityfilter=t    Remove reads failing chastity filter.
 barcodefilter=f     Crash when improper barcodes are discovered.  Set to 'f' to disable,
                     't' to remove improper barcodes, or 'crash' to crash if they are discovered.
 barcodes=           A comma-delimited list of barcodes or files of barcodes.
+filterbytile        Also needs to be disabled for SRA data.
 
 Java Parameters:
 -Xmx                This will set Java's memory usage, overriding autodetection.
@@ -200,6 +201,7 @@ Java Parameters:
 *****   All additional parameters supported by BBDuk may also be used, and will be passed directly to BBDuk   *****
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -271,7 +273,7 @@ rqcfilter() {
 		module load java/1.8.0_144
 		module load pigz
 	fi
-	local CMD="java $EA $EOOM $z $z2 $JNI -cp $CP jgi.RQCFilter2 jni=t $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 $JNI -cp $CP jgi.RQCFilter2 jni=t $@"
 	echo $CMD >&2
 	eval $CMD
 }

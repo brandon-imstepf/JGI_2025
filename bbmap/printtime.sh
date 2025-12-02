@@ -10,6 +10,7 @@ Description:    Prints time elapsed since last called on the same file.
 Usage:          printtime.sh <filename>
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -41,7 +42,7 @@ calcXmx () {
 calcXmx "$@"
 
 function printtime() {
-	local CMD="java $EA $EOOM -Xmx8m -cp $CP align2.PrintTime $@"
+	local CMD="java $EA $SIMD $EOOM -Xmx8m -cp $CP align2.PrintTime $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -12,7 +12,7 @@ Usage:  loglog.sh in=<file> k=<31>
 
 Parameters:
 in=<file>       (in1) Input file, or comma-delimited list of files.
-in2=<file>      ptional second file for paired reads.
+in2=<file>      Optional second file for paired reads.
 k=31            Use this kmer length for counting.
 buckets=2048    Use this many buckets for counting; higher decreases
                 variance, for large datasets.  Must be a power of 2.
@@ -42,6 +42,7 @@ Supported compression formats are gzip and bz2.
 To read from stdin, set 'in=stdin'.  The format should be specified with an extension, like 'in=stdin.fq.gz'
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -75,7 +76,7 @@ calcXmx () {
 calcXmx "$@"
 
 function loglog() {
-	local CMD="java $EA $EOOM $z -cp $CP cardinality.LogLogWrapper $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP cardinality.LogLogWrapper $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -39,6 +39,7 @@ ins=f           Consider bad insertions.
 del=f           Consider bad deletions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -79,7 +80,7 @@ calcXmx () {
 calcXmx "$@"
 
 filtersam() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP var2.FilterSam $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP var2.FilterSam $@"
 #	echo $CMD >&2
 	eval $CMD
 }

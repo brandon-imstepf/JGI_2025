@@ -33,6 +33,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -67,7 +68,7 @@ calcXmx () {
 calcXmx "$@"
 
 function analyzesketchresults() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.AnalyzeSketchResults $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.AnalyzeSketchResults $@"
 	echo $CMD >&2
 	eval $CMD
 }

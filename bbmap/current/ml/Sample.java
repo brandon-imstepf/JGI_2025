@@ -75,13 +75,17 @@ public class Sample implements Comparable<Sample> {
 		for(int i=0; i<result.length; i++){
 			float r=result[i];
 			float g=goal[i];
-			float e=calcError(g, r);
+			float e=LossFunctions.loss(g, r);
 			assert(e>=0);
 			error+=e;
 		}
 		errorMagnitude=(float)error;
 		assert(error>=0);
-		weightedErrorMagnitude=Cell.toWeightedError(error, result[0], goal[0], weightMult);
+		if(LossFunctions.useLegacyWeighting()) {
+			weightedErrorMagnitude=Cell.toWeightedError(errorMagnitude, result[0], goal[0], weightMult);
+		}else {
+			weightedErrorMagnitude=errorMagnitude;
+		}
 		assert(weightedErrorMagnitude>=0);
 	}
 	
@@ -96,8 +100,7 @@ public class Sample implements Comparable<Sample> {
 	}
 	
 	public static final float calcError(float goal, float pred) {
-		float e=goal-pred;
-		return 0.5f*e*e;
+		return LossFunctions.loss(goal, pred);
 	}
 
 	final boolean positive;

@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import structures.IntList;
 
@@ -12,7 +13,7 @@ import structures.IntList;
  *Limited to length 2Mbp with 21 position bits.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2024
  */
 public class IntListAligner implements IDAligner{
@@ -21,6 +22,7 @@ public class IntListAligner implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Creates a new IntListAligner instance */
 	public IntListAligner() {}
 	
 	/*--------------------------------------------------------------*/
@@ -60,6 +62,7 @@ public class IntListAligner implements IDAligner{
 	    assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 	    final int qLen=query.length;
 	    final int refLen=ref.length;
+	    long mloops=0;
 
 	    // Banding parameters
 	    final int bandWidth=Math.min(200, 1+Math.max(qLen, refLen)/4);
@@ -140,7 +143,7 @@ public class IntListAligner implements IDAligner{
 	               (nextActivePositions.size==0 || nextActivePositions.array[nextActivePositions.size-1] < j+1)) {
 	                nextActivePositions.add(j+1);
 	            }
-	        	loops++;
+	        	mloops++;
 				
 	            // Track best score in last row
 	            final boolean better=(i == qLen && (maxValue&SCORE_MASK)>maxScore);
@@ -205,32 +208,52 @@ public class IntListAligner implements IDAligner{
 		return id;
 	}
 	
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Thread-safe counter for tracking total alignment loops performed */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the total number of alignment loops performed */
+	public long loops() {return loops.get();}
+	/** Sets the alignment loop counter.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output string for debugging or logging purposes */
+	public static String output=null;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits used to encode position information in packed long values */
 	private static final int POSITION_BITS=21;
+	/** Number of bits used to encode deletion count in packed long values */
 	private static final int DEL_BITS=21;
+	/** Bit shift value for extracting score from packed long values */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 	
 	// Masks
+	/** Bit mask for extracting position information from packed long values */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed long values */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting alignment score from packed long values */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score value for matching bases in alignment */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for mismatched bases in alignment */
 	private static final long MISMATCH=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertion operations in alignment */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deletion operations in alignment */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score value for alignments involving ambiguous N bases */
 	private static final long N_SCORE=0L;
+	/** Score value representing invalid or bad alignment states */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Increment value for tracking deletion counts in packed scoring */
 	private static final long DEL_INCREMENT=1L<<POSITION_BITS;
+	/** Combined deletion increment and penalty for efficient calculation */
 	private static final long DEL_INCREMENT2=DEL_INCREMENT+DEL;
 
 }

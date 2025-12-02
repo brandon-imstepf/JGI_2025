@@ -1,11 +1,26 @@
 package aligner;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 import shared.Tools;
 
+/**
+ * Legacy implementation of local sequence alignment using dynamic programming.
+ * Implements Smith-Waterman-style algorithm for computing sequence identity.
+ * Uses dual-direction alignment (query-to-ref and ref-to-query) for optimal results.
+ * @author Brian Bushnell
+ */
 public final class GlocalAlignerOld implements IDAligner {
 	
+	/** Creates a new GlocalAlignerOld instance */
 	public GlocalAlignerOld() {}
 
+    /**
+     * Entry point for command-line alignment testing.
+     * With 2 args: aligns the provided sequences.
+     * With no args: runs demo alignment on 3 hardcoded test sequences.
+     * @param args Command-line arguments (0 or 2 sequences expected)
+     */
     public static void main(String[] args) {
 	    
 	    if (args.length == 2) {
@@ -42,10 +57,15 @@ public final class GlocalAlignerOld implements IDAligner {
 		return Tools.max(a, b);
 	}
 	
-	@Override
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
+	/** Thread-safe counter for tracking alignment loop iterations */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the current loop counter value */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter to specified value.
+	 * @param x New loop counter value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Output string for debugging or result storage */
+	public static String output=null;
 	
 	/**
 	 * @param query
@@ -166,9 +186,13 @@ public final class GlocalAlignerOld implements IDAligner {
 	/*----------------           Constants          ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Score awarded for matching bases in alignment */
 	public static final short pointsMatch = 1;
+	/** Score penalty for substitution (mismatch) in alignment */
 	public static final short pointsSub = -1;
+	/** Score penalty for deletion in alignment */
 	public static final short pointsDel = -1;
+	/** Score penalty for insertion in alignment */
 	public static final short pointsIns = -1;
 	
 }

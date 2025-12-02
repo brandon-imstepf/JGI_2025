@@ -14,10 +14,11 @@ Or:           stats3.sh file file file
 
 Parameters:
 in=file         Specify the input fasta file(s), or stdin.
-                Multiple files can be lested without a 'in=' flag.
+                Multiple files can be listed without a 'in=' flag.
 out=stdout      Destination of primary output; may be directed to a file.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -51,7 +52,7 @@ calcXmx () {
 calcXmx "$@"
 
 stats() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.AssemblyStats3 $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.AssemblyStats3 $@"
 #	echo $CMD >&2
 	eval $CMD
 }

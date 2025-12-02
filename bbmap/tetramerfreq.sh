@@ -10,7 +10,7 @@ DNA tetramers are counted for each sub-sequence of window size in the sequence.
 The window slides along the sequence by the step length.
 Sub-sequence shorter than the window size is ignored. Tetramers containing N are ignored. 
 
-Usage: TetramerFreq.sh in=<input file> out=<output file> step=500 window=2000
+Usage: tetramerfreq.sh in=<input file> out=<output file> step=500 window=2000
 
 Input may be fasta or fastq, compressed or uncompressed.
 
@@ -34,6 +34,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -75,7 +76,7 @@ calcXmx () {
 calcXmx "$@"
 
 tetramerfreq() {
-	local CMD="java $EA $EOOM $XMX -cp $CP jgi.TetramerFrequencies $@"
+	local CMD="java $EA $SIMD $EOOM $XMX -cp $CP jgi.TetramerFrequencies $@"
 	echo $CMD >&2
 	eval $CMD
 }

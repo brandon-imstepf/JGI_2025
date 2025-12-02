@@ -61,7 +61,6 @@ crashjunk=t             Crash when encountering reads with invalid bases.
 tossjunk=f              Discard reads with invalid characters as bases.
 fixjunk=f               Convert invalid bases to N (or X for amino acids).
 dotdashxton=f           Specifically convert . - and X to N (or X for amino acids).
-fixheaders=f            Convert nonstandard header characters to standard ASCII.
 recalibrate=f           (recal) Recalibrate quality scores.  Must first generate matrices with CalcTrueQuality.
 maxcalledquality=41     Quality scores capped at this upper bound.
 mincalledquality=2      Quality scores of ACGT bases will be capped at lower bound.
@@ -90,7 +89,7 @@ gcplot=f                Add a graphical representation to the gchist.
 maxhistlen=6000         Set an upper bound for histogram lengths; higher uses more memory.
                         The default is 6000 for some histograms and 80000 for others.
 
-Histograms for sam files only (requires sam format 1.4 or higher):
+Histogram parameters for sam files only (requires sam format 1.4 or higher):
 
 ehist=<file>            Errors-per-read histogram.
 qahist=<file>           Quality accuracy histogram of error rates versus quality score.
@@ -157,7 +156,7 @@ Illumina-specific parameters:
 top=true                Include reads from the top of the flowcell.
 bottom=true             Include reads from the bottom of the flowcell.
 
-Sam and bam processing options:
+Sam and bam processing parameters:
 
 mappedonly=f            Toss unmapped reads.
 unmappedonly=f          Toss mapped reads.
@@ -172,7 +171,7 @@ stoptag=f               Set to true to write a tag indicating read stop location
 sam=                    Set to 'sam=1.3' to convert '=' and 'X' cigar symbols (from sam 1.4+ format) to 'M'.
                         Set to 'sam=1.4' to convert 'M' to '=' and 'X' (sam=1.4 requires MD tags to be present, or ref to be specified).
 
-Sam and bam alignment filtering options:
+Sam and bam alignment filtering parameters:
 These require = and X symbols in cigar strings, or MD tags, or a reference fasta.
 -1 means disabled; to filter reads with any of a symbol type, set to 0.
 
@@ -188,7 +187,7 @@ minidfilter=-1.0        Discard reads with identity below this (0-1).
 maxidfilter=1.0         Discard reads with identity above this (0-1).
 clipfilter=-1           Discard reads with more than this many soft-clipped bases.
 
-Kmer counting and cardinality estimation:
+Kmer counting and cardinality estimation parameters:
 k=0                     If positive, count the total number of kmers.
 cardinality=f           (loglog) Count unique kmers using the LogLog algorithm.
 loglogbuckets=1999      Use this many buckets for cardinality estimation.
@@ -208,6 +207,7 @@ Java Parameters:
 -da                     Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -242,7 +242,7 @@ calcXmx () {
 calcXmx "$@"
 
 function reformat() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.ReformatReads $@"
+	local CMD="java $EA $EOOM $z $z2 $SIMD -cp $CP jgi.ReformatReads $@"
 	echo $CMD >&2
 	eval $CMD
 }

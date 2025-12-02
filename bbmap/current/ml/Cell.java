@@ -56,8 +56,7 @@ public class Cell extends Source {
 	}
 	
 	public float calcError(float ideal) {
-		float e=ideal-value();
-		return 0.5f*e*e;
+		return LossFunctions.loss(ideal, value());
 	}
 	
 	synchronized public boolean check() {
@@ -558,9 +557,11 @@ public class Cell extends Source {
 	}
 	
 	public static float calcETotalOverOut(float v, float target, float weightMult) {
-		float eTotalOverOut=v-target; //Aka out-target
-		final float ret=toWeightedError(eTotalOverOut, v, target, weightMult);
-		return ret;
+		final float gradient=LossFunctions.gradient(v, target);
+		if(LossFunctions.useLegacyWeighting()) {
+			return toWeightedError(gradient, v, target, weightMult);
+		}
+		return gradient*weightMult;
 	}
 	
 	public static void setLowWeightAnnealCutoff(float c) {

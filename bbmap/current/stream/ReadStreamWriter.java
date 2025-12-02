@@ -2,7 +2,6 @@ package stream;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 
@@ -11,9 +10,15 @@ import fileIO.FileFormat;
 import fileIO.ReadWrite;
 import shared.KillSwitch;
 import shared.Shared;
-import shared.Tools;
 import structures.ByteBuilder;
+import structures.ListNum;
 
+/**
+ * Abstract base class for writing read data to various file formats in a separate thread.
+ * Supports output to FASTQ, FASTA, SAM/BAM, and other formats with buffered writing.
+ * Uses a producer-consumer pattern with a blocking queue for thread-safe operation.
+ * @author Brian Bushnell
+ */
 public abstract class ReadStreamWriter extends Thread {
 	
 	
@@ -22,8 +27,8 @@ public abstract class ReadStreamWriter extends Thread {
 	/*--------------------------------------------------------------*/
 	
 	
-	protected ReadStreamWriter(FileFormat ff, String qfname_, boolean read1_, int bufferSize, CharSequence header,
-			boolean makeWriter, boolean buffered, boolean useSharedHeader){
+	protected ReadStreamWriter(FileFormat ff, String qfname_, boolean read1_, int bufferSize, 
+			CharSequence header, boolean buffered, boolean useSharedHeader){
 //		assert(false) : useSharedHeader+", "+header;
 		assert(ff!=null);
 		assert(ff.write()) : "FileFormat is not in write mode for "+ff.name();
@@ -49,54 +54,34 @@ public abstract class ReadStreamWriter extends Thread {
 		qfname=qfname_;
 		read1=read1_;
 		allowSubprocess=ff.allowSubprocess();
+		boolean append=ff.append();
 //		assert(fname==null || (fname.contains(".sam") || fname.contains(".bam"))==OUTPUT_SAM) : "Outfile name and sam output mode flag disagree: "+fname;
 		assert(read1 || !OUTPUT_SAM) : "Attempting to output paired reads to different sam files.";
 		
 		if(qfname==null){
 			myQOutstream=null;
-			myQWriter=null;
 		}else{
 			myQOutstream=ReadWrite.getOutputStream(qfname, (ff==null ? false : ff.append()), buffered, allowSubprocess);
-			myQWriter=(makeWriter ? new PrintWriter(myQOutstream) : null);
 		}
-		
-		if(header==null){header=HEADER;} //new line; test.
-		
+
+		final boolean supressHeader=(NO_HEADER || (ff.append() && ff.exists()));
+		final boolean supressHeaderSequences=(NO_HEADER_SEQUENCES || supressHeader);
+		final boolean RSSamWriter=ff.samOrBam() && ReadWrite.USE_READ_STREAM_SAM_WRITER;
 		
 		if(fname==null && !OUTPUT_STANDARD_OUT){
 			myOutstream=null;
-			myWriter=null;
+		}else if(RSSamWriter) {
+			myOutstream=null;
 		}else{
 			if(OUTPUT_STANDARD_OUT){myOutstream=System.out;}
-			else if(!OUTPUT_BAM || !(Data.SAMTOOLS() /*|| Data.SAMBAMBA()*/) /*|| !Data.SH()*/){
-				myOutstream=ReadWrite.getOutputStream(ff, buffered);
+			
+			else if(!ff.bam() || !Data.BAM_SUPPORT_OUT()){
+				myOutstream=ReadWrite.getOutputStream(fname, append, buffered, allowSubprocess);
 			}else{
-				if(!allowSubprocess){System.err.println("Warning! Spawning a samtools process when allowSubprocess="+allowSubprocess);}
-				String command;
-				if(Data.SAMTOOLS()){
-					command="samtools view -S -b -h - ";
-					int threads=Tools.min(ReadWrite.MAX_ZIP_THREADS(), Shared.threads(), ReadWrite.MAX_SAMTOOLS_THREADS);
-					if(threads>1){
-						command="samtools view -S -b -h -@ "+threads+" - ";
-					}
-				}else{
-					command= "sambamba view -S -f bam -h "; //Sambamba does not support stdin
-				}
-				myOutstream=ReadWrite.getOutputStreamFromProcess(fname, command, true, ff.append(), true, true);
+				myOutstream=ReadWrite.getBamOutputStream(fname, append);
 			}
 			
-			
-			
-			myWriter=(makeWriter ? new PrintWriter(myOutstream) : null);
-			
-			final boolean supressHeader=(NO_HEADER || (ff.append() && ff.exists()));
-			final boolean supressHeaderSequences=(NO_HEADER_SEQUENCES);
-//			assert(false) : ff.append()+", "+ff.exists();
-			
 			if(header!=null && !supressHeader){
-				if(myWriter!=null){
-					myWriter.println(header);
-				}else{
 					byte[] temp=new byte[header.length()];
 					for(int i=0; i<temp.length; i++){temp[i]=(byte)header.charAt(i);}
 					try {
@@ -105,7 +90,6 @@ public abstract class ReadStreamWriter extends Thread {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
-				}
 			}else if(OUTPUT_SAM && !supressHeader){
 				if(useSharedHeader){
 //					assert(false);
@@ -126,7 +110,6 @@ public abstract class ReadStreamWriter extends Thread {
 								for(byte[] line : list){
 									myOutstream.write(line);
 									myOutstream.write('\n');
-									//myWriter.println(new String(line));
 								}
 							}
 						} catch (IOException e) {
@@ -135,16 +118,6 @@ public abstract class ReadStreamWriter extends Thread {
 						}
 					}
 				}else{
-					if(myWriter!=null){
-						myWriter.println(SamHeader.header0());
-						int a=(MINCHROM==-1 ? 1 : MINCHROM);
-						int b=(MAXCHROM==-1 ? Data.numChroms : MAXCHROM);
-						for(int chrom=a; chrom<=b; chrom++){
-							//					myWriter.print(SamHeader.header1(chrom, chrom));
-							SamHeader.printHeader1(chrom, chrom, myWriter);
-						}
-						myWriter.println(SamHeader.header2());
-					}else{
 						ByteBuilder bb=new ByteBuilder(4096);
 						SamHeader.header0B(bb);
 						bb.nl();
@@ -164,18 +137,13 @@ public abstract class ReadStreamWriter extends Thread {
 						} catch (IOException e) {
 							KillSwitch.exceptionKill(e);
 						}
-					}
 				}
 			}else if(ff.bread() && !supressHeader){
-				if(myWriter!=null){
-					myWriter.println("#"+Read.header());
-				}else{
 					try {
 						myOutstream.write(("#"+Read.header()).getBytes());
 					} catch (IOException e) {
 						KillSwitch.exceptionKill(e);
 					}
-				}
 			}
 		}
 		
@@ -183,36 +151,39 @@ public abstract class ReadStreamWriter extends Thread {
 		queue=new ArrayBlockingQueue<Job>(bufferSize);
 	}
 	
-	
 	/*--------------------------------------------------------------*/
 	/*----------------         Outer Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
-
 	@Override
 	public abstract void run();
 
-	/** Uses this thread to transform reads to text, and the ReadStreamWriter thread to write text to disk */
-	public final synchronized void addListAsText(ArrayList<Read> list){
-		assert(false) : "TODO";
-		addList(list, myWriter, myOutstream, false);
-	}
-
+	/** Sends a poison pill to shutdown the writer thread gracefully.
+	 * Creates a job that signals the thread to terminate and close streams. */
 	public final synchronized void poison(){
-		addJob(new Job(null, null, null, false, true));
+		addJob(new Job(null, false, true, nextID++));
 	}
 
+	public final synchronized void addList(ListNum<Read> ln){
+		assert(ln.id==nextID) : ln.id+", "+nextID;
+		Job j=new Job(ln.list, ln.last(), ln.poison(), ln.id);
+		nextID=ln.id+1;
+		addJob(j);
+	}
+
+	/** Adds a list of reads to the write queue using default output streams.
+	 * @param list List of reads to write */
 	public final synchronized void addList(ArrayList<Read> list){
-		addList(list, myWriter, myOutstream, false);
-	}
-
-	public final synchronized void addList(ArrayList<Read> l, PrintWriter w, OutputStream o, boolean c){
-		boolean poison=(c && w!=null && w==myWriter);
-		Job j=new Job(l, w, o, c, poison);
+		Job j=new Job(list, false, false, nextID++);
 		addJob(j);
 	}
 	
-	public final synchronized void addJob(Job j){
+	/**
+	 * Adds a job to the write queue, blocking until space is available.
+	 * Handles InterruptedException by retrying the operation.
+	 * @param j Job containing read list and output configuration
+	 */
+	private final synchronized void addJob(Job j){
 //		System.err.println("Got job "+(j.list==null ? "null" : j.list.size()));
 		boolean success=false;
 		while(!success){
@@ -232,7 +203,8 @@ public abstract class ReadStreamWriter extends Thread {
 	/*----------------         Inner Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	protected static final ByteBuilder toQualityB(final byte[] quals, final int len, final int wrap, final ByteBuilder bb){
+	protected static final ByteBuilder toQualityB(final byte[] quals, final int len, 
+			final int wrap, final ByteBuilder bb){
 		if(quals==null){return fakeQualityB(30, len, wrap, bb);}
 		assert(quals.length==len);
 		bb.ensureExtra(NUMERIC_QUAL ? len*3+1 : len+1);
@@ -256,10 +228,10 @@ public abstract class ReadStreamWriter extends Thread {
 		return bb;
 	}
 	
-	protected static final ByteBuilder fakeQualityB(final int q, final int len, final int wrap, final ByteBuilder bb){
+	protected static final ByteBuilder fakeQualityB(final int q, final int len, 
+			final int wrap, final ByteBuilder bb){
 		bb.ensureExtra(NUMERIC_QUAL ? len*3+1 : len+1);
 		if(NUMERIC_QUAL){
-			int c=(q+FASTQ.ASCII_OFFSET_OUT);
 			if(len>0){bb.append(q);}
 			for(int i=1, w=1; i<len; i++, w++){
 				if(w>=wrap){
@@ -283,8 +255,11 @@ public abstract class ReadStreamWriter extends Thread {
 	/*--------------------------------------------------------------*/
 	
 	
+	/** Returns the output file name */
 	public String fname(){return fname;}
+	/** Returns the number of reads written to output */
 	public long readsWritten(){return readsWritten;}
+	/** Returns the number of bases written to output */
 	public long basesWritten(){return basesWritten;}
 
 	/** Return true if this stream has detected an error */
@@ -299,51 +274,80 @@ public abstract class ReadStreamWriter extends Thread {
 	
 	/** TODO */
 	protected boolean errorState=false;
+	/** Flag indicating if writing finished without errors */
 	protected boolean finishedSuccessfully=false;
 	
+	/** True if output format is SAM */
 	public final boolean OUTPUT_SAM;
+	/** True if output format is BAM */
 	public final boolean OUTPUT_BAM;
+	/** True if output format is FASTQ */
 	public final boolean OUTPUT_FASTQ;
+	/** True if output format is FASTA */
 	public final boolean OUTPUT_FASTA;
+	/** True if output format is FASTR */
 	public final boolean OUTPUT_FASTR;
+	/** True if output format includes header information */
 	public final boolean OUTPUT_HEADER;
+	/** True if output format supports attachments */
 	public final boolean OUTPUT_ATTACHMENT;
+	/** True if output format uses single-line format */
 	public final boolean OUTPUT_ONELINE;
+	/** True if writing to standard output */
 	public final boolean OUTPUT_STANDARD_OUT;
+	/** True if outputting sites information only */
 	public final boolean SITES_ONLY;
+	/** True if output format is interleaved */
 	public boolean OUTPUT_INTERLEAVED=false;
 	
+	/** Line wrap length for FASTA format output */
 	protected final int FASTA_WRAP;
 	
+	/** Whether to allow spawning external processes like samtools */
 	protected final boolean allowSubprocess;
 	
+	/** True if processing first reads in pairs */
 	protected final boolean read1;
+	/** Output file name */
 	protected final String fname;
+	/** Quality output file name */
 	protected final String qfname;
+	/** Primary output stream */
 	protected final OutputStream myOutstream;
-	protected final PrintWriter myWriter;
+	/** Quality output stream */
 	protected final OutputStream myQOutstream;
-	protected final PrintWriter myQWriter;
+	/** Thread-safe queue for write jobs */
 	protected final ArrayBlockingQueue<Job> queue;
 	
+	/** Count of reads written to output */
 	protected long readsWritten=0;
+	/** Count of bases written to output */
 	protected long basesWritten=0;
+	protected long nextID=0;
 	
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Static Fields        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Minimum chromosome number for SAM header generation */
 	public static int MINCHROM=-1; //For generating sam header
+	/** Maximum chromosome number for SAM header generation */
 	public static int MAXCHROM=-1; //For generating sam header
-	public static CharSequence HEADER;
+	/** True to output quality scores in numeric format instead of ASCII */
 	public static boolean NUMERIC_QUAL=true;
+	/** True to output secondary alignments in SAM format */
 	public static boolean OUTPUT_SAM_SECONDARY_ALIGNMENTS=false;
 	
+	/** True to ignore assertions about read pairing */
 	public static boolean ignorePairAssertions=false;
+	/** True to enable CIGAR string validation assertions */
 	public static boolean ASSERT_CIGAR=false;
+	/** True to suppress header output */
 	public static boolean NO_HEADER=false;
+	/** True to suppress sequence information in headers */
 	public static boolean NO_HEADER_SEQUENCES=false;
+	/** True to use attached SAM line information */
 	public static boolean USE_ATTACHED_SAMLINE=false;
 	
 	
@@ -351,29 +355,39 @@ public abstract class ReadStreamWriter extends Thread {
 	/*----------------         Inner Classes        ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	
-	protected static class Job{
+	//TODO: Should be replaced with ListNum
+	protected static class Job implements HasID{
 		
-		public Job(ArrayList<Read> list_, PrintWriter writer_, OutputStream outstream_, boolean closeWhenDone_,
-				boolean shutdownThread_){
+		public Job(ArrayList<Read> list_, boolean closeWhenDone_,
+				boolean poisonThread_, long id_){
 			list=list_;
-			writer=writer_;
-			outstream=outstream_;
 			close=closeWhenDone_;
-			poison=shutdownThread_;
-		}
-		public Job(ArrayList<Read> list_, PrintWriter writer_){
-			this(list_, writer_, null, false, false);
+			poison=poisonThread_;
+			id=id_;
 		}
 		
 		/*--------------------------------------------------------------*/
 		
+		/** Checks if this job has no reads to process.
+		 * @return true if read list is null or empty */
 		public boolean isEmpty(){return list==null || list.isEmpty();}
+		/** List of reads to write */
 		public final ArrayList<Read> list;
-		public final PrintWriter writer;
-		public final OutputStream outstream;
+		/** Whether to close streams after processing this job */
 		public final boolean close;
+		/** Whether this job should shutdown the writer thread */
 		public final boolean poison;
+		public final long id;
+		@Override
+		public long id(){return id;}
+		@Override
+		public boolean poison(){return poison;}
+		@Override
+		public boolean last(){return close;}
+		@Override
+		public Job makePoison(long id_){return new Job(null, false, true, id_);}
+		@Override
+		public Job makeLast(long id_){return new Job(null, true, false, id_);}
 		
 	}
 	

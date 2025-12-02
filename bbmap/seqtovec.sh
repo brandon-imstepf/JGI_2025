@@ -8,7 +8,7 @@ Last modified January 29, 2024
 Description:  Generates vectors from sequence.
 These can be one-hot 4-bit vectors, or kmer frequency spectra.
 
-Usage:  sectovec.sh in=<sequence data> out=<text vectors>
+Usage:  seqtovec.sh in=<sequence data> out=<text vectors>
 
 Input may be fasta or fastq, compressed or uncompressed.
 
@@ -46,6 +46,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -80,7 +81,7 @@ calcXmx () {
 calcXmx "$@"
 
 seqtovec() {
-	local CMD="java $EA $EOOM $z -cp $CP ml.SequenceToVector $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP ml.SequenceToVector $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -8,8 +8,11 @@ Description:  Shreds sequences into shorter, possibly overlapping sequences.
 
 Usage: shred.sh in=<file> out=<file> length=<int>
 
+File Parameters:
 in=<file>       Input sequences.
 out=<file>      Destination of output shreds.
+
+Processing Parameters:
 length=500      Desired length of shreds if a uniform length is desired.
 minlen=-1       Shortest allowed shred.  The last shred of each input sequence
                 may be shorter than desired length if this is not set.
@@ -29,6 +32,7 @@ filetid=f       Name shreds with a tid parsed from the filename (e.g. tid_5).
 headertid=f     Name shreds with a tid parsed from sequence headers.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -62,7 +66,7 @@ calcXmx () {
 calcXmx "$@"
 
 stats() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.Shred $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP synth.Shred $@"
 #	echo $CMD >&2
 	eval $CMD
 }

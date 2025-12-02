@@ -29,6 +29,7 @@ remap=-+        Remap symbols in the barcode.  By default, '+' replaces '-'.
                 To eliminate this set 'remap=null'.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -63,7 +64,7 @@ calcXmx () {
 calcXmx "$@"
 
 function tagandmerge() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP barcode.TagAndMerge $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP barcode.TagAndMerge $@"
 	echo $CMD >&2
 	eval $CMD
 }

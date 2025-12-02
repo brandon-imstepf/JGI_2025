@@ -4,11 +4,11 @@ usage(){
 echo "
 Last modified February 13, 2020
 
-Description:  Wrapper for BBMap to allow multiple input and output files for the same reference.
+Description:  Wrapper for BBMap to allow multiple input and output files for the same reference without reloading the index each time.
 
-To index:                 bbwrap.sh ref=<reference fasta>
-To map:                   bbwrap.sh in=<file,file,...> out=<file,file,...>
-To map without an index:  bbwrap.sh ref=<reference fasta> in=<file,file,...> out=<file,file,...> nodisk
+Usage:  bbwrap.sh ref=<reference fasta> in=<file,file,...> out=<file,file,...> nodisk
+To index only:                bbwrap.sh ref=<reference fasta>
+To map to an existing index:  bbwrap.sh in=<file,file,...> out=<file,file,...>
 To map pairs and singletons and output them into the same file:
 bbwrap.sh in1=read1.fq,singleton.fq in2=read2.fq,null out=mapped.sam append
 
@@ -69,7 +69,7 @@ calcXmx () {
 calcXmx "$@"
 
 bbwrap() {
-	local CMD="java $EA $EOOM $z $z2 $JNI -cp $CP align2.BBWrap build=1 overwrite=true fastareadlen=500 $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 $JNI -cp $CP align2.BBWrap build=1 overwrite=true fastareadlen=500 $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -2,31 +2,44 @@ package driver;
 
 import java.util.HashSet;
 
-import fileIO.TextFile;
+import fileIO.ByteFile;
+import shared.LineParser1;
 import shared.Tools;
 import stream.SamLine;
 
+/**
+ * Utility for filtering SAM files by removing reads that overlap with specified genomic regions.
+ * Identifies reads that map to or span a target scaffold region and excludes them from output.
+ * Useful for removing contaminated or problematic genomic regions from alignment data.
+ * @author Brian Bushnell
+ */
 public class TrimSamFile {
 	
+	/**
+	 * Program entry point for SAM file trimming utility.
+	 * Expects 4 arguments: filename, scaffold name, start position, and end position.
+	 * @param args Command-line arguments: [filename] [scaffold] [start] [end]
+	 */
 	public static void main(String[] args){
 		String fname=args[0];
 		String scaf=args[1];
 		int from=Integer.parseInt(args[2]);
 		int to=Integer.parseInt(args[3]);
-		TextFile tf=new TextFile(fname, false);
+		ByteFile tf=ByteFile.makeByteFile(fname, false);
 		HashSet<String> set=findBadLines(tf, scaf, from, to);
 		tf.reset();
 		printExcludingSet(tf, set);
 	}
 	
 	
-	public static HashSet<String> findBadLines(TextFile tf, String scafS, int from, int to){
+	public static HashSet<String> findBadLines(ByteFile tf, String scafS, int from, int to){
 		byte[] scaf=scafS.getBytes();
 		HashSet<String> set=new HashSet<String>(16000);
+		LineParser1 lp=new LineParser1('\t');
 		
-		for(String s=tf.nextLine(); s!=null; s=tf.nextLine()){
-			if(s.charAt(0)!='@'){//header
-				SamLine sl=new SamLine(s);
+		for(byte[] s=tf.nextLine(); s!=null; s=tf.nextLine()){
+			if(s[0]!='@'){//header
+				SamLine sl=new SamLine(lp.set(s));
 				
 				if(sl.pos>=from && sl.pos<=to && Tools.equals(sl.rname(), scaf)){
 					set.add(sl.qname);
@@ -43,13 +56,13 @@ public class TrimSamFile {
 	}
 	
 	
-	public static void printExcludingSet(TextFile tf, HashSet<String> set){
-		
-		for(String s=tf.nextLine(); s!=null; s=tf.nextLine()){
-			if(s.charAt(0)=='@'){//header
+	public static void printExcludingSet(ByteFile tf, HashSet<String> set){
+		LineParser1 lp=new LineParser1('\t');
+		for(byte[] s=tf.nextLine(); s!=null; s=tf.nextLine()){
+			if(s[0]=='@'){//header
 				System.out.println(s);
 			}else{
-				SamLine sl=new SamLine(s);
+				SamLine sl=new SamLine(lp.set(s));
 				
 				if(!set.contains(sl.qname)){
 					System.out.println(s);

@@ -9,7 +9,7 @@ Description:  Discards all but the best copy of a ribosomal gene per TaxID.
 Gene sequences should be named like this: >tid|123|whatever
 Sequences are selected based on the number of fully defined bases.
 
-Usage:  keepbest.sh in=<input file> out=<output file> rate=<float>
+Usage:  keepbestcopy.sh in=<input file> out=<output file> rate=<float>
 
 Input may be fasta or fastq, compressed or uncompressed.
 
@@ -33,6 +33,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -73,7 +74,7 @@ calcXmx () {
 calcXmx "$@"
 
 keepbest() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.KeepBestCopy $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.KeepBestCopy $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -1,8 +1,8 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
-import shared.Timer;
 import shared.Tools;
 import structures.IntList;
 
@@ -16,7 +16,7 @@ import structures.IntList;
  * Encodes ACGTN as 1,2,4,8,15/31 in long[] arrays.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class QuantumPlusAligner2 implements IDAligner{
@@ -33,6 +33,7 @@ public class QuantumPlusAligner2 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor for QuantumPlusAligner2 */
 	public QuantumPlusAligner2() {}
 
 	/*--------------------------------------------------------------*/
@@ -86,13 +87,16 @@ public class QuantumPlusAligner2 implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 
 		// Matrix exploration limits
 		final int bandWidth=decideBandwidth(query, ref);
-		final int topWidth=bandWidth*2;
-		final int sideWidth0=1;//Set to >1 if you want a sideband.
+		final int topWidth=Math.min(query.length, bandWidth*2);
+		final int denseWidth=DENSE_TOP ? Tools.min(topWidth, query.length-1) : 0;
+		final int sideWidth0=1;//Set to >1 if you want a sideband.  Do NOT set >rLen.
+		final int sideWidthMax=Tools.min(qLen, rLen);
 		final int rightExtend=(LOOP_VERSION ? Math.max(5, bandWidth-2) : 2);
 		final long scoreWidth0=(bandWidth+1L)<<SCORE_SHIFT;
 		
@@ -110,9 +114,9 @@ public class QuantumPlusAligner2 implements IDAligner{
 			for(int j=0; j<=rLen; j++){prev[j]=j*mult;}
 		}
 		
-		final int sparseStart=DENSE_TOP ? topWidth : 1;
-		if(DENSE_TOP) {//Optionally use a dense strategy for aligning the top band
-			long[][] arrays=alignDense(query, ref, prev, curr, viz, topWidth, rLen);
+		final int sparseStart=1+denseWidth;
+		if(denseWidth>0) {//Optionally use a dense strategy for aligning the top band
+			long[][] arrays=alignDense(query, ref, prev, curr, viz, denseWidth+1, rLen);
 			curr=arrays[0];
 			prev=arrays[1];
 		}
@@ -144,7 +148,7 @@ public class QuantumPlusAligner2 implements IDAligner{
 					activeList.add(e);
 				}
 			}
-			if(loops>=0) {loops+=activeList.size()-1;}
+			mloops+=activeList.size()-1;
 			
 			//Clear the potential stale value in the last cell of prev.
 			//This action does not get seen by the visualizer
@@ -160,7 +164,7 @@ public class QuantumPlusAligner2 implements IDAligner{
 //			nextList.add(1);
 			
 			//Moving the sideband test outside the inner loop is faster
-			final int sideWidth=Tools.mid(sideWidth0, topWidth*2-i, qLen);
+			final int sideWidth=Tools.mid(sideWidth0, topWidth*2-i, sideWidthMax);
 			assert(nextList.size()>=sideWidth || rLen<sideWidth) : "\nsize="+nextList.size+", sideW="+sideWidth
 					+", sideW0="+sideWidth0+", qLen="+qLen+", rLen="+rLen+", "+(topWidth*2-i)+"\n"+nextList;
 			nextList.size=sideWidth;
@@ -202,7 +206,7 @@ public class QuantumPlusAligner2 implements IDAligner{
 				final long scoreDif=prevRowScore-maxValue;
 				final int last=nextList.array[nextList.size-1];
 				//Eliminating to topWidth test increases speed
-				final boolean add=j<rLen && (/*i<topWidth ||*/ j<sideWidth || scoreDif<scoreWidth);
+				final boolean add=j<=rLen && (/*i<topWidth ||*/ j<sideWidth || scoreDif<scoreWidth);
 				final boolean live=(EXTEND_MATCH && isMatch & last<j+1);
 
 				//Important: Injecting "BAD" into these cells clears stale values.
@@ -258,13 +262,28 @@ public class QuantumPlusAligner2 implements IDAligner{
 		}
 		if(viz!=null) {viz.shutdown();}// Terminate visualizer
 		if(GLOBAL) {maxPos=rLen;maxScore=prev[rLen-1]+DEL_INCREMENT;}//The last cell may be empty 
+		loops.addAndGet(mloops);
 		return postprocess(maxScore, maxPos, qLen, rLen, posVector);
 	}
 	
 	// Process the first topWidth rows using a dense approach
+	/**
+	 * Processes the first topWidth rows using dense alignment strategy.
+	 * Fills all cells in the top band of the alignment matrix before switching
+	 * to sparse processing for the remainder.
+	 *
+	 * @param query Encoded query sequence
+	 * @param ref Encoded reference sequence
+	 * @param prev Previous row array
+	 * @param curr Current row array
+	 * @param viz Visualizer for debugging (may be null)
+	 * @param topWidth Number of rows to process densely
+	 * @param rLen Reference sequence length
+	 * @return Array containing {curr, prev} after processing
+	 */
 	private static final long[][] alignDense(long[] query, long[] ref, long[] prev, 
 			long[] curr, Visualizer viz, int topWidth, int rLen) {
-		
+		long mloops=0;
 		for(int i=1; i<topWidth; i++) {
 			// First column should stay at zero in dense section
 			// Oops! This is no longer true, now it is i*INS 
@@ -305,8 +324,9 @@ public class QuantumPlusAligner2 implements IDAligner{
 			curr=temp;
 
 			// Count loops for analysis
-			if(loops>=0) {loops+=rLen;}
+			mloops+=rLen;
 		}
+		loops.addAndGet(mloops);
 		
 		return new long[][] {curr, prev};
 	}
@@ -396,9 +416,16 @@ public class QuantumPlusAligner2 implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Thread-safe counter for tracking total alignment matrix cells processed */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns the total number of alignment matrix cells processed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for performance tracking.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/**
+	 * Output file path for debugging visualization (null disables visualization)
+	 */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -406,30 +433,53 @@ public class QuantumPlusAligner2 implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/**
+	 * Number of bits allocated for storing alignment position (21 bits = 2M positions)
+	 */
 	private static final int POSITION_BITS=21;
+	/** Number of bits allocated for storing deletion count (21 bits) */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount for score field in packed long value */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from packed score */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed score */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting raw alignment score from packed value */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for nucleotide matches (+1 in score field) */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substitutions (-1 in score field) */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions (-1 in score field) */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deletions (-1 in score field) */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for ambiguous nucleotides (N) - neutral score of 0 */
 	private static final long N_SCORE=0L;
+	/** Sentinel value for invalid/unprocessed alignment cells */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined deletion penalty and position increment for quantum jumps */
 	private static final long DEL_INCREMENT=DEL+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Enables extension from matching cells to find deletions */
 	private static final boolean EXTEND_MATCH=true;
+	/**
+	 * Enables loop-based position addition (false uses faster branchless version)
+	 */
 	private static final boolean LOOP_VERSION=false;
+	/** Enables bridge building to catch up with long deletions */
 	private static final boolean BUILD_BRIDGES=true;
+	/** Enables dense processing strategy for top band of alignment matrix */
 	private static final boolean DENSE_TOP=true;
+	/** Enables debugging output of alignment operations and statistics */
 	private static final boolean PRINT_OPS=false;
+	/** Enables global alignment mode (false for local alignment) */
 	public static final boolean GLOBAL=false;
 
 }

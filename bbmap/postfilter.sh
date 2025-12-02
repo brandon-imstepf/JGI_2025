@@ -47,6 +47,7 @@ Java Parameters:
 Other parameters will be passed directly to BBMap.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -86,7 +87,7 @@ calcXmx () {
 calcXmx "$@"
 
 function postfilter() {
-	local CMD="java $EA $EOOM $z -cp $CP assemble.Postfilter $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP assemble.Postfilter $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# memdetect.sh v1.0.3
+# memdetect.sh v1.0.4
 # Detects available memory for Java applications across various environments
-# Authors: Brian Bushnell, Doug Jacobsen, Alex Copeland, Bryce Foster, Claude AI
-# Date: April 20, 2025
+# Authors: Brian Bushnell, Doug Jacobsen, Alex Copeland, Bryce Foster, Isla
+# Date: May 24, 2025
 
 # Constants
 DEFAULT_MEM_MB=3200
-DEFAULT_MEM_PERCENT_SHARED=65
+DEFAULT_MEM_PERCENT_SHARED=45
 DEFAULT_MEM_PERCENT_EXCLUSIVE=85
 RESERVED_MEM_KB=500000  # 500MB reserved for OS and other processes
 
@@ -83,17 +83,17 @@ function detectMemory() {
                 ;;
         esac
         
-        if [ "$silent" != "1" ]; then
-            echo "Using fixed memory allocation: ${RAM}MB" >&2
-        fi
+        #if [ "$silent" != "1" ]; then
+            #echo "Using fixed memory allocation: ${RAM}MB" >&2
+        #fi
         return 0
     fi
     
     # Check for user-specified memory
     if [ -n "$RQCMEM" ] && [ $RQCMEM -gt 0 ]; then
-        if [ "$silent" != "1" ]; then
-            echo "Using manually specified memory: ${RQCMEM}MB" >&2
-        fi
+        #if [ "$silent" != "1" ]; then
+            #echo "Using manually specified memory: ${RQCMEM}MB" >&2
+        #fi
         RAM=$RQCMEM
         return 0
     fi
@@ -178,9 +178,9 @@ function detectLinuxMemory() {
     if [ -n "$memAvailable" ] && [ $memAvailable -gt 0 ]; then
         # Modern kernels have MemAvailable which is the most accurate metric
         availableMemKB=$memAvailable
-        if [ "$silent" != "1" ]; then
-            echo "Detected ${availableMemKB}KB available memory (MemAvailable)" >&2
-        fi
+        #if [ "$silent" != "1" ]; then
+            #echo "Detected ${availableMemKB}KB available memory (MemAvailable)" >&2
+        #fi
     else
         # Older kernels - calculate available memory as free + buffers + cached
         local memFree=$(grep '^MemFree:' /proc/meminfo | awk '{print $2}')
@@ -189,9 +189,9 @@ function detectLinuxMemory() {
         
         if [ -n "$memFree" ] && [ -n "$memBuffers" ] && [ -n "$memCached" ]; then
             availableMemKB=$(( memFree + memBuffers + memCached ))
-            if [ "$silent" != "1" ]; then
-                echo "Detected ${availableMemKB}KB available memory (Free+Buffers+Cached)" >&2
-            fi
+            #if [ "$silent" != "1" ]; then
+                #echo "Detected ${availableMemKB}KB available memory (Free+Buffers+Cached)" >&2
+            #fi
         fi
     fi
     
@@ -201,9 +201,9 @@ function detectLinuxMemory() {
     
     if [ -n "$commitLimit" ] && [ -n "$committedAS" ] && [ $(( commitLimit - committedAS )) -gt 0 ]; then
         local availableVirtKB=$(( commitLimit - committedAS ))
-        if [ "$silent" != "1" ]; then
-            echo "Detected ${availableVirtKB}KB available virtual memory" >&2
-        fi
+        #if [ "$silent" != "1" ]; then
+            #echo "Detected ${availableVirtKB}KB available virtual memory" >&2
+        #fi
         
         # Use the more conservative of physical vs virtual available
         if [ $availableVirtKB -lt $availableMemKB ] || [ $availableMemKB -eq 0 ]; then

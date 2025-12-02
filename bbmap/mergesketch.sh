@@ -51,6 +51,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -91,7 +92,7 @@ calcXmx () {
 calcXmx "$@"
 
 sendsketch() {
-	local CMD="java $EA $EOOM $z -cp $CP sketch.MergeSketch $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP sketch.MergeSketch $@"
 #	echo $CMD >&2
 	eval $CMD
 }

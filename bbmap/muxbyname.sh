@@ -36,6 +36,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -70,7 +71,7 @@ calcXmx () {
 calcXmx "$@"
 
 muxbyname() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.RenameAndMux $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.RenameAndMux $@"
 	echo $CMD >&2
 	eval $CMD
 }

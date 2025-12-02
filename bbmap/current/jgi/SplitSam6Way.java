@@ -6,6 +6,7 @@ import fileIO.ByteFile;
 import fileIO.ByteStreamWriter;
 import fileIO.FileFormat;
 import fileIO.ReadWrite;
+import shared.LineParser1;
 import shared.Parse;
 import shared.PreParser;
 import shared.Shared;
@@ -20,6 +21,8 @@ import stream.SamLine;
  */
 public class SplitSam6Way {
 	
+	/** Program entry point that creates and executes a SplitSam6Way instance.
+	 * @param args Command-line arguments containing input file and 6 output files */
 	public static void main(String[] args){
 		SplitSam6Way x=new SplitSam6Way(args);
 		
@@ -27,12 +30,24 @@ public class SplitSam6Way {
 		Shared.closeStream(x.outstream);
 	}
 	
+	/** Prints usage syntax and options to the output stream.
+	 * Shows the required 7 arguments: input file and 6 output files. */
 	private void printOptions(){
 		outstream.println("Syntax:\n");
 		outstream.println("java -ea -Xmx128m -cp <path> jgi.SplitSam6Way <input> <r1plus> <r1minus> <r1unmapped> <r2plus> <r2minus> <r2unmapped>");
 		outstream.println("If you do not want one of the output files, use the word 'null'.\n");
 	}
 	
+	/**
+	 * Constructor that processes command-line arguments and splits the SAM file.
+	 * Creates separate output files for R1/R2 reads split by strand and mapping status.
+	 * Processes all SAM lines, copying headers to all outputs and routing alignment
+	 * records based on pair number, strand, and mapping status.
+	 *
+	 * @param args Array with input file and 6 output files:
+	 * [input, r1plus, r1minus, r1unmapped, r2plus, r2minus, r2unmapped]
+	 * Use "null" to skip unwanted output files
+	 */
 	public SplitSam6Way(String[] args){
 		
 		{//Preparse block for help, config files, and outstream
@@ -82,6 +97,7 @@ public class SplitSam6Way {
 		if(r2minus!=null){r2minus.start();}
 		if(r2unmapped!=null){r2unmapped.start();}
 		
+		final LineParser1 lp=new LineParser1('\t');
 		for(byte[] line=tf.nextLine(); line!=null; line=tf.nextLine()){
 			if(line[0]=='@'){
 				if(r1plus!=null){r1plus.println(line);}
@@ -93,7 +109,7 @@ public class SplitSam6Way {
 			}else{
 				if(reads>=maxReads){break;}
 				
-				SamLine sl=new SamLine(line);
+				SamLine sl=new SamLine(lp.set(line));
 				reads++;
 				bases+=sl.seq.length;
 				
@@ -146,6 +162,7 @@ public class SplitSam6Way {
 		outstream.println("R1 Unmapped Reads:  "+r2ureads);
 	}
 	
+	/** Output stream for progress messages and statistics */
 	private PrintStream outstream=System.err;
 	
 }

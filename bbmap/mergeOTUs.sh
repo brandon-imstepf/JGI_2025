@@ -11,6 +11,7 @@ Description:    Merges coverage stats lines (from pileup) for the same OTU,
 Usage:          mergeOTUs.sh in=<file> out=<file>
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -44,7 +45,7 @@ calcXmx () {
 calcXmx "$@"
 
 function mergeOTUs() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.MergeCoverageOTU $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.MergeCoverageOTU $@"
 	echo $CMD >&2
 	eval $CMD
 }

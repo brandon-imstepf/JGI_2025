@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  *Aligns two sequences to return ANI.
@@ -11,7 +12,7 @@ import java.util.Arrays;
  *Limited to length 2Mbp with 21 position bits.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 23, 2025
  */
 public class GlocalAlignerConcise implements IDAligner{
@@ -35,7 +36,7 @@ public class GlocalAlignerConcise implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	@Override
-	public final String name() {return "GlocalFull";}
+	public final String name() {return "GlocalConcise";}
 	@Override
 	public final float align(byte[] a, byte[] b) {return alignStatic(a, b, null);}
 	@Override
@@ -140,9 +141,9 @@ public class GlocalAlignerConcise implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	private static AtomicLong loops=new AtomicLong(0);
+	public long loops() {return loops.get();}
+	public void setLoops(long x) {loops.set(x);}
 
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/

@@ -29,7 +29,7 @@ silva=f         Parse headers in Silva format.
 shrinknames=f   Replace multiple concatenated headers with the first.
 deleteinvalid=f Delete the output file if there are any invalid headers.
 
-Taxonomy file flags:
+Taxonomy File Parameters:
 server=f        Use the taxonomy server instead of local files.
                 Server mode only works for accessions (like RefSeq).
 tree=           Specify a taxtree file.  On Genepool, use 'auto'.
@@ -46,6 +46,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -89,7 +90,7 @@ calcXmx "$@"
 
 
 gi2taxid() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP tax.RenameGiToTaxid $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP tax.RenameGiToTaxid $@"
 	echo $CMD >&2
 	eval $CMD
 }

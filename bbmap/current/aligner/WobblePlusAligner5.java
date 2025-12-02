@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Shared;
 import shared.Tools;
@@ -17,7 +18,7 @@ import structures.RingBuffer;
  *Band dynamically widens and narrows in response to sequence identity.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 7, 2025
  */
 public class WobblePlusAligner5 implements IDAligner{
@@ -34,6 +35,7 @@ public class WobblePlusAligner5 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor */
 	public WobblePlusAligner5() {}
 
 	/*--------------------------------------------------------------*/
@@ -57,11 +59,10 @@ public class WobblePlusAligner5 implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Tools.mid(80, 1+Math.max(query.length, ref.length)/8, 200);
-		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
-			subs+=(query[i]!=ref[i] ? 1 : 0);
-		}
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Tools.mid(7, 1+Math.max(qLen, rLen)/24, 22+(int)Math.sqrt(rLen)/8);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
+			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
 
@@ -86,6 +87,7 @@ public class WobblePlusAligner5 implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
@@ -142,8 +144,7 @@ public class WobblePlusAligner5 implements IDAligner{
 			maxPos=0;
 			int posFromSimd=0;
 			if(Shared.SIMD) {
-				posFromSimd=shared.SIMDAlign.alignBandVectorAndReturnMaxPos2(q, ref, bandStart, bandEnd, 
-						prev, curr, MATCH, N_SCORE, SUB, INS, DEL_INCREMENT);
+				posFromSimd=shared.SIMDAlign.alignBandVectorAndReturnMaxPos2(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 				// Process only cells within the band
 				for(int j=bandStart; j<=bandEnd; j++){
@@ -196,7 +197,7 @@ public class WobblePlusAligner5 implements IDAligner{
 //						maxPos+", "+posFromSimd+", "+curr[maxPos]+", "+curr[posFromSimd];
 			
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 			
 			// Swap rows
 			long[] temp=prev;
@@ -206,6 +207,7 @@ public class WobblePlusAligner5 implements IDAligner{
 		}
 		if(viz!=null) {viz.shutdown();}// Terminate visualizer
 		if(GLOBAL) {maxPos=rLen;maxScore=prev[rLen-1]+DEL_INCREMENT;}//The last cell may be empty 
+		loops.addAndGet(mloops);
 		return postprocess(maxScore, maxPos, qLen, rLen, posVector);
 	}
 	
@@ -295,9 +297,16 @@ public class WobblePlusAligner5 implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/**
+	 * Thread-safe counter for total alignment matrix cells processed across all alignments
+	 */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the total number of alignment matrix cells processed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for performance tracking.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output file path for alignment visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -305,26 +314,47 @@ public class WobblePlusAligner5 implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/**
+	 * Number of bits allocated for position encoding in score field (21 bits = 2M positions)
+	 */
 	private static final int POSITION_BITS=21;
+	/**
+	 * Number of bits allocated for deletion count encoding (21 bits = 2M deletions)
+	 */
 	private static final int DEL_BITS=21;
+	/** Bit offset for score storage in the composite score field */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from composite score */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from composite score */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting alignment score from composite score field */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for nucleotide matches (+1 in the score bits) */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for nucleotide substitutions (-1 in the score bits) */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions (-1 in the score bits) */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Base score penalty for deletions (-1 in the score bits) */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for alignments involving ambiguous bases (N) - neutral scoring */
 	private static final long N_SCORE=0L;
+	/** Invalid/uninitialized score value used to mark invalid cells */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/**
+	 * Combined deletion penalty and position increment for tracking deletion operations
+	 */
 	private static final long DEL_INCREMENT=DEL+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Debug flag for printing detailed alignment operation counts */
 	private static final boolean PRINT_OPS=false;
+	/** Flag controlling global vs local alignment mode (false = local alignment) */
 	public static final boolean GLOBAL=false;
 
 }

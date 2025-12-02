@@ -40,6 +40,7 @@ import structures.LongPair;
 import structures.Range;
 import structures.SuperLongList;
 import tracker.AdapterTracker;
+import tracker.KmerTracker;
 import tracker.ReadStats;
 
 /**
@@ -159,6 +160,8 @@ public class TestFormat {
 				doMerge=Parse.parseBoolean(b);
 			}else if(a.equalsIgnoreCase("trim")){
 				doTrim=Parse.parseBoolean(b);
+			}else if(a.equals("dimer") || a.equals("dimers") || a.equalsIgnoreCase("countdimers")){
+				countDimers=Parse.parseBoolean(b);
 			}
 			
 			else if(parser.parse(arg, a, b)){
@@ -264,7 +267,7 @@ public class TestFormat {
 	
 	void printVariantResults(){
 		println("Format\t\t"+FileFormat.FORMAT_ARRAY[format]);
-		println("Compression\t"+FileFormat.COMPRESSION_ARRAY[compression]);
+		println("Compression\t"+(bgzip ? "bgzip" : FileFormat.COMPRESSION_ARRAY[compression]));
 		println("HeaderLines\t"+headerLinesProcessed);
 		println("Variants\t"+variantsProcessed);
 		if(ploidy>0){println("Ploidy\t\t"+ploidy);}
@@ -277,8 +280,9 @@ public class TestFormat {
 	void printSequenceResults(){
 
 		println("Format\t\t"+FileFormat.FORMAT_ARRAY[format]);
-		println("Compression\t"+FileFormat.COMPRESSION_ARRAY[compression]);
+		println("Compression\t"+(bgzip ? "bgzip" : FileFormat.COMPRESSION_ARRAY[compression]));
 		println("Interleaved\t"+interleaved);
+		if(sortOrder!=null) {println("SortOrder\t"+sortOrder);}
 		println("MaxLen\t\t"+maxLen);
 		println("MinLen\t\t"+(minLen<Integer.MAX_VALUE ? minLen : 0));
 		println("AvgLen\t\t"+Tools.format("%.2f",basesProcessed/Tools.max(1.0, readsProcessed)));
@@ -375,7 +379,14 @@ public class TestFormat {
 			println("-GCSTDev\t"+Tools.format("%.3f", ReadStats.GCSTDev));
 			println("");
 		}
-		
+		if(countDimers) {
+			println("Strandedness\t"+Tools.format("%.3f", dimers.strandedness()));
+			println("AAATRatio\t"+Tools.format("%.3f", dimers.AAAT()));
+			println("CCCGRatio\t"+Tools.format("%.3f", dimers.CCCG()));
+			println("HHRatio\t\t"+Tools.format("%.3f", dimers.HH()));
+			println("PPRatio\t\t"+Tools.format("%.3f", dimers.PP()));
+			println("");
+		}
 //		if(loglog!=null){println("Cardinality\t"+loglog.cardinality());}
 		if(smm!=null){
 			sketch=smm.toSketch(smm.pacBioDetected ? 2 : 1);
@@ -657,6 +668,7 @@ public class TestFormat {
 		}else{
 			format=ff.format();
 			compression=ff.compression();
+			bgzip=ff.bgzip();
 			if(ff.fastq()){
 				byte qold=stream.FASTQ.ASCII_OFFSET;
 				stream.FASTQ.ASCII_OFFSET=33;
@@ -670,6 +682,8 @@ public class TestFormat {
 				stream.FASTQ.ASCII_OFFSET=qold;
 			}else if(ff.fasta()){
 				interleaved=stream.FASTQ.testInterleavedFasta(fname, false);
+			}else if(ff.samOrBam()){
+				sortOrder=ff.sortOrder();
 			}
 		}
 		
@@ -912,6 +926,7 @@ public class TestFormat {
 			add(qhist, pt.qhist_T);
 			add(ihist, pt.ihist_T);
 			add(trimhist, pt.trimhist_T);
+			dimers.add(pt.dimersT);
 			
 			barcodeStats.merge(pt.barcodeStats_T);
 			aTrack.merge(pt.aTrack_T);
@@ -1122,6 +1137,7 @@ public class TestFormat {
 						}
 					}
 //				}
+				if(countDimers) {dimersT.add(bases);}
 			}
 			if(quals!=null){
 				for(int i=0; i<quals.length; i++){
@@ -1194,6 +1210,7 @@ public class TestFormat {
 		private long[] qhist_T=new long[256];
 		private long[] ihist_T=new long[1000];
 		private long[] trimhist_T=new long[51];
+		private KmerTracker dimersT=new KmerTracker(2, 0);
 		private int minLen_T=Integer.MAX_VALUE;
 		private int maxLen_T=0;
 		
@@ -1240,6 +1257,8 @@ public class TestFormat {
 	private int minLen=Integer.MAX_VALUE;
 	private int maxLen=0;
 	
+	private KmerTracker dimers=new KmerTracker(2, 0);
+	
 	private int qMinUncalled=999;
 	private int qMaxUncalled=-999;
 	private int qMinCalled=999;
@@ -1278,14 +1297,17 @@ public class TestFormat {
 
 	private int format=FileFormat.UNKNOWN;
 	private int compression=FileFormat.UNKNOWN;
+	private boolean bgzip=false;
 	private boolean amino=false;
 	private boolean differs=false;
 	private boolean interleaved=false;
+	private String sortOrder=null;
 	private int offset=33;
 	private boolean makeSketch=true;
 	private boolean doMerge=true;
 	private boolean doTrim=true;
 	private int sketchSize=40000;
+	private boolean countDimers=true;
 	
 	/*--------------------------------------------------------------*/
 

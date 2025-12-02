@@ -1,0 +1,6 @@
+[Mon Nov 24 10:47:44 PST 2025] Starting feature subset generation (SLURM_JOB_ID=19893088)
+[Mon Nov 24 10:47:44 PST 2025] Building subsets for NCBI_Datasets_10-23_SORTED_ncbi_truth_slurm_19888055
+[Mon Nov 24 21:12:08 PST 2025] Building subsets for NCBI_Datasets_10-23_SORTED_intersect_truth_slurm_19888052
+[Tue Nov 25 06:32:24 PST 2025] Building subsets for NCBI_Datasets_Training_ncbi_truth_slurm_19888056
+[Tue Nov 25 16:10:50 PST 2025] Building subsets for NCBI_Datasets_Training_intersect_truth_slurm_19888054
+[Wed Nov 26 00:56:11 PST 2025] Finished feature subset generation

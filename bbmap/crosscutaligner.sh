@@ -28,6 +28,7 @@ iterations      Optional integer for benchmarking multiple iterations.
 simd            Use vector instructions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 

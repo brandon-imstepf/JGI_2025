@@ -47,13 +47,13 @@ Processing parameters:
 k=31            Kmer length; 1-31.
 rcomp=t         Consider kmers equivalent to their reverse-complements.
 
-Edit mode flags (used if edist>0):
+Edit mode parameters (used if edist>0):
 edist=0         Set the maximal edit distance (0-3).
 smax=99         (optional) Don't allow more than this many total substitutions.
 dmax=99         (optional) Don't allow more than this many total deletions.
 imax=99         (optional) Don't allow more than this many total insertions.
 
-SDI mode flags:
+SDI mode parameters:
 sdist=0         Maximum substitutions allowed.
 idist=0         Maximum insertions allowed.
 ddist=0         Maximum deletions allowed (0-3).
@@ -71,6 +71,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -111,7 +112,7 @@ calcXmx () {
 calcXmx "$@"
 
 kmutate() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.KExpand $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP jgi.KExpand $@"
 	echo $CMD >&2
 	eval $CMD
 }

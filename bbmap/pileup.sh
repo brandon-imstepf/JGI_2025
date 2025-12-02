@@ -83,7 +83,7 @@ qtrim=f             Quality-trim.  May be set to:
 trimq=-1            If positive, quality-trim to this threshold.
 border=0            Ignore this many bases on the left and right end.
 
-Output format (tab-delimited):
+Output Columns (tab-delimited):
 ID, Avg_fold, Length, Ref_GC, Covered_percent, Covered_bases, Plus_reads, Minus_reads, Read_GC, Median_fold, Std_Dev
 
 ID:                Scaffold ID
@@ -109,6 +109,7 @@ Java Parameters:
 -da                Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -149,7 +150,7 @@ calcXmx () {
 calcXmx "$@"
 
 pileup() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.CoveragePileup $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.CoveragePileup $@"
 	echo $CMD >&2
 	eval $CMD
 }

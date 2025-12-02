@@ -1,25 +1,27 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
+import shared.PreParser;
 import shared.Shared;
 
 /**
- *Aligns two sequences to return ANI.
- *Uses only 2 arrays and avoids traceback.
- *Gives an exact answer.
- *Calculates rstart and rstop without traceback.
+ *Aligns two sequences to return approximate ANI.
+ *Uses only 2 arrays.
+ *Requires traceback.
  *Limited to length 2Mbp with 21 position bits.
  *Restricts alignment to a fixed band around the diagonal.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
- *@date April 24, 2025
+ *@contributor Isla
+ *@date May 4, 2025
  */
 public class BandedByteAligner implements IDAligner{
 
 	/** Main() passes the args and class to Test to avoid redundant code */
 	public static <C extends IDAligner> void main(String[] args) throws Exception {
+		args=new PreParser(args, System.err, null, false, true, false).args;
 	    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
 		@SuppressWarnings("unchecked")
 		Class<C> c=(Class<C>)Class.forName(stackTrace[(stackTrace.length<3 ? 1 : 2)].getClassName());
@@ -30,6 +32,7 @@ public class BandedByteAligner implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Creates a new BandedByteAligner instance */
 	public BandedByteAligner() {}
 
 	/*--------------------------------------------------------------*/
@@ -53,11 +56,10 @@ public class BandedByteAligner implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Math.min(100, 4+Math.max(query.length, ref.length)/8);
-		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
-			subs+=(query[i]!=ref[i] ? 1 : 0);
-		}
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Math.min(60+(int)Math.sqrt(rLen), 4+Math.max(qLen, rLen)/8);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
+			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
 
@@ -81,6 +83,7 @@ public class BandedByteAligner implements IDAligner{
 		
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, 0, 0));
 		
 		// Banding parameters
@@ -90,7 +93,11 @@ public class BandedByteAligner implements IDAligner{
 
 		// Create arrays for current and previous rows
 		byte[] prev=new byte[rLen+1], curr=new byte[rLen+1];
+		Arrays.fill(prev, (byte)60);
 		Arrays.fill(curr, BAD);
+		
+		int timeSinceBalance=0;
+		int absScore=0;
 		
 		// Fill alignment matrix
 		for(int i=1; i<=qLen; i++){
@@ -106,14 +113,13 @@ public class BandedByteAligner implements IDAligner{
 			curr[bandStart-1]=BAD;
 
 			// Clear first column score
-			curr[0]=(byte)(i*INS);//TODO: This needs to be changed for relative scoring
+			curr[0]=0;//(byte)(i*INS);//TODO: This needs to be changed for relative scoring
 			
 			//Cache the query
 			final byte q=query[i-1];
 			
 			if(Shared.SIMD) {
-				//shared.SIMDAlign.alignBandVector(q, ref, bandStart, bandEnd, prev, curr, MATCH, N_SCORE, SUB, INS);
-				assert(false) : "TODO";
+				shared.SIMDAlignByte.alignBandVector(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 
 				// Process only cells within the band
@@ -144,20 +150,24 @@ public class BandedByteAligner implements IDAligner{
 				}
 			}
 			
-			//Tail loop for deletions
-			byte leftCell=curr[bandStart-1];
-			for(int j=bandStart; j<=bandEnd; j++){
-				final byte maxDiagUp=curr[j];
-				final byte leftScore=(byte)(leftCell+DEL);
-				leftCell=(byte)Math.max(maxDiagUp, leftScore);
-				curr[j]=leftCell;
+			if(Shared.SIMD) {
+				shared.SIMDAlignByte.processDeletionsTailVector(curr, bandStart, bandEnd);
+			}else {
+				//Tail loop for deletions
+				byte leftCell=curr[bandStart-1];
+				for(int j=bandStart; j<=bandEnd; j++){
+					final byte maxDiagUp=curr[j];
+					final byte leftScore=(byte)(leftCell+DEL);
+					leftCell=(byte)Math.max(maxDiagUp, leftScore);
+					curr[j]=leftCell;
 
-		        
-				// Output debug info if debug flag is set
-	            if(debug) {
-	                System.err.println("\nCell i="+i+", j="+j+": score="+leftCell);
-	                System.err.println("maxDiagUp="+maxDiagUp+", leftScore="+leftScore);
-	            }
+
+					// Output debug info if debug flag is set
+					if(debug) {
+						System.err.println("\nCell i="+i+", j="+j+": score="+leftCell);
+						System.err.println("maxDiagUp="+maxDiagUp+", leftScore="+leftScore);
+					}
+				}
 			}
 	        
 	        // Output debug info on row maxima
@@ -166,9 +176,15 @@ public class BandedByteAligner implements IDAligner{
 //	            int rowAbsScore=maxScore-MIDPOINT+totalAdjustment;
 //	            System.err.println("\nRow i="+i+": rowScore="+maxScore+", rowAbsScore="+rowAbsScore);
 	        }
+	        
+	        timeSinceBalance++;
+	        if(timeSinceBalance>=60) {
+	        	absScore=rebalance(curr, bandStart, bandEnd, absScore);
+	        	timeSinceBalance=0;
+	        }
 			
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 
 			// Swap rows
 			byte[] temp=prev;
@@ -176,7 +192,31 @@ public class BandedByteAligner implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
-		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
+		loops.addAndGet(mloops);
+		return postprocess(prev, qLen, bandStart, bandEnd, posVector, absScore);
+	}
+	
+	/**
+	 * Rebalances alignment scores to prevent overflow in long alignments.
+	 * Adjusts all scores in the current band to keep maximum around 60.
+	 * Prevents byte overflow while maintaining score relationships.
+	 *
+	 * @param curr Current alignment score row
+	 * @param bandStart Start position of the active band
+	 * @param bandEnd End position of the active band
+	 * @param oldMax Previous maximum absolute score
+	 * @return Updated absolute maximum score
+	 */
+	private static int rebalance(byte[] curr, int bandStart, int bandEnd, int oldMax) {
+		int max=-127;
+		for(int j=bandStart; j<=bandEnd; j++) {
+			max=Math.max(max, curr[j]);
+		}
+		byte delta=(byte)(60-max);//Negative if max is above 60
+		for(int j=bandStart; j<=bandEnd; j++) {
+			curr[j]=(byte)Math.max(-60, curr[j]+delta);
+		}
+		return oldMax-delta;
 	}
 
 	/**
@@ -188,7 +228,9 @@ public class BandedByteAligner implements IDAligner{
 	 * @param posVector Optional array for returning reference start/stop coordinates.
 	 * @return Identity
 	 */
-	private static final float postprocess(byte[] prev, int qLen, int bandStart, int bandEnd, int[] posVector) {
+	private static final float postprocess(byte[] prev, int qLen, 
+			int bandStart, int bandEnd, int[] posVector, int absScore) {
+    	absScore=rebalance(prev, bandStart, bandEnd, absScore);
         
 		// Find best score outside of main loop
 		long maxScore=Long.MIN_VALUE;
@@ -200,8 +242,10 @@ public class BandedByteAligner implements IDAligner{
 				maxPos=j;
 			}
 		}
+		maxScore=absScore; //Possible bug: overwrites maxScore from array with absScore - intentional?
         if(debug) {
-            System.err.println("\npostprocess: prev="+Arrays.toString(prev)+", qLen="+qLen+", bandStart="+bandStart+", bandEnd="+bandEnd);
+            System.err.println("\npostprocess: prev="+Arrays.toString(prev)+
+            		", qLen="+qLen+", bandStart="+bandStart+", bandEnd="+bandEnd);
             System.err.println("maxScore="+maxScore+", maxPos="+maxPos);
         }
 
@@ -242,9 +286,14 @@ public class BandedByteAligner implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Thread-safe counter for total alignment loop iterations */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns the total number of alignment loop iterations performed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for alignment statistics.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output file path for alignment visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -252,16 +301,24 @@ public class BandedByteAligner implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Scoring constants
+	/** Score bonus for matching bases */
 	private static final byte MATCH=1;
+	/** Score penalty for substitutions */
 	private static final byte SUB=-1;
+	/** Score penalty for insertions */
 	private static final byte INS=-1;
+	/** Score penalty for deletions */
 	private static final byte DEL=-1;
+	/** Score for aligning ambiguous bases (N characters) */
 	private static final byte N_SCORE=0;
+	/** Score representing invalid or uncomputable alignment cells */
 	private static final byte BAD=Byte.MIN_VALUE/2;
 
 	// Run modes
+	/** Debug flag for printing alignment operations */
 	private static final boolean PRINT_OPS=false;
-	public static boolean debug=true;
+	/** Global debug flag for detailed alignment tracing */
+	public static final boolean debug=false;
 //	public static boolean GLOBAL=false; //Cannot handle global alignments
 
 }

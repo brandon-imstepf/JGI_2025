@@ -17,6 +17,7 @@ normalize=t     Normalize each metric to the average per report.
 box=t           Print only 5 points per metric for box plots.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -50,7 +51,7 @@ calcXmx () {
 calcXmx "$@"
 
 summarizequast() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.SummarizeQuast $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.SummarizeQuast $@"
 #	echo $CMD >&2
 	eval $CMD
 }

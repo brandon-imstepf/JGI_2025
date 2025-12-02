@@ -1,8 +1,11 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
+import shared.PreParser;
 import shared.Tools;
+import structures.ByteBuilder;
 import structures.IntList;
 
 /**
@@ -13,13 +16,14 @@ import structures.IntList;
  *Limited to length 2Mbp with 21 position bits.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla, Zephy
  *@date April 24, 2025
  */
 public class QuantumAligner implements IDAligner{
 
 	/** Main() passes the args and class to Test to avoid redundant code */
 	public static <C extends IDAligner> void main(String[] args) throws Exception {
+		args=new PreParser(args, System.err, null, false, true, false).args;
 	    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
 		@SuppressWarnings("unchecked")
 		Class<C> c=(Class<C>)Class.forName(stackTrace[(stackTrace.length<3 ? 1 : 2)].getClassName());
@@ -30,6 +34,7 @@ public class QuantumAligner implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor */
 	public QuantumAligner() {}
 
 	/*--------------------------------------------------------------*/
@@ -53,10 +58,12 @@ public class QuantumAligner implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Tools.min(query.length/4+2, Math.max(query.length, ref.length)/32, 12);
-		bandwidth=Math.max(2, bandwidth);
+		int qLen=query.length, rLen=ref.length;
+		int maxLen=Math.max(qLen, rLen), minLen=Math.min(qLen, rLen);
+		int bandwidth=Tools.min(qLen/4+2, maxLen/32, (int)Tools.log2(maxLen+256)+2);
+		bandwidth=Math.max(2, bandwidth)+3;
 		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
+		for(int i=0; i<minLen && subs<bandwidth; i++) {
 			subs+=(query[i]!=ref[i] ? 1 : 0);
 		}
 		return Math.min(subs+1, bandwidth);//At least 1
@@ -80,16 +87,21 @@ public class QuantumAligner implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		
 		//Create a visualizer if an output file is defined
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 
 		// Matrix exploration limits
 		final int bandWidth=decideBandwidth(query, ref);
-		final int topWidth=bandWidth*2;
-		final int sideWidth0=1;//Set to >1 if you want a sideband.
+		final int topWidth=Math.min(query.length, bandWidth*2);
+		//Lower insPad allows later top entrance
+		final int insPad=-16-rLen/128-(int)Math.sqrt(rLen)-(5*Math.max(0, rLen-qLen))/4;
+		final int denseWidth=DENSE_TOP ? Tools.min(topWidth, query.length-1) : 0;
+		final int sideWidth0=1;//Set to >1 if you want a sideband.  Do NOT set >rLen.
+		final int sideWidthMax=Tools.min(qLen, rLen);
 		final int rightExtend=(LOOP_VERSION ? Math.max(5, bandWidth-2) : 2);
-		final long scoreWidth0=(bandWidth+1L)<<SCORE_SHIFT;
+		final long scoreWidth0=(bandWidth+1L)<<SCORE_SHIFT;//aka sandbarWalkThreshold
 		
 //		System.err.println("BW="+bandWidth+", topW="+topWidth+", scoreW="+(scoreWidth0>>SCORE_SHIFT));
 		
@@ -97,49 +109,53 @@ public class QuantumAligner implements IDAligner{
 		long[] prev=new long[rLen+1], curr=new long[rLen+1];
 
 		// Create IntLists for tracking active positions
-		IntList activeList = new IntList(rLen+3);
-		IntList nextList = new IntList(rLen+3);
+		IntList activeList = new IntList(rLen+4);
+		IntList nextList = new IntList(rLen+4);//aka upcomingRapids
 
 		{// Initialize first row with starting position in the lower bits
 			final long mult=(GLOBAL ? DEL_INCREMENT : 1);
 			for(int j=0; j<=rLen; j++){prev[j]=j*mult;}
 		}
 		
-		final int sparseStart=DENSE_TOP ? topWidth : 1;
-		if(DENSE_TOP) {//Optionally use a dense strategy for aligning the top band
-			long[][] arrays=alignDense(query, ref, prev, curr, viz, topWidth, rLen);
+		final int sparseStart=1+denseWidth;
+		if(denseWidth>0) {//Optionally use a dense strategy for aligning the top band
+			long[][] arrays=alignDense(query, ref, prev, curr, viz, denseWidth+1, rLen);
 			curr=arrays[0];
 			prev=arrays[1];
 		}
 
 		// Initialize active list to all but first column
-		for(int j=0; j<=rLen; j++) {activeList.add(j);}
+		for(int j=0; j<=rLen; j++) {activeList.addUnchecked(j);}
 		
 		//Prefill next list
-		for(int j=0; (j<=sideWidth0 || j<=topWidth*2) && j<qLen; j++) {nextList.add(j);}
+		for(int j=0; (j<=sideWidth0 || j<=topWidth*2) && j<qLen; j++) {nextList.addUnchecked(j);}
 
+		int bridgeTime=BRIDGE_PERIOD;
 		int maxPos=0; // Best scoring position
 		long maxScore=BAD;
 		long prevRowScore=BAD;
 
 		// Fill alignment matrix using the sparse loop
 		for(int i=sparseStart; i<=qLen; i++){
-			// First column
-			curr[0]=i*INS;
+			curr[0]=i*INS;// Fill first column
 			
 			//Remove potential excess sites
 			//This allows simplifying branch structure in the inner loop
 			while(activeList.lastElement()>rLen) {activeList.pop();}
-			
+
+			final byte q=query[i-1];//Cache the query
+			final boolean nextMatch=(q==ref[Math.min(rLen-1, maxPos)]);
 			if(BUILD_BRIDGES){//Race to catch up with long deletions
-				int extra=((i&15)<1 ? 40 : 5);
+				boolean bridge=(bridgeTime<1 && !nextMatch);
+				int extra=nextMatch ? 2 : bridge ? 35 : 3;
+				bridgeTime=(bridge ? BRIDGE_PERIOD : bridgeTime-1);
 				int last=activeList.lastElement();
 				int eLimit=Math.min(last+extra, rLen);
 				for(int e=last+1; e<eLimit; e++) {
-					activeList.add(e);
+					activeList.addUnchecked(e);
 				}
 			}
-			if(loops>=0) {loops+=activeList.size()-1;}
+			mloops+=activeList.size()-1;
 			
 			//Clear the potential stale value in the last cell of prev.
 			//This action does not get seen by the visualizer
@@ -155,22 +171,22 @@ public class QuantumAligner implements IDAligner{
 //			nextList.add(1);
 			
 			//Moving the sideband test outside the inner loop is faster
-			final int sideWidth=Tools.mid(sideWidth0, topWidth*2-i, qLen);
+			final int sideWidth=Tools.mid(sideWidth0, topWidth*2-i, sideWidthMax);
 			assert(nextList.size()>=sideWidth || rLen<sideWidth) : "\nsize="+nextList.size+", sideW="+sideWidth
 					+", sideW0="+sideWidth0+", qLen="+qLen+", rLen="+rLen+", "+(topWidth*2-i)+"\n"+nextList;
-			nextList.size=sideWidth;
+			nextList.size=sideWidth;//Lists are supposed to be monotonically increasing
+			assert(nextList.size<=nextList.array.length) : nextList.size+", "+nextList.array.length;
 			assert(nextList.lastElement()+1==sideWidth || rLen<sideWidth) : nextList+", "+sideWidth;
 			
 			//Allows skipping topband test
 			final long scoreWidth=scoreWidth0+MATCH*(Math.max(0, topWidth-i));
 			
-			//Cache the query
-			final byte q=query[i-1];
-
+			final int forcedInsOffset=insPad-i;//j threshold for insertion penalty
+			
 			// Process only positions in the active list
 			for(int idx=1; idx<activeList.size; idx++){
-				int j = activeList.array[idx];
-				assert(j>0) : idx+", "+j;
+				int j=activeList.array[idx];
+				assert(j>0) : idx+", "+j;//This can fail with a super-short ref...
 				final byte r=ref[j-1];
 
 				// Branchless score calculation
@@ -190,17 +206,19 @@ public class QuantumAligner implements IDAligner{
 
 				// Find max using conditional expressions
 				final long maxDiagUp=Math.max(diagScore, upScore);//This is fine
+				final long insScoreMod=Math.max(0L, (j+forcedInsOffset)/2)<<SCORE_SHIFT;
 				//Changing this conditional to max or removing the mask causes a slowdown.
-				final long maxValue=(maxDiagUp&SCORE_MASK)>=leftScore ? maxDiagUp : leftScore;
-//				final long maxValue=Math.max(maxDiagUp, leftScore);
+				final long maxValue0=(maxDiagUp&SCORE_MASK)>=leftScore ? maxDiagUp : leftScore;
+				//insScoreMod prevents false paths when ANI<60%, but eliminates pretty clouds
+				final long maxValue=maxValue0-insScoreMod;
 
 				final long scoreDif=prevRowScore-maxValue;
 				final int last=nextList.array[nextList.size-1];
 				//Eliminating to topWidth test increases speed
-				final boolean add=j<rLen && (/*i<topWidth ||*/ j<sideWidth || scoreDif<scoreWidth);
+				final boolean add=j<=rLen && (/*i<topWidth ||*/ j<sideWidth || scoreDif<scoreWidth);
 //						|| (GLOBAL && j>=i && qLen-i<100)); This is only marginally useful 
 				final boolean live=(EXTEND_MATCH && isMatch & last<j+1);
-
+				
 				//Important: Injecting "BAD" into these cells clears stale values.
 				//Update current cell
 				curr[j]=(add || live ? maxValue : BAD);
@@ -243,26 +261,40 @@ public class QuantumAligner implements IDAligner{
 				maxPos=better ? j : maxPos;
 			}
 			if(viz!=null) {viz.print(curr, activeList, rLen);}
-
+			
 			// Swap rows
 			long[] temp=prev;
 			prev=curr;
 			curr=temp;
 
 			// Swap position lists
-			IntList tempList = activeList;
-			activeList = nextList;
-			nextList = tempList;
+			IntList tempList=activeList;
+			activeList=nextList;
+			nextList=tempList;
 		}
 		if(viz!=null) {viz.shutdown();}// Terminate visualizer
 		if(GLOBAL) {maxPos=rLen;maxScore=prev[rLen-1]+DEL_INCREMENT;}//The last cell may be empty 
+		loops.addAndGet(mloops);
 		return postprocess(maxScore, maxPos, qLen, rLen, posVector);
 	}
 	
 	// Process the first topWidth rows using a dense approach
+	/**
+	 * Processes the first topWidth rows using dense matrix approach.
+	 * Used for initial alignment before switching to sparse traversal strategy.
+	 *
+	 * @param query Query sequence
+	 * @param ref Reference sequence
+	 * @param prev Previous row array
+	 * @param curr Current row array
+	 * @param viz Optional visualizer for debugging
+	 * @param topWidth Number of rows to process densely
+	 * @param rLen Reference sequence length
+	 * @return Array containing [current_row, previous_row] arrays
+	 */
 	private static final long[][] alignDense(byte[] query, byte[] ref, long[] prev, 
 			long[] curr, Visualizer viz, int topWidth, int rLen) {
-		
+		long mloops=0;
 		for(int i=1; i<topWidth; i++) {
 			// First column penalizes clipping
 			curr[0]=i*INS;
@@ -302,9 +334,9 @@ public class QuantumAligner implements IDAligner{
 			curr=temp;
 
 			// Count loops for analysis
-			if(loops>=0) {loops+=rLen;}
+			mloops+=rLen;
 		}
-		
+		loops.addAndGet(mloops);
 		return new long[][] {curr, prev};
 	}
 	
@@ -368,6 +400,23 @@ public class QuantumAligner implements IDAligner{
 		
 		return identity;
 	}
+	
+	/**
+	 * Converts bit-packed score array to readable format for debugging.
+	 * Extracts raw scores by shifting out position and deletion bits.
+	 * @param array Array of bit-packed scores
+	 * @return ByteBuilder containing formatted score values
+	 */
+	private static ByteBuilder toScore(long[] array) {
+		ByteBuilder bb=new ByteBuilder();
+		bb.append('[');
+		for(int i=0; i<array.length; i++) {
+			bb.append(array[i]>>SCORE_SHIFT);
+			bb.append(',');
+		}
+		bb.set(bb.length-1, ']');
+		return bb;
+	}
 
 	/**
 	 * Lightweight wrapper for aligning to a window of the reference.
@@ -394,9 +443,17 @@ public class QuantumAligner implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/**
+	 * Thread-safe counter for total matrix cell evaluations across all alignment operations
+	 */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the total number of matrix cell evaluations performed.
+	 * @return Current loop count across all alignments */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter to a specific value.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output file path for visualization debugging */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -404,33 +461,61 @@ public class QuantumAligner implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/**
+	 * Number of bits used to encode position information in packed scores (21 bits = 2M positions)
+	 */
 	private static final int POSITION_BITS=21;
+	/** Number of bits used to encode deletion count in packed scores */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount to extract raw alignment score from packed value */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from packed scores */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed scores */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting raw alignment score from packed values */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for matching bases */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substitutions */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deletions */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for ambiguous base (N) matches - neutral penalty */
 	private static final long N_SCORE=0L;
+	/** Sentinel value indicating invalid or uncomputed alignment cells */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/**
+	 * Combined deletion penalty and position increment for quantum teleportation feature
+	 */
 	private static final long DEL_INCREMENT=DEL+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Whether to extend alignment from matching cells for deletion detection */
 	private static final boolean EXTEND_MATCH=true;
+	/**
+	 * Whether to use loop-based position addition (false = faster loop-free version)
+	 */
 	private static final boolean LOOP_VERSION=false;
+	/** Whether to build bridges for catching up with long deletions */
 	private static final boolean BUILD_BRIDGES=true;
-	private static final boolean DENSE_TOP=true;
+	/** Frequency of bridge-building attempts in alignment rows */
+	private static final int BRIDGE_PERIOD=16;
+	/** Whether to use dense alignment strategy for top band of matrix */
+	private static final boolean DENSE_TOP=false;
+	/** Debug flag for printing detailed operation counts and statistics */
 	private static final boolean PRINT_OPS=false;
+//	private static final boolean debug=false;
 	// This will force full-length alignment, but it will only be optimal
 	// if the global alignment is within the glocal bandwidth.
 	// Better to use Banded/Glocal for arbitrary global alignments.
+	/** Whether to force full-length global alignment instead of local alignment */
 	public static final boolean GLOBAL=false;
 
 }

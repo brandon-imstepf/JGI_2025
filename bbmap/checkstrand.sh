@@ -17,6 +17,8 @@ calculated in different ways, and thus will not exactly agree, but should be
 close.  For most calculations, only read 1 is used, or the merge of read 1
 and read 2 if the merge flag is enabled and they overlap.
 
+Usage:  checkstrand.sh in=<input file>
+
 
 Output meaning:
 
@@ -76,8 +78,6 @@ PlusFeatures:   Fraction of features with majority plus-mapped reads.
 AlignmentRate:  Fraction of reads that aligned.
 Feature-Mapped: Fraction of reads that aligned to a feature in the gff.
 
-
-Usage:  checkstrand.sh in=<input file>
 
 Running on a fastq is simple, but there are multiple ways to run CheckStrand
 on aligned data (in=, ref=, and gff= flags are not needed if the files have
@@ -151,6 +151,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -185,7 +186,7 @@ calcXmx () {
 calcXmx "$@"
 
 checkstrand() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.CheckStrand2 $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.CheckStrand2 $@"
 	echo $CMD >&2
 	eval $CMD
 }

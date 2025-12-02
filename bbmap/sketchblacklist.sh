@@ -28,7 +28,7 @@ entropy=0.66        Ignore sequence with entropy below this value.
 keyfraction=0.16    Smaller values reduce blacklist size by ignoring a
                     a fraction of the key space.  Range: 0.0001-0.5.
 
-Taxonomy-specific flags:
+Taxonomy-specific parameters:
 tree=               Specify a taxtree file.  On Genepool, use 'auto'.
 gi=                 Specify a gitable file.  On Genepool, use 'auto'.
 accession=          Specify one or more comma-delimited NCBI accession to
@@ -54,6 +54,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -94,7 +95,7 @@ calcXmx () {
 calcXmx "$@"
 
 sketchblacklist() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.BlacklistMaker $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.BlacklistMaker $@"
 	echo $CMD >&2
 	eval $CMD
 }

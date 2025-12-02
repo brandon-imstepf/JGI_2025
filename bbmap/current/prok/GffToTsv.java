@@ -1,105 +1,126 @@
 package prok;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.util.zip.GZIPInputStream;
+import java.util.ArrayDeque;
+
+import fileIO.ByteFile;
+import fileIO.ByteStreamWriter;
+import shared.LineParser1;
+import structures.ByteBuilder;
 
 /**
- * Converts a GFF file with custom VECTOR attributes into a TSV file
- * suitable for machine learning. This version intelligently removes the
- * entire text-based contig ID from the vector, even if it contains commas.
+ * Converts a GFF file with custom VECTOR attributes into a TSV file suitable
+ * for machine learning. Uses ByteFile/ByteStreamWriter so both ends stream and
+ * gzipped inputs/outputs are handled automatically. The VECTOR attribute often
+ * embeds the contig ID (which may contain commas or digits) ahead of the
+ * numeric payload, so this implementation pulls numeric tokens from the end of
+ * the attribute until all feature (and optional label) columns are captured.
  */
 public class GffToTsv {
+
+    private static final int FEATURE_COLUMNS = 356;
+    private static final int LABEL_COLUMNS = 1; // present when true genes are known
+    private static final int MAX_NUMERIC_COLUMNS = FEATURE_COLUMNS + LABEL_COLUMNS;
 
     public static void main(String[] args) {
         String inFile = null;
         String outFile = null;
-        String label = "0"; // Default label for the 'match' column
 
         for (String arg : args) {
             String[] split = arg.split("=");
             String key = split[0].toLowerCase();
             String value = split.length > 1 ? split[1] : null;
 
-            if (key.equals("in")) inFile = value;
-            else if (key.equals("out")) outFile = value;
-            else if (key.equals("label")) label = value;
+            if (key.equals("in")) { inFile = value; }
+            else if (key.equals("out")) { outFile = value; }
         }
 
         if (inFile == null || outFile == null) {
-            System.err.println("Usage: java prok.GffToTsv in=<file.gff> out=<file.tsv> label=<value>");
+            System.err.println("Usage: java prok.GffToTsv in=<file.gff> out=<file.tsv>");
             System.exit(1);
         }
 
-        try (BufferedReader reader = openReader(inFile);
-             BufferedWriter writer = new BufferedWriter(new FileWriter(outFile))) {
-            
-            System.err.println("Converting " + inFile + " to " + outFile + " with label " + label);
+        System.err.println("Converting " + inFile + " to " + outFile);
 
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("#")) continue;
+        ByteFile reader = null;
+        ByteStreamWriter writer = null;
+        LineParser1 parser = new LineParser1('\t');
+        ByteBuilder bb = new ByteBuilder(4096);
+        long written = 0;
 
-                String[] parts = line.split("\t");
-                if (parts.length < 9) continue;
+        try {
+            reader = ByteFile.makeByteFile(inFile, true);
+            writer = new ByteStreamWriter(outFile, true, false, true);
+            writer.start();
 
-                String attributes = parts[8];
+            for (byte[] line = reader.nextLine(); line != null; line = reader.nextLine()) {
+                if (line.length == 0 || line[0] == '#') { continue; }
+                parser.set(line);
+                if (parser.terms() < 9) { continue; }
+
+                String attributes = parser.parseString(8);
                 int vectorIndex = attributes.indexOf("VECTOR=");
-                
-                if (vectorIndex != -1) {
-                    String fullVector = attributes.substring(vectorIndex + 7);
-                    
-                    String[] vectorParts = fullVector.split(",");
-                    int numericalStartIndex = -1;
+                if (vectorIndex < 0) { continue; }
 
-                    // Find the first part of the vector that is a valid number.
-                    for (int i = 0; i < vectorParts.length; i++) {
-                        try {
-                            // We only need to check if it's a valid double.
-                            Double.parseDouble(vectorParts[i].trim());
-                            numericalStartIndex = i;
-                            break; // Found the first number, stop searching.
-                        } catch (NumberFormatException e) {
-                            // This part is not a number, so it must be part of the text ID. Continue.
-                        }
-                    }
+                String vectorData = attributes.substring(vectorIndex + 7);
+                int semi = vectorData.indexOf(';');
+                if (semi >= 0) { vectorData = vectorData.substring(0, semi); }
 
-                    if (numericalStartIndex != -1) {
-                        // Rebuild the string as a tab-separated line, starting from the first numerical part.
-                        StringBuilder tsvBuilder = new StringBuilder();
-                        for (int i = numericalStartIndex; i < vectorParts.length; i++) {
-                            if (i > numericalStartIndex) {
-                                tsvBuilder.append('\t');
-                            }
-                            tsvBuilder.append(vectorParts[i].trim());
-                        }
-                        
-                        // The tsvBuilder now contains the full line, including the label from the vector.
-                        // The 'label' argument from the command line is ignored as it's redundant.
-                        writer.write(tsvBuilder.toString());
-                        writer.newLine();
-                    }
-                    // If no numerical part is found in the vector, we simply skip writing the line.
+                ArrayDeque<String> numericTokens = extractNumericTokens(vectorData);
+                if (numericTokens.size() < FEATURE_COLUMNS) {
+                    System.err.println("WARNING: Skipping line due to insufficient numeric columns (found "
+                            + numericTokens.size() + ")");
+                    continue;
                 }
-            }
-            System.err.println("Conversion complete.");
 
-        } catch (IOException e) {
+                bb.clear();
+                boolean first = true;
+                for (String token : numericTokens) {
+                    if (!first) { bb.append('\t'); }
+                    bb.append(token);
+                    first = false;
+                }
+
+                writer.println(bb.toString());
+                written++;
+            }
+
+            System.err.println("Conversion complete. Wrote " + written + " rows.");
+
+        } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (reader != null) { reader.close(); }
+            if (writer != null) { writer.poisonAndWait(); }
         }
     }
 
-    private static BufferedReader openReader(String filePath) throws IOException {
-        InputStream is = new FileInputStream(filePath);
-        if (filePath.endsWith(".gz")) {
-            is = new GZIPInputStream(is);
+    private static ArrayDeque<String> extractNumericTokens(String vectorData) {
+        ArrayDeque<String> tokens = new ArrayDeque<>(MAX_NUMERIC_COLUMNS);
+        int end = vectorData.length();
+        int numericCount = 0;
+
+        while (end > 0) {
+            int start = vectorData.lastIndexOf(',', end - 1);
+            int tokenStart = (start < 0) ? 0 : start + 1;
+            String token = vectorData.substring(tokenStart, end).trim();
+
+            if (!token.isEmpty()) {
+                try {
+                    Double.parseDouble(token);
+                    tokens.addFirst(token);
+                    numericCount++;
+                    if (numericCount == MAX_NUMERIC_COLUMNS) {
+                        break;
+                    }
+                } catch (NumberFormatException e) {
+                    break; // reached textual contig segment
+                }
+            }
+
+            if (start < 0) { break; }
+            end = start;
         }
-        return new BufferedReader(new InputStreamReader(is));
+
+        return tokens;
     }
 }

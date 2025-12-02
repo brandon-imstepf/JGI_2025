@@ -139,7 +139,7 @@ requiressu=f        Ignore records without SSUs.
 minrefsize=0        Ignore ref sketches smaller than this (unique kmers).
 minrefsizebases=0   Ignore ref sketches smaller than this (total base pairs).
 
-Output format:
+Output format parameters:
 format=2            2: Default format with, per query, one query header line;
                        one column header line; and one reference line per hit.
                     3: One line per hit, with columns query, reference, ANI,
@@ -150,7 +150,7 @@ usetaxidname=f      For format 3, print the taxID in the name column.
 usetaxname          for format 3, print the taxonomic name in the name column.
 useimgname          For format 3, print the img ID in the name column.
 
-Output columns (for format=2):
+Output column parameters (for format=2):
 printall=f          Enable all output columns.
 printani=t          (ani) Print average nucleotide identity estimate.
 completeness=t      Genome completeness estimate.
@@ -196,7 +196,7 @@ printcal=f          Print common ancestor tax level, if query taxID is known.
 recordsperlevel=0   If query TaxID is known, and this is positive, print this
                     many records per common ancestor level.
 
-Sorting:
+Sorting parameters:
 sortbyscore=t       Default sort order is by score, a composite metric.
 sortbydepth=f       Include depth as a factor in sort order.
 sortbydepth2=f      Include depth2 as a factor in sort order.
@@ -220,7 +220,7 @@ color=family        Color records at the family level.  color=f will disable.
                     writing to a file.  Requires the taxtree to be loaded.
 intersect=f         Print sketch intersections.  delta=f is suggested.
 
-Metadata flags (optional, for the query sketch header):
+Metadata parameters (optional, for the query sketch header):
 taxid=-1            Set the NCBI taxid.
 imgid=-1            Set the IMG id.
 spid=-1             Set the JGI sequencing project id.
@@ -246,6 +246,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -286,7 +287,7 @@ calcXmx () {
 calcXmx "$@"
 
 comparesketch() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.CompareSketch $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.CompareSketch $@"
 #	echo $CMD >&2
 	eval $CMD
 }

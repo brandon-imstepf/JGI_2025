@@ -1,6 +1,7 @@
 package stream;
 
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -14,11 +15,21 @@ import shared.LineParser1;
 import shared.Parse;
 import shared.Shared;
 import shared.Tools;
+import shared.Vector;
 import structures.ByteBuilder;
 import var2.ScafMap;
 import var2.Scaffold;
 
 
+/**
+ * Represents a single line in a SAM (Sequence Alignment/Map) format file.
+ * Provides comprehensive parsing, manipulation, and generation of SAM records
+ * with support for all standard SAM fields and optional tags. Handles conversion
+ * between SAM format and internal Read objects, CIGAR string processing,
+ * and various alignment quality calculations.
+ *
+ * @author Brian Bushnell
+ */
 public class SamLine implements Serializable {
 	
 //	426_647_582	161	chr1	10159	0	26M9H	chr3	170711991	0	TCCCTAACCCTAACCCTAACCTAACC	IIFIIIIIIIIIIIIIIIIIICH2<>	RG:Z:20110708003021394	NH:i:3	CM:i:2	SM:i:1	CQ:Z:A9?(BB?:<A?>=>B67=:7A);.%8'%))/%*%'	CS:Z:G12002301002301002301023010200000003	XS:A:+
@@ -44,32 +55,20 @@ public class SamLine implements Serializable {
 	/*----------------        Initialization        ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	/**
-	 * 
-	 */
+	/** Serialization version identifier */
 	private static final long serialVersionUID = -4180486051387471116L;
 
-	public SamLine(String s){//TODO: Change to LineParser version
-		this(s.split("\t"));
-	}
+	/** Creates an empty SamLine instance */
+	public SamLine() {}
 
+	/** Copy constructor that creates a new SamLine from an existing one.
+	 * @param sl Source SamLine to copy */
 	public SamLine(SamLine sl){
 		setFrom(sl);
 	}
 	
-//	/** Prevents references to original string, in case of e.g. very long MD tags. */
-//	public SamLine toSamLine(String s){
-//		String[] split=s.split("\t");
-//		split[0]=new String(split[0]);
-//		split[5]=new String(split[5]);
-//		split[9]=new String(split[9]);
-//		split[10]=new String(split[10]);
-//		for(int i=11; i<split.length; i++){
-//			split[i]=new String(split[i]);
-//		}
-//		return new SamLine(split);
-//	}
-	
+	/** Copies all fields from another SamLine to this instance.
+	 * @param sl Source SamLine to copy from */
 	private void setFrom(SamLine sl){
 		qname=sl.qname;
 		flag=sl.flag;
@@ -86,7 +85,13 @@ public class SamLine implements Serializable {
 		optional=sl.optional;
 	}
 	
-	
+	/**
+	 * Creates a SamLine from a Read object, calculating SAM fields from
+	 * alignment information. Handles paired-end reads, CIGAR generation,
+	 * and coordinate calculations.
+	 * @param r1 Primary read to convert
+	 * @param fragNum Fragment number (0 for first, 1 for second in pair)
+	 */
 	public SamLine(Read r1, int fragNum){
 		
 		if(verbose){
@@ -418,100 +423,55 @@ public class SamLine implements Serializable {
 //		assert(r.pairnum()==1) : "\n"+r.toText(false)+"\n"+this+"\n"+r2;
 	}
 	
-	public SamLine(String[] s){
-		assert(!s[0].startsWith("@")) : "Tried to make a SamLine from a header: "+s[0];
-		assert(s.length>=11) : "\nNot all required fields are present: "+s.length+"\nline='"+Arrays.toString(s)+"'\n";
-		if(s.length<11){
-			System.err.println("Invalid SamLine: "+Arrays.toString(s));
-			return;
-		}
-		qname=s[0];
-		flag=Integer.parseInt(s[1]);
-		if(RNAME_AS_BYTES){
-			rname=s[2].getBytes();
-		}else{
-			rnameS=s[2];
-		}
-		pos=Integer.parseInt(s[3]);
-//		try {
-//			Integer.parseInt(s[4]);
-//		} catch (NumberFormatException e) {
-//			System.err.println(Arrays.toString(s));
-//		}
-		mapq=Tools.isDigit(s[4].charAt(0)) ? Integer.parseInt(s[4]) : 99; //Added for non-compliant mappers that put * here
-		cigar=s[5];
-		rnext=s[6].getBytes();
-		pnext=(s[7].charAt(0)=='*' ? 0 : Integer.parseInt(s[7]));
-		tlen=Tools.isDigit(s[8].charAt(0)) ? Integer.parseInt(s[8]) : 0; //Added for non-compliant mappers that put * here
-//		seq=s[9];
-//		qual=s[10];
-		seq=(s[9].equals(stringstar) ? null : s[9].getBytes());
-		qual=(s[10].equals(stringstar) ? null : s[10].getBytes());
-		
-		if(mapped() && strand()==Shared.MINUS){
-			if(seq!=bytestar){AminoAcid.reverseComplementBasesInPlace(seq);}
-			if(qual!=bytestar){Tools.reverseInPlace(qual);}
-		}
-		
-		if(qual!=null && qual!=bytestar){
-			for(int i=0; i<qual.length; i++){qual[i]-=33;}
-		}
-		
-		if(!PARSE_OPTIONAL || s.length<=11){return;}
-		
-		if(PARSE_OPTIONAL_MD_ONLY){
-			optional=new ArrayList<String>(1);
-			for(int i=11; i<s.length; i++){
-				if(s[i].startsWith("MD:")){
-					mdTag=s[i].substring(3).getBytes();
-					optional.add(s[i]);
-					break;
-				}
-			}
-		}else{
-			optional=new ArrayList<String>(s.length-11);
-			for(int i=11; i<s.length; i++){
-				if(s[i].startsWith("MD:")){
-					mdTag=s[i].substring(3).getBytes();
-				}
-				optional.add(s[i]);
-			}
-		}
-		
-		trimNames();
-	}
-	
+	/** Creates a SamLine using a LineParser1 for efficient parsing.
+	 * @param lp LineParser1 positioned at a SAM line */
 	public SamLine(LineParser1 lp){
 		assert(!lp.startsWith('@')) : "Tried to make a SamLine from a header: "+lp.toString();
 		
 		if(PARSE_0){qname=lp.parseString(0);}
 		flag=lp.parseInt(1);
 		if(PARSE_2){
+			lp.setBounds(2);
+			boolean isStar=lp.currentTermEquals(star);
 			if(RNAME_AS_BYTES){
-				rname=(lp.termEquals('*', 2)) ? null : lp.parseByteArray(2);
+				rname=(isStar) ? null : lp.parseByteArray(2);
 			}else {
-				rnameS=(lp.termEquals('*', 2)) ? null : lp.parseString(2);
+				rnameS=(isStar) ? null : lp.parseString(2);
 			}
 		}
 		pos=lp.parseInt(3);
 		mapq=lp.parseInt(4);
 		if(PARSE_5){cigar=lp.parseString(5);}
-		if(PARSE_6){rnext=lp.parseByteArray(6);}
-		if(PARSE_7){pnext=lp.parseInt(7);}
+		if(PARSE_6){
+			int len=lp.setBounds(6);
+			rnext=lp.currentTermEquals(star) ? null : lp.parseByteArrayFromCurrentField();
+		}
+		
+		if(PARSE_7){
+			int len=lp.setBounds(7);
+			pnext=(len<1 || lp.currentTermEquals(star)) ? 0 : lp.parseIntFromCurrentField();
+		}
 		if(PARSE_8){tlen=lp.parseInt(8);}
-		seq=lp.parseByteArray(9);
-		if(PARSE_10){qual=lp.parseByteArray(10);}
-
+		{
+			int len=lp.setBounds(9);
+			seq=(len<1 || lp.currentTermEquals(star)) ? null : lp.parseByteArrayFromCurrentField();
+		}
+		if(PARSE_10){
+			int len=lp.setBounds(10);
+			qual=(len<1 || lp.currentTermEquals(star)) ? null : lp.parseByteArrayFromCurrentField();
+		}
+		
 		assert((seq==bytestar)==(Tools.equals(seq, bytestar)));
 		assert((qual==bytestar)==(Tools.equals(qual, bytestar)));
 		
-		if(mapped() && strand()==Shared.MINUS && FLIP_ON_LOAD){
-			if(seq!=bytestar){AminoAcid.reverseComplementBasesInPlace(seq);}
-			if(qual!=bytestar){Tools.reverseInPlace(qual);}
+		if(FLIP_ON_LOAD && mapped() && strand()==Shared.MINUS){
+			if(seq!=null && qual!=bytestar){Vector.reverseComplementInPlaceFast(seq);}
+			if(qual!=null && qual!=bytestar){Vector.reverseInPlace(qual);}
 		}
 		
 		if(qual!=null && qual!=bytestar){
-			for(int i=0; i<qual.length; i++){qual[i]-=33;}
+//			for(int i=0; i<qual.length; i++){qual[i]-=33;}
+			Vector.add(qual, (byte)(-33));
 		}
 		
 		if(PARSE_OPTIONAL && lp.terms()>11) {
@@ -521,8 +481,16 @@ public class SamLine implements Serializable {
 					if(lp.termStartsWith("MD:", i)){
 						String s=lp.parseString(i);
 						optional.add(s);
-						lp.incrementA(3);
-						mdTag=lp.parseByteArrayFromCurrentField();
+//						lp.incrementA(5);
+//						mdTag=lp.parseByteArrayFromCurrentField();//Not really needed
+					}
+				}
+			}else if(PARSE_OPTIONAL_MATEQ_ONLY) {
+				optional=new ArrayList<String>(1);
+				for(int i=11, terms=lp.terms(); i<terms; i++) {
+					if(lp.termStartsWith("YQ:", i)){
+						String s=lp.parseString(i);
+						optional.add(s);
 					}
 				}
 			}else{
@@ -537,150 +505,8 @@ public class SamLine implements Serializable {
 		trimNames();
 	}
 	
-	//TODO: Should be replaced by LineParser
-	public SamLine(byte[] s){
-		assert(s[0]!='@') : "Tried to make a SamLine from a header: "+new String(s);
-		
-		int a=0, b=0;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 0: "+new String(s);
-		if(PARSE_0){qname=(b==a+1 && s[a]=='*' ? null : new String(s, a, b-a));}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 1: "+new String(s);
-		flag=Parse.parseInt(s, a, b);
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 2: "+new String(s);
-		if(PARSE_2){
-			if(RNAME_AS_BYTES){
-				rname=(b==a+1 && s[a]=='*' ? null : KillSwitch.copyOfRange(s, a, b));
-			}else{
-				rnameS=(b==a+1 && s[a]=='*' ? null : new String(s, a, b-a));
-			}
-		}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 3: "+new String(s);
-		pos=Parse.parseInt(s, a, b);
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 4: "+new String(s);
-		mapq=Parse.parseInt(s, a, b);
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 5: "+new String(s);
-		if(PARSE_5){cigar=(b==a+1 && s[a]=='*' ? null : new String(s, a, b-a));}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 6: "+new String(s);
-		if(PARSE_6){rnext=(b==a+1 && s[a]=='*' ? null : KillSwitch.copyOfRange(s, a, b));}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 7: "+new String(s);
-		if(PARSE_7){pnext=(b==a+1 && s[a]=='*' ? 0 :Parse.parseInt(s, a, b));}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 8: "+new String(s);
-		if(PARSE_8){tlen=Parse.parseInt(s, a, b);}
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 9: "+new String(s);
-//		seq=new String(s, a, b-a);
-		seq=(b==a+1 && s[a]=='*' ? null : KillSwitch.copyOfRange(s, a, b));
-		b++;
-		a=b;
-		
-		while(b<s.length && s[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 10: "+new String(s);
-//		qual=new String(s, a, b-a);
-		if(PARSE_10){qual=(b==a+1 && s[a]=='*' ? null : KillSwitch.copyOfRange(s, a, b));}
-		b++;
-		a=b;
-
-		assert((seq==bytestar)==(Tools.equals(seq, bytestar)));
-		assert((qual==bytestar)==(Tools.equals(qual, bytestar)));
-		
-		if(mapped() && strand()==Shared.MINUS && FLIP_ON_LOAD){
-			if(seq!=bytestar){AminoAcid.reverseComplementBasesInPlace(seq);}
-			if(qual!=bytestar){Tools.reverseInPlace(qual);}
-		}
-		
-		if(qual!=null && qual!=bytestar){
-			for(int i=0; i<qual.length; i++){qual[i]-=33;}
-		}
-
-		if(PARSE_OPTIONAL && b<s.length) {
-			if(PARSE_OPTIONAL_MD_ONLY) {
-				optional=new ArrayList<String>(1);
-				while(b<s.length){
-					while(b<s.length && s[b]!='\t'){b++;}
-					if(b>a){
-						if(b>=a+3 && s[a]=='M' && s[a+1]=='D' && s[a+2]==':'){
-							String x=new String(s, a, b-a);
-							optional.add(x);
-							return;
-						}
-					}else{
-						//Empty field
-					}
-					b++;
-					a=b;
-				}
-			}else if(PARSE_OPTIONAL_MATEQ_ONLY) {
-				optional=new ArrayList<String>(1);
-				while(b<s.length){
-					while(b<s.length && s[b]!='\t'){b++;}
-					if(b>a){
-						if(b>=a+3 && s[a]=='Y' && s[a+1]=='Q' && s[a+2]==':'){
-							String x=new String(s, a, b-a);
-							optional.add(x);
-							return;
-						}
-					}else{
-						//Empty field
-					}
-					b++;
-					a=b;
-				}
-			}else{
-				optional=new ArrayList<String>(4);
-				while(b<s.length){
-					while(b<s.length && s[b]!='\t'){b++;}
-					if(b>a){
-						String x=new String(s, a, b-a);
-						optional.add(x);
-					}else{
-						//Empty field
-					}
-					b++;
-					a=b;
-				}
-			}
-		}
-		
-		trimNames();
-	}
-	
+	/** Trims reference names and read names to whitespace boundaries
+	 * if configured via global flags TRIM_RNAME and TRIM_READ_COMMENTS. */
 	public void trimNames(){
 //		System.err.println();
 //		System.err.println("rname= "+new String(rname));
@@ -702,6 +528,11 @@ public class SamLine implements Serializable {
 //		assert(false) : Shared.TRIM_RNAME+", "+Shared.TRIM_READ_COMMENTS+", "+new String(rname)+", "+qname;
 	}
 	
+	/**
+	 * Extracts only the FLAG field from a SAM line byte array.
+	 * @param s Byte array containing SAM line
+	 * @return FLAG value, or -1 if header line
+	 */
 	public static final int parseFlagOnly(byte[] s){
 		assert(s!=null && s.length>0) : "Blank line.";
 		if(s[0]=='@'){return -1;}
@@ -719,6 +550,11 @@ public class SamLine implements Serializable {
 		return flag;
 	}
 	
+	/**
+	 * Extracts only the QNAME field from a SAM line byte array.
+	 * @param s Byte array containing SAM line
+	 * @return QNAME string, or null if header line or missing
+	 */
 	public static final String parseNameOnly(byte[] s){
 		assert(s!=null && s.length>0) : "Blank line.";
 		if(s[0]=='@'){return null;}
@@ -727,7 +563,7 @@ public class SamLine implements Serializable {
 		
 		while(b<s.length && s[b]!='\t'){b++;}
 		assert(b>a) : "Missing field 0: "+new String(s);
-		String qname=(b==a+1 && s[a]=='*' ? null : new String(s, a, b-a));
+		String qname=(b==a+1 && s[a]=='*' ? null : new String(s, a, b-a, StandardCharsets.US_ASCII));
 		return qname;
 	}
 	
@@ -735,6 +571,15 @@ public class SamLine implements Serializable {
 	/*----------------             Cigar            ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Converts a match string to SAM v1.3 CIGAR format (uses M for matches/mismatches).
+	 * @param match BBTools match string
+	 * @param readStart Start position on reference
+	 * @param readStop Stop position on reference
+	 * @param reflen Reference sequence length
+	 * @param bases Query bases for validation
+	 * @return CIGAR string in v1.3 format
+	 */
 	public static String toCigar13(byte[] match, int readStart, int readStop, long reflen, byte[] bases){
 		if(match==null || readStart==readStop){return null;}
 		ByteBuilder sb=new ByteBuilder(8);
@@ -800,6 +645,11 @@ public class SamLine implements Serializable {
 		return sb.toString();
 	}
 	
+	/**
+	 * Converts SAM v1.4+ CIGAR (with = and X) to v1.3 format (M only).
+	 * @param cigar14 CIGAR string in v1.4+ format
+	 * @return CIGAR string in v1.3 format
+	 */
 	public static String toCigar13(String cigar14) {
 		if(cigar14==null){return null;}
 		final int len=cigar14.length();
@@ -837,6 +687,15 @@ public class SamLine implements Serializable {
 	}
 	
 	
+	/**
+	 * Converts a match string to SAM v1.4+ CIGAR format (uses = and X).
+	 * @param match BBTools match string
+	 * @param readStart Start position on reference
+	 * @param readStop Stop position on reference
+	 * @param reflen Reference sequence length
+	 * @param bases Query bases for validation
+	 * @return CIGAR string in v1.4+ format
+	 */
 	public static String toCigar14(byte[] match, int readStart, int readStop, long reflen, byte[] bases){
 //		assert(false) : readStart+", "+readStop+", "+reflen;
 		if(match==null || readStart==readStop){return null;}
@@ -911,6 +770,8 @@ public class SamLine implements Serializable {
 		return sb.toString();
 	}
 
+	/** Tests if CIGAR string contains only match (M) and exact match (=) operations.
+	 * @return True if CIGAR has only M, =, and digits */
 	public boolean cigarContainsOnlyME() {
 		if(cigar==null || cigar.length()==0){return false;}
 		for(int i=0; i<cigar.length(); i++){
@@ -924,10 +785,22 @@ public class SamLine implements Serializable {
 		return true;
 	}
 	
+	/**
+	 * Calculates reference span length from this SamLine's CIGAR string.
+	 * @param includeSoftClip Whether to include soft-clipped bases
+	 * @param includeHardClip Whether to include hard-clipped bases
+	 * @return Reference length consumed by alignment
+	 */
 	public int calcCigarLength(boolean includeSoftClip, boolean includeHardClip){
 		return calcCigarLength(cigar, includeSoftClip, includeHardClip);
 	}
 	
+	/**
+	 * Calculates query sequence length from this SamLine's CIGAR string.
+	 * @param includeSoftClip Whether to include soft-clipped bases
+	 * @param includeHardClip Whether to include hard-clipped bases
+	 * @return Query length consumed by alignment
+	 */
 	public int calcCigarReadLength(boolean includeSoftClip, boolean includeHardClip){
 		return calcCigarReadLength(cigar, includeSoftClip, includeHardClip);
 	}
@@ -1099,6 +972,11 @@ public class SamLine implements Serializable {
 		return len;
 	}
 	
+	/**
+	 * Counts substitutions in an MD tag string.
+	 * @param mdTag MD tag value (with or without MD:Z: prefix)
+	 * @return Number of substitutions found
+	 */
 	public static int countMdSubs(String mdTag){
 		assert(mdTag!=null);
 
@@ -1231,6 +1109,8 @@ public class SamLine implements Serializable {
 		return dels-inss;
 	}
 
+	/** Counts aligned bases excluding clipped regions.
+	 * @return Number of mapped non-clipped bases */
 	public int mappedNonClippedBases() {
 		if(!mapped() || cigar==null){return 0;}
 		
@@ -1289,6 +1169,8 @@ public class SamLine implements Serializable {
 		return msdic;
 	}
 
+	/** Calculates alignment identity from CIGAR string.
+	 * @return Identity fraction (0.0 to 1.0) */
 	public float calcIdentity() {
 		assert(cigar!=null);
 		int match=0, other=0;
@@ -1320,6 +1202,8 @@ public class SamLine implements Serializable {
 		return match/(float)Tools.max(match+other, 1);
 	}
 	
+	/** Counts substitutions (X operations) in CIGAR string.
+	 * @return Number of substitutions */
 	public int countSubs() {
 		if(cigar==null){return 0;}
 		
@@ -1519,7 +1403,7 @@ public class SamLine implements Serializable {
 		final byte[] bases;
 		if(refBases!=null){
 //			bases=(strand()==1) ? AminoAcid.reverseComplementBases(seq) : seq;//Why not reverse in place?
-			if(strand()==1){AminoAcid.reverseComplementBasesInPlace(seq);}
+			if(strand()==1){Vector.reverseComplementInPlaceFast(seq);}
 			bases=seq;
 		}else{bases=null;}
 
@@ -1572,7 +1456,7 @@ public class SamLine implements Serializable {
 		
 		final byte[] match=Read.toShortMatchString(longmatch);
 		
-		if(bases!=null && strand()==1){AminoAcid.reverseComplementBasesInPlace(seq);}
+		if(bases!=null && strand()==1){Vector.reverseComplementInPlace(seq);}
 		
 //		System.err.println("Block 7.");//123
 //		System.err.println("Returning "+new String(match));//123
@@ -1671,26 +1555,55 @@ public class SamLine implements Serializable {
 	/*----------------             Tags             ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Creates YS custom tag indicating stop position.
+	 * @param pos Start position
+	 * @param seqLength Sequence length
+	 * @param cigar CIGAR string
+	 * @param perfect Whether alignment is perfect
+	 * @return YS tag string
+	 */
 	public static String makeStopTag(int pos, int seqLength, String cigar, boolean perfect){
 //		return "YS:i:"+(pos+((cigar==null || perfect) ? seqLength : -countLeadingClip(cigar, false)+calcCigarLength(cigar, false))-1); //123456789
 		return "YS:i:"+(pos+((cigar==null || perfect) ? seqLength : calcCigarLength(cigar, true, false))-1);
 	}
 	
+	/**
+	 * Creates YL custom tag indicating query and reference lengths.
+	 * @param pos Start position
+	 * @param seqLength Sequence length
+	 * @param cigar CIGAR string
+	 * @param perfect Whether alignment is perfect
+	 * @return YL tag string
+	 */
 	public static String makeLengthTag(int pos, int seqLength, String cigar, boolean perfect){
 		if(cigar==null || perfect){return "YL:Z:"+seqLength+","+seqLength;}
 		return "YL:Z:"+(seqLength-countLeadingClip(cigar, true, false))+","+calcCigarLength(cigar, false, false);
 	}
 	
+	/**
+	 * Creates YI custom tag indicating alignment identity percentage.
+	 * @param match Match string for identity calculation
+	 * @param perfect Whether alignment is perfect
+	 * @return YI tag string with identity percentage
+	 */
 	public static String makeIdentityTag(byte[] match, boolean perfect){
 		if(perfect){return "YI:f:100";}
 		float f=Read.identity(match);
 		return Tools.format("YI:f:%.2f", (100*f));
 	}
 	
+	/**
+	 * Creates YR custom tag with alignment score.
+	 * @param score Alignment score
+	 * @return YR tag string
+	 */
 	public static String makeScoreTag(int score){
 		return "YR:i:"+score;
 	}
 	
+	/** Retrieves X2 match tag from optional tags.
+	 * @return X2 tag string or null if not present */
 	public String matchTag(){
 		if(optional==null){return null;}
 		for(String s : optional){
@@ -1701,6 +1614,11 @@ public class SamLine implements Serializable {
 		return null;
 	}
 	
+	/**
+	 * Creates XS strand tag for spliced alignments.
+	 * @param r Read with spliced alignment
+	 * @return XS tag indicating strand or null if not spliced
+	 */
 	private String makeXSTag(Read r){
 		if(r.mapped() && cigar!=null && cigar.indexOf('N')>=0){
 //			System.err.println("For read "+r.pairnum()+" mapped to strand "+r.strand());
@@ -1716,6 +1634,16 @@ public class SamLine implements Serializable {
 		}
 	}
 	
+	/**
+	 * Creates MD tag string from match data and reference sequence.
+	 * @param chrom Chromosome number
+	 * @param refstart Reference start position
+	 * @param match BBTools match string
+	 * @param call Query bases
+	 * @param scafloc Scaffold location
+	 * @param scaflen Scaffold length
+	 * @return MD tag string
+	 */
 	public static String makeMdTag(int chrom, int refstart, byte[] match, byte[] call, int scafloc, int scaflen){
 		if(match==null || chrom<0){return null;}
 		ByteBuilder md=new ByteBuilder(8);
@@ -1802,6 +1730,12 @@ public class SamLine implements Serializable {
 		return md.toString();
 	}
 	
+	/**
+	 * Calculates left soft clip length from CIGAR string.
+	 * @param cig CIGAR string
+	 * @param id Read identifier for error reporting
+	 * @return Number of left soft-clipped bases
+	 */
 	public static int calcLeftClip(String cig, String id){
 		if(cig==null){return 0;}
 		int len=0;
@@ -1817,6 +1751,12 @@ public class SamLine implements Serializable {
 		return 0;
 	}
 	
+	/**
+	 * Calculates right soft clip length from CIGAR string.
+	 * @param cig CIGAR string
+	 * @param id Read identifier for error reporting
+	 * @return Number of right soft-clipped bases
+	 */
 	public static int calcRightClip(String cig, String id){
 		if(cig==null || cig.length()<1 || cig.charAt(cig.length()-1)!='S'){return 0;}
 		int pos=cig.length()-2;
@@ -1836,6 +1776,18 @@ public class SamLine implements Serializable {
 		return len;
 	}
 	
+	/**
+	 * Creates all optional SAM tags based on read data and configuration flags.
+	 * Includes NM, AM, SM, XM, XS, MD, NH tags and custom BBTools tags.
+	 * @param r Primary read
+	 * @param r2 Mate read (may be null)
+	 * @param perfect Whether alignment is perfect
+	 * @param scafloc Scaffold location
+	 * @param scaflen Scaffold length
+	 * @param inbounds Whether read is within scaffold bounds
+	 * @param inbounds2 Whether mate is within scaffold bounds
+	 * @return List of optional tag strings
+	 */
 	public ArrayList<String> makeOptionalTags(Read r, Read r2, boolean perfect, int scafloc, int scaflen, boolean inbounds, boolean inbounds2){
 		if(NO_TAGS){return null;}
 		final boolean mapped=r.mapped();
@@ -2018,7 +1970,7 @@ public class SamLine implements Serializable {
 					if(!r.shortmatch()){
 						match=Read.toShortMatchString(match);
 					}
-					optionalTags.add("X2:Z:"+new String(match));
+					optionalTags.add("X2:Z:"+new String(match, StandardCharsets.US_ASCII));
 				}
 
 				optionalTags.add("X3:i:"+r.mapScore);
@@ -2057,18 +2009,40 @@ public class SamLine implements Serializable {
 		return seq==null ? calcCigarBases(cigar, true, false) : seq.length;
 	}
 	
+	public int lengthOrZero(){
+		return seq!=null ? seq.length : cigar!=null ? calcCigarBases(cigar, true, false) : 0;
+	}
+	
+	public int estimateBamLength() {
+		return 40+(seq==null ? 1 : seq.length)+qname.length()+(cigar==null ? 1 : cigar.length()*2);
+	}
+	
 //	public int length(boolean includeSoftClip){
 //		assert((seq!=null && (seq.length!=1 || seq[0]!='*')) || cigar!=null) :
 //			"This program requires bases or a cigar string for every sam line.  Problem line:\n"+this+"\n";
 //		return seq==null ? calcCigarBases(cigar, includeSoftClip, false) : seq.length;
 //	}
 	
+	/**
+	 * Converts read alignment score to MAPQ value.
+	 * @param r Read with alignment data
+	 * @param ss Optional site score to use instead of read's score
+	 * @return MAPQ value (0-255)
+	 */
 	public static int toMapq(Read r, SiteScore ss){
 		assert(r!=null);
 		int score=(ss==null ? r.mapScore : ss.slowScore);
 		return toMapq(score, r.length(), r.mapped(), r.ambiguous());
 	}
 	
+	/**
+	 * Converts alignment score to MAPQ value using length and quality factors.
+	 * @param score Raw alignment score
+	 * @param length Query sequence length
+	 * @param mapped Whether read is mapped
+	 * @param ambig Whether read has ambiguous mapping
+	 * @return MAPQ value (0-255)
+	 */
 	public static int toMapq(int score, int length, boolean mapped, boolean ambig){
 		if(!mapped || length<1){return 0;}
 		
@@ -2085,6 +2059,8 @@ public class SamLine implements Serializable {
 	}
 	
 	
+	/** Parses synthetic read name to extract original genomic coordinates.
+	 * @return Read object with original location or null if parsing fails */
 	public Read parseName(){
 		try {
 			String[] answer=qname.split("_");
@@ -2104,15 +2080,29 @@ public class SamLine implements Serializable {
 		}
 	}
 	
+	/** Extracts numeric ID from synthetic read name format.
+	 * @return Numeric read identifier */
 	public long parseNumericId(){
 //		return Long.parseLong(qname.substring(0, qname.indexOf('_')));
 		return Long.parseLong(qname.split("_")[1]);
 	}
 	
+	/**
+	 * Converts this SamLine to a Read object.
+	 * @param parseCustom Whether to parse custom BBTools naming format
+	 * @return Read object representation
+	 */
 	public Read toRead(boolean parseCustom){
 		return toRead(parseCustom, false);
 	}
 	
+	/**
+	 * Converts this SamLine to a Read object with detailed options.
+	 * Handles coordinate calculation, strand conversion, and optional tag parsing.
+	 * @param parseCustom Whether to parse custom BBTools naming format
+	 * @param includeHardClip Whether to include hard-clipped bases in coordinates
+	 * @return Read object with alignment and metadata
+	 */
 	public Read toRead(boolean parseCustom, boolean includeHardClip){
 		
 		SiteScore originalSite=null;
@@ -2189,7 +2179,7 @@ public class SamLine implements Serializable {
 //		byte[] quals=(qual==null || (qual.length==1 && qual[0]=='*')) ? null : qual;
 //		byte[] bases=seq==null ? null : seq.clone();
 //		if(strand_==Gene.MINUS){//Minus-mapped SAM lines have bases and quals reversed
-//			AminoAcid.reverseComplementBasesInPlace(bases);
+//			Vector.reverseComplementInPlace(bases);
 //			Tools.reverseInPlace(quals);
 //		}
 //		Read r=new Read(bases, chrom_, strand_, start_, stop_, qname, quals, cs_, numericId_);
@@ -2309,8 +2299,16 @@ public class SamLine implements Serializable {
 		return len;
 	}
 	
+	/** Converts SamLine to tab-delimited SAM format string.
+	 * @return ByteBuilder containing SAM format line */
 	public ByteBuilder toText(){return toBytes((ByteBuilder)null);}
 	
+	/**
+	 * Writes SamLine to ByteBuilder in tab-delimited SAM format.
+	 * Handles strand-specific base and quality reversal.
+	 * @param bb ByteBuilder to write to (created if null)
+	 * @return ByteBuilder containing SAM format line
+	 */
 	public ByteBuilder toBytes(ByteBuilder bb){
 		
 		final int buflen=Tools.max(rnameLen(), (rnext==null ? 1 : rnext.length), (seq==null ? 1 : seq.length), (qual==null ? 1 : qual.length));
@@ -2333,15 +2331,16 @@ public class SamLine implements Serializable {
 		appendTo(bb, rnext).tab();
 		bb.append(pnext).tab();
 		bb.append(tlen).tab();
-		
+//		int len=bb.length;
 		if(mapped() && strand()==Shared.MINUS){
 			appendReverseComplemented(bb, seq).tab();
 			appendQualReversed(bb, qual);
+//			assert(bb.length==len+seq.length+qual.length+1) : bb.length-len;
 		}else{
 			appendTo(bb, seq).tab();
 			appendQual(bb, qual);
+//			assert(bb.length==len+seq.length+qual.length+1) : bb.length-len;
 		}
-		
 		if(optional!=null){
 			for(String s : optional){
 				bb.tab().append(s);
@@ -2353,16 +2352,34 @@ public class SamLine implements Serializable {
 	@Override
 	public String toString(){return toBytes(null).toString();}
 	
+	/**
+	 * Appends byte array to ByteBuilder, using '*' for null/empty arrays.
+	 * @param sb ByteBuilder to append to
+	 * @param a Byte array to append
+	 * @return Updated ByteBuilder
+	 */
 	private static ByteBuilder appendTo(ByteBuilder sb, byte[] a){
 		if(a==null || a==bytestar || (a.length==1 && a[0]=='*')){return sb.append('*');}
 		return sb.append(a);
 	}
 	
+	/**
+	 * Appends string to ByteBuilder, using '*' for null/empty strings.
+	 * @param sb ByteBuilder to append to
+	 * @param a String to append
+	 * @return Updated ByteBuilder
+	 */
 	private static ByteBuilder appendTo(ByteBuilder sb, String a){
 		if(a==null || a==stringstar || (a.length()==1 && a.charAt(0)=='*')){return sb.append('*');}
 		return sb.append(a);
 	}
 	
+	/**
+	 * Appends reverse complement of bases to ByteBuilder for minus-strand reads.
+	 * @param sb ByteBuilder to append to
+	 * @param a Bases to reverse complement and append
+	 * @return Updated ByteBuilder
+	 */
 	private static ByteBuilder appendReverseComplemented(ByteBuilder sb, byte[] a){
 		if(a==null || a==bytestar || (a.length==1 && a[0]=='*')){return sb.append('*');}
 
@@ -2375,26 +2392,40 @@ public class SamLine implements Serializable {
 		return sb;
 	}
 	
+	/**
+	 * Appends quality scores to ByteBuilder with ASCII+33 encoding.
+	 * @param sb ByteBuilder to append to
+	 * @param a Quality scores to encode and append
+	 * @return Updated ByteBuilder
+	 */
 	private static ByteBuilder appendQual(ByteBuilder sb, byte[] a){
 		if(a==null || a==bytestar || (a.length==1 && a[0]=='*')){return sb.append('*');}
 
-		sb.ensureExtra(a.length);
-		byte[] buffer=sb.array;
-		int i=sb.length;
-		for(int j=0; j<a.length; i++, j++){buffer[i]=(byte)(a[j]+33);}
-		sb.length+=a.length;
+//		sb.ensureExtra(a.length);
+//		byte[] buffer=sb.array;
+//		int i=sb.length;
+//		for(int j=0; j<a.length; i++, j++){buffer[i]=(byte)(a[j]+33);}
+//		sb.length+=a.length;
+		Vector.addAndAppend(a, sb, 33);
 
 		return sb;
 	}
 	
+	/**
+	 * Appends reversed quality scores to ByteBuilder with ASCII+33 encoding.
+	 * @param sb ByteBuilder to append to
+	 * @param a Quality scores to reverse, encode and append
+	 * @return Updated ByteBuilder
+	 */
 	private static ByteBuilder appendQualReversed(ByteBuilder sb, byte[] a){
 		if(a==null || a==bytestar || (a.length==1 && a[0]=='*')){return sb.append('*');}
 		
-		sb.ensureExtra(a.length);
-		byte[] buffer=sb.array;
-		int i=sb.length;
-		for(int j=a.length-1; j>=0; i++, j--){buffer[i]=(byte)(a[j]+33);}
-		sb.length+=a.length;
+//		sb.ensureExtra(a.length);
+//		byte[] buffer=sb.array;
+//		int i=sb.length;
+//		for(int j=a.length-1; j>=0; i++, j--){buffer[i]=(byte)(a[j]+33);}
+//		sb.length+=a.length;
+		Vector.addAndAppendReversed(a, sb, 33);
 		
 		return sb;
 	}
@@ -2436,6 +2467,15 @@ public class SamLine implements Serializable {
 //	0x800 supplementary alignment
 	
 
+	/**
+	 * Creates SAM FLAG value from read alignment data.
+	 * Sets bits for paired/mapped/strand/fragment according to SAM specification.
+	 * @param r Primary read
+	 * @param r2 Mate read (may be null)
+	 * @param fragNum Fragment number (0 or 1)
+	 * @param sameScaf Whether reads map to same scaffold
+	 * @return SAM FLAG bit field
+	 */
 	public static int makeFlag(Read r, Read r2, int fragNum, boolean sameScaf){
 		int flag=0;
 		if(r2!=null){
@@ -2455,6 +2495,8 @@ public class SamLine implements Serializable {
 		return flag;
 	}
 	
+	/** Tests whether this SamLine has a valid CIGAR string.
+	 * @return True if CIGAR is present and not '*' */
 	public boolean hasCigar() {
 		return cigar!=null && cigar.length()>0 && cigar.charAt(0)!='*';
 	}
@@ -2469,76 +2511,146 @@ public class SamLine implements Serializable {
 		return false;
 	}
 	
+	/** Tests whether read is part of a paired sequencing template.
+	 * @return True if FLAG bit 0x1 is set */
 	public boolean hasMate(){
 		return (flag&0x1)==0x1;
 	}
 	
+	/** Tests whether read pair is properly aligned.
+	 * @return True if FLAG bit 0x2 is set */
 	public boolean properPair(){
 		return (flag&0x2)==0x2;
 	}
 	
+	/**
+	 * Tests whether read is mapped based on FLAG value.
+	 * @param flag SAM FLAG bit field
+	 * @return True if read is mapped (FLAG bit 0x4 not set)
+	 */
 	public static boolean mapped(int flag){
 		return (flag&0x4)!=0x4;
 	}
 
+	/**
+	 * Extracts strand from FLAG value.
+	 * @param flag SAM FLAG bit field
+	 * @return 0 for plus strand, 1 for minus strand
+	 */
 	public static byte strand(int flag){
 		return ((flag&0x10)==0x10 ? (byte)1 : (byte)0);
 	}
 	
+	/** Tests whether this read is mapped.
+	 * @return True if read is mapped (FLAG bit 0x4 not set) */
 	public boolean mapped(){
 		return (flag&0x4)!=0x4;
 //		0x4 fragment unmapped
 //		0x8 next fragment in the template unmapped
 	}
 	
+	/** Tests whether mate read is mapped.
+	 * @return True if mate is mapped (FLAG bit 0x8 not set) */
 	public boolean nextMapped(){
 		return (flag&0x8)!=0x8;
 //		0x4 fragment unmapped
 //		0x8 next fragment in the template unmapped
 	}
 
+	/** Returns strand of this read.
+	 * @return 0 for plus strand, 1 for minus strand */
 	public byte strand(){
 		return ((flag&0x10)==0x10 ? (byte)1 : (byte)0);
 	}
 
+	/** Returns strand of mate read (alias for nextStrand).
+	 * @return 0 for plus strand, 1 for minus strand */
 	public byte mateStrand(){return nextStrand();}
+	/** Returns strand of mate/next read.
+	 * @return 0 for plus strand, 1 for minus strand */
 	public byte nextStrand(){
 		return ((flag&0x20)==0x20 ? (byte)1 : (byte)0);
 	}
 	
+	/** Tests whether this is the first fragment in template.
+	 * @return True if FLAG bit 0x40 is set */
 	public boolean firstFragment(){
 		return (flag&0x40)==0x40;
 	}
 	
+	/** Tests whether this is the last fragment in template.
+	 * @return True if FLAG bit 0x80 is set */
 	public boolean lastFragment(){
 		return (flag&0x80)==0x80;
 	}
 	
+	/** Returns pair number (0 for first fragment, 1 for last).
+	 * @return 0 if first fragment, 1 if last fragment, 0 if neither */
 	public int pairnum(){
 		return firstFragment() ? 0 : lastFragment() ? 1 : 0;
 	}
 
+	/** Tests whether this is a primary alignment.
+	 * @return True if FLAG bit 0x100 is not set */
 	public boolean primary(){return (flag&0x100)==0;}
+	/** Sets primary alignment status.
+	 * @param b True for primary, false for secondary */
 	public void setPrimary(boolean b){
 		if(b){
-			flag=flag|0x100;
-		}else{
 			flag=flag&~0x100;
+		}else{
+			flag=flag|0x100;
+		}
+	}
+	/** Sets mapped status of this read.
+	 * @param b True if mapped, false if unmapped */
+	public void setMapped(boolean b){
+		if(b){
+			flag=flag&~0x4;
+		}else{
+			flag=flag|0x4;
+		}
+	}
+	/** Sets first fragment flag.
+	 * @param b True if this is first fragment in template */
+	public void setFirstFragment(boolean b){
+		if(b){
+			flag=flag|0x40;
+		}else{
+			flag=flag&~0x40;
+		}
+	}
+	/** Sets strand of this read.
+	 * @param strand 0 for plus, 1 for minus */
+	public void setStrand(int strand){
+		if(strand==1){
+			flag=flag|0x10;
+		}else{
+			assert(strand==0);
+			flag=flag&~0x10;
 		}
 	}
 	
+	/** Tests whether read failed quality controls.
+	 * @return True if FLAG bit 0x200 is set */
 	public boolean discarded(){
 		return (flag&0x200)==0x200;
 	}
 	
+	/** Tests whether read is PCR or optical duplicate.
+	 * @return True if FLAG bit 0x400 is set */
 	public boolean duplicate(){
 		return (flag&0x400)==0x400;
 	}
 	
+	/** Tests whether this is a supplementary alignment.
+	 * @return True if FLAG bit 0x800 is set */
 	public boolean supplementary(){
 		return (flag&0x800)==0x800;
 	}
 	
+	/** Tests whether this read is leftmost in a proper pair.
+	 * @return True if TLEN is positive or reads not on same chromosome */
 	public boolean leftmost(){
 		if(!pairedOnSameChrom() || tlen==0){return true;}
 		return tlen>0;
@@ -2554,6 +2666,8 @@ public class SamLine implements Serializable {
 //		HashMap sc
 //	}
 	
+	/** Tests whether read has ambiguous mapping (low MAPQ).
+	 * @return True if mapped with MAPQ < 4 */
 	public boolean ambiguous() {return mapped() && mapq<4;}
 	
 	/** Assumes rname is an integer. */
@@ -2604,6 +2718,8 @@ public class SamLine implements Serializable {
 		return (seq==null ? -1 : start+seq.length);
 	}
 	
+	/** Returns numeric identifier for this read.
+	 * @return Always returns 0 (placeholder implementation) */
 	public long numericId(){
 		return 0;
 	}
@@ -2652,29 +2768,54 @@ public class SamLine implements Serializable {
 	/*----------------           Getters            ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Returns length of reference name.
+	 * @return Character count of RNAME field */
 	public int rnameLen(){
 		return (rname==null ? rnameS==null ? 1 : rnameS.length() : rname.length);
 	}
 
+	/** Returns reference name as byte array.
+	 * @return RNAME field bytes (requires RNAME_AS_BYTES=true) */
 	public byte[] rname(){
 		assert(RNAME_AS_BYTES);
 		return rname;
 	}
+	/** Returns mate reference name as byte array.
+	 * @return RNEXT field bytes */
 	public byte[] rnext(){return rnext;}
 
+	/** Sets reference name from byte array.
+	 * @param x RNAME bytes (requires RNAME_AS_BYTES=true) */
 	public void setRname(byte[] x){assert(RNAME_AS_BYTES);rname=x;}
+	/** Sets mate reference name from byte array.
+	 * @param x RNEXT bytes */
 	public void setRnext(byte[] x){rnext=x;}
 
+	/** Sets reference name from string.
+	 * @param x RNAME string (requires RNAME_AS_BYTES=false) */
 	public void setRname(String x){assert(!RNAME_AS_BYTES);rnameS=x;}
+	/** Sets mate reference name from string.
+	 * @param x RNEXT string */
 	public void setRnext(String x){rnext=(x==null ? null : x.getBytes());}
 	
-	public String rnameS(){return rnameS!=null ? rnameS : rname==null ? null : new String(rname);}
-	public String rnextS(){return rnext==null ? null : new String(rnext);}
+	/** Returns reference name as string.
+	 * @return RNAME field as string */
+	public String rnameS(){return rnameS!=null ? rnameS : rname==null ? null : new String(rname, StandardCharsets.US_ASCII);}
+	/** Returns mate reference name as string.
+	 * @return RNEXT field as string */
+	public String rnextS(){return rnext==null ? null : new String(rnext, StandardCharsets.US_ASCII);}
 	
+	/** Returns reference name prefix (before first whitespace).
+	 * @return RNAME prefix string */
 	public String rnamePrefix() {
 		return (rnameS!=null ? toPrefix(rnameS) : toPrefix(rname));
 	}
 	
+	/**
+	 * Extracts prefix of string before first whitespace character.
+	 * @param s Input string
+	 * @return Prefix before whitespace or full string
+	 */
 	private static String toPrefix(String s) {
 		for(int i=0; i<s.length(); i++) {
 			if(Character.isWhitespace(s.charAt(i))) {
@@ -2684,19 +2825,36 @@ public class SamLine implements Serializable {
 		return s;
 	}
 	
+	/**
+	 * Extracts prefix of byte array before first whitespace character.
+	 * @param s Input byte array
+	 * @return Prefix string before whitespace or full string
+	 */
 	private static String toPrefix(byte[] s) {
 		for(int i=0; i<s.length; i++) {
 			if(Character.isWhitespace(s[i])) {
-				return new String(s, 0, i);
+				return new String(s, 0, i, StandardCharsets.US_ASCII);
 			}
 		}
-		return new String(s);
+		return new String(s, StandardCharsets.US_ASCII);
 	}
 	
 	/*--------------------------------------------------------------*/
 	/*----------------           Fields             ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Adds an optional tag to this SamLine.
+	 * @param s Tag string in format "XX:T:value" */
+	public void addOptionalTag(String s) {
+		if(optional==null) {optional=new ArrayList<String>();}
+		optional.add(s);
+	}
+	
+	/**
+	 * Finds optional tag with specified prefix.
+	 * @param prefix Tag prefix to search for (e.g., "MD:Z:")
+	 * @return First matching tag string or null if not found
+	 */
 	public String findTag(String prefix) {
 		if(optional==null){return null;}
 		for(String s : optional){
@@ -2705,19 +2863,42 @@ public class SamLine implements Serializable {
 		return null;
 	}
 
+	/** Returns MD tag string if present.
+	 * @return MD tag or null if not present */
 	public String mdTag(){return findTag("MD:Z:");}
+	/** Returns YQ (mate quality) tag string if present.
+	 * @return YQ tag or null if not present */
 	public String mateqTag(){return findTag("YQ:i:");}
+	/**
+	 * Parses integer value from optional tag with specified prefix.
+	 * @param prefix Tag prefix to search for
+	 * @return Integer value or Integer.MIN_VALUE if not found
+	 */
 	public int parseIntFlag(String prefix) {
 		String tag=findTag(prefix);
 		return tag==null ? Integer.MIN_VALUE : Parse.parseInt(tag, 5);
 	}
+	/**
+	 * Parses float value from optional tag with specified prefix.
+	 * @param prefix Tag prefix to search for
+	 * @return Float value or -1 if not found
+	 */
 	public float parseFloatFlag(String prefix) {
 		String tag=findTag(prefix);
 		return tag==null ? -1 : Parse.parseFloat(tag, 5);
 	}
+	/** Returns mate quality (YQ tag) value.
+	 * @return Mate MAPQ value or Integer.MIN_VALUE if not present */
 	public int mateq() {return parseIntFlag("YQ:i:");}
+	/** Returns mate identity (YJ tag) value.
+	 * @return Mate identity percentage or -1 if not present */
 	public float mateID() {return parseFloatFlag("YJ:f:");}
 
+	/**
+	 * Sets scaffold number using ScafMap lookup.
+	 * @param scafMap Scaffold mapping object
+	 * @return Assigned scaffold number
+	 */
 	public int setScafnum(ScafMap scafMap) {
 		assert(scafnum<0);
 		
@@ -2725,12 +2906,14 @@ public class SamLine implements Serializable {
 		if(mapped() || (rname!=null && rname!=byteequals && rname!=bytestar)){
 			name=rnameS();
 		}else if(nextMapped() && rnext!=null && rnext!=byteequals && rnext!=bytestar){
-			name=new String(rnext);
+			name=new String(rnext, StandardCharsets.US_ASCII);
 		}
 		if(name!=null){scafnum=scafMap.getNumber(name);}
 		return scafnum;
 	}
 	
+	/** Estimates memory usage of this SamLine object.
+	 * @return Approximate byte count for memory profiling */
 	public long countBytes(){
 		long sum=76;
 		sum+=(cigar==null ? 0 : cigar.length()*2+16);
@@ -2740,48 +2923,75 @@ public class SamLine implements Serializable {
 		return sum;
 	}
 	
+	/** Query template name (QNAME field) */
 	public String qname;
+	/** Bitwise FLAG field containing read pair and mapping information */
 	public int flag;
+	/** 1-based leftmost mapping position (POS field) */
 	public int pos;
+	/** Mapping quality score (MAPQ field) */
 	public int mapq;
+	/** CIGAR string describing alignment operations */
 	public String cigar;
+	/** Position of mate/next read (PNEXT field) */
 	public int pnext;
+	/** Observed template length (TLEN field) */
 	public int tlen;
+	/** Segment sequence bases (SEQ field) */
 	public byte[] seq;
+	/** ASCII quality scores (QUAL field) */
 	public byte[] qual;
+	/** List of optional SAM tags */
 	public ArrayList<String> optional;
+	/** Cached MD tag value for efficient access */
 	public byte[] mdTag;
 	
+	/** General purpose object field for extensions */
 	public Object obj;
+	/** Scaffold number for coordinate mapping */
 	public int scafnum=-1;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------        Private Fields        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Reference sequence name as byte array when RNAME_AS_BYTES=true */
 	private byte[] rname;
+	/** Reference name of mate/next read as byte array */
 	private byte[] rnext;
 	
+	/** Reference sequence name as String when RNAME_AS_BYTES=false */
 	private String rnameS;
+	
+	
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Static Fields        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Constant for missing string fields in SAM format */
 	private static final String stringstar="*";
+	/** Constant indicating same reference as mate */
 	private static final String stringequals="=";
+	/** Byte array constant for missing fields */
 	private static final byte[] bytestar=new byte[] {(byte)'*'};
+	/** Byte array constant indicating same reference as mate */
 	private static final byte[] byteequals=new byte[] {(byte)'='};
+	private static final byte star=(byte)'*';
+	private static final byte equals=(byte)'=';
 	private static final String XSPLUS="XS:A:+", XSMINUS="XS:A:-";
 //	private static final double inv100=0.01d;
 //	private static float minratio=0.4f;
 
+	/** Controls warning message display for development environment */
 	private static boolean warning=System.getProperty("user.dir").contains("/bushnell/");
 	
 	/*--------------------------------------------------------------*/
 	/*----------------     Public Static Fields     ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Tests whether any readgroup tags are configured for output.
+	 * @return True if any readgroup parameters are set */
 	public static boolean makeReadgroupTags(){
 		return READGROUP_ID!=null || READGROUP_CN!=null || READGROUP_DS!=null || READGROUP_DT!=null ||
 				READGROUP_FO!=null || READGROUP_KS!=null || READGROUP_LB!=null || READGROUP_PG!=null || 
@@ -2789,6 +2999,8 @@ public class SamLine implements Serializable {
 				READGROUP_TAG!=null;
 	}
 	
+	/** Tests whether any non-readgroup optional tags are enabled.
+	 * @return True if any optional tag flags are set */
 	public static boolean makeOtherTags(){
 		if(NO_TAGS){return false;}
 		return MAKE_AM_TAG || MAKE_NM_TAG || MAKE_SM_TAG || MAKE_XM_TAG || MAKE_XS_TAG || MAKE_AS_TAG ||
@@ -2796,62 +3008,104 @@ public class SamLine implements Serializable {
 				MAKE_CUSTOM_TAGS || MAKE_INSERT_TAG || MAKE_CORRECTNESS_TAG || MAKE_TIME_TAG || MAKE_BOUNDS_TAG || MAKE_MATEQ_TAG;
 	}
 	
+	/** Tests whether any optional tags should be generated.
+	 * @return True if any tag generation is enabled */
 	public static boolean makeAnyTags(){
 		return makeReadgroupTags() || makeOtherTags();
 	}
 	
+	/** Read group identifier */
 	public static String READGROUP_ID=null;
+	/** Read group sequencing center name */
 	public static String READGROUP_CN=null;
+	/** Read group description */
 	public static String READGROUP_DS=null;
+	/** Read group date */
 	public static String READGROUP_DT=null;
+	/** Read group flow order */
 	public static String READGROUP_FO=null;
+	/** Read group key sequence */
 	public static String READGROUP_KS=null;
+	/** Read group library */
 	public static String READGROUP_LB=null;
+	/** Read group programs used for processing */
 	public static String READGROUP_PG=null;
+	/** Read group predicted median insert size */
 	public static String READGROUP_PI=null;
+	/** Read group platform/technology */
 	public static String READGROUP_PL=null;
+	/** Read group platform unit */
 	public static String READGROUP_PU=null;
+	/** Read group sample */
 	public static String READGROUP_SM=null;
 	
+	/** Complete readgroup tag string for output */
 	public static String READGROUP_TAG=null;
 	
 	/** Turn this off for RNAseq or long indels */
 	public static boolean MAKE_MD_TAG=false;
 	
+	/** Disable all optional tag generation */
 	public static boolean NO_TAGS=false;
 	
+	/** Generate AM (template-independent mapping quality) tags */
 	public static boolean MAKE_AM_TAG=true;
+	/** Generate NM (edit distance) tags */
 	public static boolean MAKE_NM_TAG=true;
+	/** Generate SM (template-dependent mapping quality) tags */
 	public static boolean MAKE_SM_TAG=false;
+	/** Generate XM (suboptimal alignment count) tags */
 	public static boolean MAKE_XM_TAG=false;
+	/** Generate XS (strand for spliced alignments) tags */
 	public static boolean MAKE_XS_TAG=false;
+	/** Generate XT (type: Unique/Repeat) tags */
 	public static boolean MAKE_XT_TAG=true;
+	/** Generate AS (alignment score) tags */
 	public static boolean MAKE_AS_TAG=false; //TODO: Alignment score from aligner
+	/** Generate NH (number of alignments) tags */
 	public static boolean MAKE_NH_TAG=false;
+	/** Generate TopHat-compatible tags */
 	public static boolean MAKE_TOPHAT_TAGS=false;
+	/** Use second strand interpretation for XS tags */
 	public static boolean XS_SECONDSTRAND=false;
+	/** Generate YI (identity percentage) tags */
 	public static boolean MAKE_IDENTITY_TAG=false;
+	/** Generate YR (raw alignment score) tags */
 	public static boolean MAKE_SCORE_TAG=false;
+	/** Generate YS (stop position) tags */
 	public static boolean MAKE_STOP_TAG=false;
+	/** Generate YL (query and reference lengths) tags */
 	public static boolean MAKE_LENGTH_TAG=false;
+	/** Generate BBTools custom tags (X1, X2, X3, X5, X6, X7) */
 	public static boolean MAKE_CUSTOM_TAGS=false;
+	/** Generate X8 (insert size) tags */
 	public static boolean MAKE_INSERT_TAG=false;
+	/** Generate X9 (correctness) tags */
 	public static boolean MAKE_CORRECTNESS_TAG=false;
+	/** Generate X0 (timestamp) tags */
 	public static boolean MAKE_TIME_TAG=false;
+	/** Generate XB (bounds check) tags */
 	public static boolean MAKE_BOUNDS_TAG=false;
+	/** Generate YQ/YJ (mate quality/identity) tags */
 	public static boolean MAKE_MATEQ_TAG=false;
 	
+	/** Reduce MAPQ for ambiguously mapping reads */
 	public static boolean PENALIZE_AMBIG=true;
+	/** Convert CIGAR strings to BBTools match format when loading */
 	public static boolean CONVERT_CIGAR_TO_MATCH=true;
+	/** Use soft clipping for out-of-bounds alignments */
 	public static boolean SOFT_CLIP=true;
+	/** Use asterisks for SEQ/QUAL in secondary alignments */
 	public static boolean SECONDARY_ALIGNMENT_ASTERISKS=true;
 	/** OK to use the "setFrom" function which uses the old SamLine instead of translating the read, if a genome is not loaded. */
 	public static boolean SET_FROM_OK=false;
 	/** For paired reads, keep original names rather than changing read2's name to match read1 */
 	public static boolean KEEP_NAMES=false;
+	/** SAM format version for CIGAR string generation */
 	public static float VERSION=1.4f;
 	/** Tells program when to use 'N' rather than 'D' in cigar strings */
 	public static int INTRON_LIMIT=Integer.MAX_VALUE;
+	/** Store reference names as byte arrays vs strings */
 	public static boolean RNAME_AS_BYTES=true;//Effect on speed is negligible for pileup...
 	
 	/** Prefer MD tag over reference for translating cigar strings to match */
@@ -2860,11 +3114,11 @@ public class SamLine implements Serializable {
 	 * This makes sam loading substantially slower. */
 	public static boolean FIX_MATCH_NS=false;
 	
+	/** Force XS tag setting */
 	public static boolean setxs=false;
+	/** Force intron detection */
 	public static boolean setintron=false;
 	
-//	/** SSAHA2 incorrectly calculates the start position of reads with soft-clipped starts, and needs this enabled. */
-//	public static boolean SUBTRACT_LEADING_SOFT_CLIP=true;
 	/** Sort header scaffolds in alphabetical order to be more compatible with Tophat */
 	public static boolean SORT_SCAFFOLDS=false;
 
@@ -2882,12 +3136,17 @@ public class SamLine implements Serializable {
 	public static boolean PARSE_8=true;
 	/** qual */
 	public static boolean PARSE_10=true;
+	/** Parse optional tag fields */
 	public static boolean PARSE_OPTIONAL=true;
+	/** Parse only MD tags from optional fields */
 	public static boolean PARSE_OPTIONAL_MD_ONLY=false;
+	/** Parse only YQ (mate quality) tags from optional fields */
 	public static boolean PARSE_OPTIONAL_MATEQ_ONLY=false;
 	
+	/** Reverse complement minus-strand sequences on loading */
 	public static boolean FLIP_ON_LOAD=true;
 	
+	/** Enable verbose debug output */
 	public static boolean verbose=false;
 	
 }

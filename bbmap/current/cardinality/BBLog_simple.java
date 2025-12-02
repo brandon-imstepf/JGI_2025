@@ -39,6 +39,9 @@ public final class BBLog_simple extends CardinalityTracker {
 		counts=(trackCounts ? new int[buckets] : null);
 	}
 	
+	@Override
+	public BBLog_simple copy() {return new BBLog_simple(buckets, k, -1, minProb);}
+	
 	/*--------------------------------------------------------------*/
 	/*----------------           Methods            ----------------*/
 	/*--------------------------------------------------------------*/
@@ -77,6 +80,11 @@ public final class BBLog_simple extends CardinalityTracker {
 		add((BBLog_simple)log);
 	}
 	
+	/**
+	 * Merges another BBLog_simple by taking the maximum value for each bucket.
+	 * This combines the cardinality estimates from both trackers.
+	 * @param log BBLog_simple instance to merge
+	 */
 	public void add(BBLog_simple log){
 		if(maxArray!=log.maxArray){
 			for(int i=0; i<buckets; i++){

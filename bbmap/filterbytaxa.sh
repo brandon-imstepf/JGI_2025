@@ -40,7 +40,7 @@ tree=<file>     Specify a TaxTree file like tree.taxtree.gz.
 gi=<file>       Specify a gitable file like gitable.int1d.gz. Only needed
                 if gi numbers will be used.  On Genepool, use 'auto'.
 accession=      Specify one or more comma-delimited NCBI accession to taxid
-                files.  Only needed if accesions will be used; requires ~45GB
+                files.  Only needed if accessions will be used; requires ~45GB
                 of memory.  On Genepool, use 'auto'.
 printnodes=t    Print the names of nodes added to the filter.
 requirepresent=t   Crash with an error message if a header cannot be resolved
@@ -63,6 +63,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -103,7 +104,7 @@ calcXmx () {
 calcXmx "$@"
 
 filterbytaxa() {
-	local CMD="java $EA $EOOM $z -cp $CP tax.FilterByTaxa $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP tax.FilterByTaxa $@"
 	echo $CMD >&2
 	eval $CMD
 }

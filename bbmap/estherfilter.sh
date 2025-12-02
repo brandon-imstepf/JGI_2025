@@ -19,6 +19,7 @@ estherfilter.sh reads.fasta genes.fasta 1000 > results.txt
 'fasta' can be used as a fourth argument to get output in Fasta format.  Requires more memory.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -52,7 +53,7 @@ calcXmx () {
 calcXmx "$@"
 
 estherfilter() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.EstherFilter $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.EstherFilter $@"
 	echo $CMD >&2
 	eval $CMD
 }

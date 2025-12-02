@@ -11,7 +11,7 @@ and optionally appends barcodes/indexes. For example,
 would become
 @E200008112:0:FC:1:6396:1:1 1:N:0:
 
-Usage:  bgi2illumina.sh in=<input file> out=<output file> barcode=<string>
+Usage:  cg2illumina.sh in=<input file> out=<output file> barcode=<string>
 
 Input may be fasta or fastq, compressed or uncompressed.
 
@@ -31,6 +31,7 @@ parseextra=f    Set this to true if the reads headers have comments
                 delimited by a whitespace.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -65,7 +66,7 @@ calcXmx () {
 calcXmx "$@"
 
 function bgi2ill() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP hiseq.BGI2Illumina $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP hiseq.BGI2Illumina $@"
 	echo $CMD >&2
 	eval $CMD
 }

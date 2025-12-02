@@ -34,7 +34,7 @@ polyerror=0.2   Max error rate for trimming poly-A.
 flaglongreads=f    True to flag reads longer than 1.5x median to be discarded.
 longreadmult=1.5   Multiplier to consider a read suspiciously long.
 
-Whitelists and Blacklists:
+Whitelist and Blacklist Parameters:
 whitelist=      ZMW identifiers, as a comma-delimited list of integers,
                 or files with one integer per line.  All ZMWs not in the
                 list will be discarded.
@@ -61,7 +61,7 @@ minsubreads=0   Discard ZMWs with fewer than this many subreads.
 reorient=f      Try aligning both strands in case ZMW ordering is broken.
 minshredid=0.6  Do not include shreds with identity below this in consensus.
 
-Entropy parameters (recommended setting is 'entropy=t'):
+Entropy Parameters (recommended setting is 'entropy=t'):
 minentropy=-1   Set to 0.4 or above to remove low-entropy reads;
                 range is 0-1, recommended value is 0.55.  0.7 is too high.
                 Negative numbers disable this function.
@@ -83,6 +83,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -126,7 +127,7 @@ calcXmx () {
 calcXmx "$@"
 
 reformatpb() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP icecream.ReformatPacBio $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP icecream.ReformatPacBio $@"
 	if [[ $silent != 1 ]]; then
 		echo $CMD >&2
 	fi

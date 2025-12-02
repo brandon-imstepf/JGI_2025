@@ -3,10 +3,11 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified May 15, 2025
+Last modified October 13, 2025
 
 Description:  Creates a mutant version of a genome.
 Also produces a VCF listing the added mutations.
+To create a mutant from a vcf, see applyvariants.sh.
 
 Usage:  mutate.sh in=<input file> out=<output file> id=<identity>
 
@@ -25,7 +26,7 @@ insrate=0       Insertion rate, 0 to 1.
 delrate=0       Deletion rate, 0 to 1.
 indelrate=0     Sets ins and del rate each to half of this value.
 maxindel=1      Max indel length.
-indelspacing=10 Minimum distance between subsequent indels.
+indelspacing=3  Minimum distance between subsequent indels.
 id=1            Target identity, 0 to 1; 1 means 100%.
                 If this is used it will override subrate and indelrate;
                 99% of the mutations will be substitutions, and 1% indels.
@@ -45,9 +46,13 @@ nohomopolymers=f  If true, prevent indels in homopolymers that lead to
                 AC or deleting T from TTTT.  This is mainly for grading 
                 purposes.  It does not fully solve the problem, but greatly
                 improves concordance (reducing disagreements by 70%).
-                NOTE! nohomopolymers is temporarily disabled.
 pad=0           Add this many random bases to the ends of input sequences.
                 Padleft and padright may also be specified independently.
+sinewaves=0     Vary mutation rate across the genome, yielding more- and
+                less-mutated areas, when >1.  More sinewaves will give
+		a more complicated conservation pattern.
+mod3=f		Forbid indels that are not a multiple of 3 in length.
+preservegc=t    Substitutions are selected to maintain GC fraction.
 
 Java Parameters:
 -Xmx            This will set Java's memory usage, overriding autodetection.
@@ -58,6 +63,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -98,7 +104,7 @@ calcXmx () {
 calcXmx "$@"
 
 mutate() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.MutateGenome $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP synth.MutateGenome $@"
 	echo $CMD >&2
 	eval $CMD
 }

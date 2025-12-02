@@ -4,6 +4,8 @@ import java.io.File;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import fileIO.ByteFile;
 import fileIO.ByteStreamWriter;
@@ -22,6 +24,7 @@ import shared.Shared;
 import shared.Timer;
 import shared.Tools;
 import structures.ByteBuilder;
+import structures.IntHashSet;
 import structures.StringNum;
 import tax.TaxTree;
 import tracker.ReadStats;
@@ -264,6 +267,12 @@ public class SendSketch extends SketchObject {
 		if(!allowMultithreadedFastq){Shared.capBufferLen(40);}
 	}
 	
+	/**
+	 * Configures sketch parameters based on the target database address.
+	 * Sets k-mer sizes, amino acid modes, and blacklists for different databases.
+	 * @param address Target server address or database identifier
+	 * @param setBlacklist Whether blacklist was explicitly set by user
+	 */
 	private void setFromAddress(String address, boolean setBlacklist){
 		if(address.equals(nrAddress())){
 			amino=true;
@@ -304,12 +313,23 @@ public class SendSketch extends SketchObject {
 	/*----------------         Outer Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Main processing method that routes to appropriate processing mode.
+	 * Delegates to local, remote, or reference mode based on configuration.
+	 * @param t Timer for tracking execution time
+	 */
 	public void process(Timer t){
 		if(local){processLocal(t);}
 		else if(refNames!=null){processRefMode(t);}
 		else{processRemote(t);}
 	}
 	
+	/**
+	 * Processes sketches by sending them to a remote server for comparison.
+	 * Loads input sketches, sends them in chunks to prevent server overload,
+	 * and handles JSON response formatting for multiple sketch blocks.
+	 * @param t Timer for tracking execution time
+	 */
 	private void processRemote(Timer t){
 		Timer ttotal=new Timer();
 		
@@ -374,7 +394,7 @@ public class SendSketch extends SketchObject {
 				bb.clear();
 				try {
 //					outstream.println("Sending to "+address+"\n"+message+"\n"); //123
-					StringNum result=ServerTools.sendAndReceive(message, address);
+					StringNum result=sendAndReceive(message, address);
 					if(!ServerTools.suppressErrors && (result.n<200 || result.n>299)){
 						System.err.println("ERROR: Server returned code "+result.n+" and this message:\n"+result.s);
 						KillSwitch.kill();
@@ -417,7 +437,7 @@ public class SendSketch extends SketchObject {
 			byte[] message=bb.toBytes();
 			bb.clear();
 			try {
-				StringNum result=ServerTools.sendAndReceive(message, address);
+				StringNum result=sendAndReceive(message, address);
 				if(!ServerTools.suppressErrors && (result.n<200 || result.n>299)){
 					System.err.println("ERROR: Server returned code "+result.n+" and this message:\n"+result.s);
 					KillSwitch.kill();
@@ -455,8 +475,27 @@ public class SendSketch extends SketchObject {
 		if(!silent){outstream.println("Total Time: \t"+ttotal);}
 	}
 	
+	public static boolean sendAndLabel(List<Sketch> inSketches, String address) {
+		try{
+			DisplayParams params=new DisplayParams();
+			params.format=DisplayParams.FORMAT_JSON;
+			params.taxLevel=TaxTree.GENUS;
+			params.maxRecords=2;
+			ArrayList<JsonObject> results=sendSketches(inSketches, address, params);
+			for(int i=0; i<inSketches.size(); i++) {
+				Sketch sk=inSketches.get(i);
+				JsonObject jo=results.get(i);
+				if(jo!=null && sk!=null) {sk.setFrom(jo);}
+			}
+		}catch(Exception e){
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		}
+		return true;
+	}
 
-	public static ArrayList<JsonObject> sendSketches(ArrayList<Sketch> inSketches, String address, DisplayParams params){
+	public static ArrayList<JsonObject> sendSketches(List<Sketch> inSketches, String address, DisplayParams params){
 		address=toAddress(address);
 		final int numLoaded=(inSketches.size());
 		assert(numLoaded<=MAX_ALLOWED_SKETCHES) : "\nSendSketch is configured to send at most "+MAX_ALLOWED_SKETCHES+" to prevent overwhelming the server.\n"
@@ -474,15 +513,21 @@ public class SendSketch extends SketchObject {
 		int sketchesThisChunk=0;
 		int chunkNum=0;
 		boolean firstBlock=true; //Set to false after printing has started
-		final Sketch lastSketch=Tools.getLast(inSketches); //Last input sketch to process
+//		final Sketch lastSketch=Tools.getLast(inSketches); //Last input sketch to process
+		int idx=0, limit=inSketches.size()-1;
+		IntHashSet nulls=new IntHashSet();
 		for(Sketch sk : inSketches){
+			idx++;
 			if(bb.length==0){
 				bb.append(params.toString(chunkNum));
 				chunkNum++;
 			}
-			sk.toBytes(bb);//This does not handle null sketches
-			sketchesThisChunk++;
-			if(sketchesThisChunk>=SEND_BUFFER_MAX_SKETCHES || bb.length>SEND_BUFFER_MAX_BYTES || sk==lastSketch){ //Don't allow too much data in a single transaction
+			if(sk==null) {nulls.add(idx);}
+			else {
+				sk.toBytes(bb);//This does not handle null sketches
+				sketchesThisChunk++;
+			}
+			if(sketchesThisChunk>=SEND_BUFFER_MAX_SKETCHES || bb.length>SEND_BUFFER_MAX_BYTES || idx>=limit){ //Don't allow too much data in a single transaction
 				if(verbose){System.err.println("Sending:\n"+bb);}
 //				outstream.println(cntr+", "+bb.length);
 				
@@ -492,7 +537,7 @@ public class SendSketch extends SketchObject {
 				for(int i=0; i<10 && (array==null || array.length<sketchesThisChunk); i++) {
 					String result=null;
 					try {
-						StringNum sn=ServerTools.sendAndReceive(message, address);
+						StringNum sn=sendAndReceive(message, address);
 						if(sn.n<200 || sn.n>299){
 							if(ServerTools.suppressErrors || i<9) {
 								System.err.println("Unexpected server return code "+sn.n+"; retrying...");
@@ -517,8 +562,10 @@ public class SendSketch extends SketchObject {
 				assert(array.length==sketchesThisChunk);
 				for(Object o : array) {
 					JsonObject jo=(JsonObject)o;
+					while(nulls.contains(output.size())) {output.add(null);}
 					output.add(jo);
 				}
+				//I could probably clear nulls here but not necessary
 				sketchesThisChunk=0;
 			}
 		}
@@ -526,6 +573,34 @@ public class SendSketch extends SketchObject {
 		return output;
 	}
 	
+	private static StringNum sendAndReceive(byte[] message, String address) {
+		StringNum sn=null;
+		if(sync) {
+			synchronized(SendSketch.class) {
+				sn=ServerTools.sendAndReceive(message, address);
+			}
+		}else {
+			while(concurrency.addAndGet(1)>maxConcurrency) {
+				concurrency.addAndGet(-1);
+				try{Thread.sleep(20);}
+				catch(InterruptedException e){}
+			}
+			sn=ServerTools.sendAndReceive(message, address);
+			concurrency.addAndGet(-1);
+		}
+		return sn;
+	}
+	
+	/**
+	 * Sends a single sketch to remote server (deprecated version).
+	 *
+	 * @param sk Sketch to send
+	 * @param address Server address
+	 * @param format Output format code
+	 * @param chunkNum Chunk number for multi-part submissions
+	 * @return Server response string
+	 * @deprecated Use version with DisplayParams instead
+	 */
 	@Deprecated
 	public static String sendSketch(Sketch sk, String address, int format, int chunkNum){
 		DisplayParams params=defaultParams;
@@ -548,7 +623,7 @@ public class SendSketch extends SketchObject {
 		byte[] message=bb.toBytes();
 		try {
 //			System.err.println("Sending to "+address+"\n"+new String(message)+"\n"); //123
-			StringNum result=ServerTools.sendAndReceive(message, address);
+			StringNum result=sendAndReceive(message, address);
 			if(!ServerTools.suppressErrors && (result.n<200 || result.n>299)){
 				System.err.println("ERROR: Server returned code "+result.n+" and this message:\n"+result.s);
 				KillSwitch.kill();
@@ -561,11 +636,21 @@ public class SendSketch extends SketchObject {
 		return null;
 	}
 	
+	/**
+	 * Checks server response for HTTP error indicators.
+	 * @param s Server response string to check
+	 * @return true if response contains error indicators, false otherwise
+	 */
 	private static boolean checkForError(String s){
 		if(s==null){return false;}
 		return s.contains("java.io.IOException: Server returned HTTP response code:");
 	}
 	
+	/**
+	 * Processes input files in local mode by sending file paths to server.
+	 * Used when server has direct access to the input files.
+	 * @param t Timer for tracking execution time
+	 */
 	private void processLocal(Timer t){
 		Timer ttotal=new Timer();
 		
@@ -582,7 +667,7 @@ public class SendSketch extends SketchObject {
 			if(verbose){outstream.println("Sending:\n"+message+"\nto "+address2);}
 			try {
 //				outstream.println("Sending to "+address2+"\n"+message+"\n"); //123
-				StringNum result=ServerTools.sendAndReceive(message.getBytes(), address2);
+				StringNum result=sendAndReceive(message.getBytes(), address2);
 				if(!ServerTools.suppressErrors && (result.n<200 || result.n>299)){
 					System.err.println("ERROR: Server returned code "+result.n+" and this message:\n"+result.s);
 					KillSwitch.kill();
@@ -606,6 +691,11 @@ public class SendSketch extends SketchObject {
 		outstream.println("Total Time: \t"+ttotal);
 	}
 	
+	/**
+	 * Processes using reference mode with specific reference names or TaxIDs.
+	 * Sends query to server specifying which references to use for comparison.
+	 * @param t Timer for tracking execution time
+	 */
 	private void processRefMode(Timer t){
 		Timer ttotal=new Timer();
 		
@@ -622,7 +712,7 @@ public class SendSketch extends SketchObject {
 			if(verbose){outstream.println("Sending:\n"+message+"\nto "+address2);}
 			try {
 //				outstream.println("Sending to "+address2+"\n"+message+"\n"); //123
-				StringNum result=ServerTools.sendAndReceive(message.getBytes(), address2);
+				StringNum result=sendAndReceive(message.getBytes(), address2);
 				if(!ServerTools.suppressErrors && (result.n<200 || result.n>299)){
 					System.err.println("ERROR: Server returned code "+result.n+" and this message:\n"+result.s);
 					KillSwitch.kill();
@@ -651,6 +741,14 @@ public class SendSketch extends SketchObject {
 	/*----------------         Inner Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Adds files to collection, handling comma-separated lists.
+	 * Checks if single string is a file or comma-separated list of files.
+	 *
+	 * @param a File path or comma-separated file list
+	 * @param list Collection to add files to
+	 * @return true if any files were added, false otherwise
+	 */
 	private static boolean addFiles(String a, Collection<String> list){
 		int initial=list.size();
 		if(a==null){return false;}
@@ -670,29 +768,44 @@ public class SendSketch extends SketchObject {
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Input file list */
 	private ArrayList<String> in=new ArrayList<String>();
 	
+	/** Output file for comparison results */
 	private String out="stdout.txt";
+	/** Output file for saving sketches */
 	private String outSketch=null;
 	
+	/** Taxonomic tree file path */
 	private String taxTreeFile=null;
 	
+	/** Sketch processing tool instance */
 	private final SketchTool tool;
 	
+	/** Loaded input sketches for processing */
 	private ArrayList<Sketch> inSketches;
 
+	/** Target server address */
 	private String address=null;
+	/** Whether to run in local mode */
 	private boolean local=false;
 	/** List of reference names or TaxIDs to use as queries */
 	private String refNames=null;
 	
 	/*Override metadata */
+	/** Override taxonomic name for output */
 	private String outTaxName=null;
+	/** Override file name for output */
 	private String outFname=null;
+	/** Override primary name for output */
 	private String outName0=null;
+	/** Override taxonomic ID for output */
 	private int outTaxID=-1;
+	/** Override species ID for output */
 	private long outSpid=-1;
+	/** Override IMG ID for output */
 	private long outImgID=-1;
+	/** Override metadata fields for output */
 	private ArrayList<String> outMeta=null;
 	
 	/*--------------------------------------------------------------*/
@@ -717,12 +830,19 @@ public class SendSketch extends SketchObject {
 	/** Append to existing output files */
 	private boolean append=false;
 	
+	/** Suppress status output */
 	private boolean silent=false;
 	
 	/*--------------------------------------------------------------*/
 	/*----------------        Static Fields         ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Converts database name aliases to actual server addresses.
+	 * Maps common database names like "nt", "refseq", "silva" to their URLs.
+	 * @param b Database name or address alias
+	 * @return Full server address URL
+	 */
 	public static final String toAddress(String b){
 		String address=b;
 		if(b==null){
@@ -746,20 +866,35 @@ public class SendSketch extends SketchObject {
 		return address;
 	}
 	
+	/** Maximum bytes to buffer before sending to server */
 	public int SEND_BUFFER_MAX_BYTES=8000000;
+	/** Maximum sketches to buffer before sending to server */
 	public int SEND_BUFFER_MAX_SKETCHES=400;
+	/** Maximum number of sketches allowed to prevent server overload */
 	private static final int MAX_ALLOWED_SKETCHES=100000;
+	
+	private static AtomicInteger concurrency=new AtomicInteger(0);
+	public static boolean sync=false;
+	public static int maxConcurrency=4;
 	
 	/** Don't print caught exceptions */
 	public static boolean suppressErrors=false;
 	
+	/** Gets the NT database server address */
 	private static String ntAddress(){return Shared.ntSketchServer()+"sketch";}
+	/** Gets the RefSeq database server address */
 	private static String refseqAddress(){return Shared.refseqSketchServer()+"sketch";}
+	/** Gets the SILVA ribosomal database server address */
 	private static String silvaAddress(){return Shared.riboSketchServer()+"sketch";}
+	/** Gets the IMG database server address */
 	private static String imgAddress(){return null;}//Shared.SketchServer()+"sketch";
+	/** Gets the NR protein database server address */
 	private static String nrAddress(){return null;}//Shared.SketchServer()+"sketch";
+	/** Gets the prokaryotic protein database server address */
 	private static String prokProtAddress(){return Shared.proteinSketchServer()+"sketch";}
+	/** Gets the mitochondrial database server address */
 	private static String mitoAddress(){return null;}//Shared.SketchServer()+"sketch";
+	/** Gets the fungi database server address */
 	private static String fungiAddress(){return null;}//Shared.SketchServer()+"sketch";
 	
 }

@@ -8,6 +8,7 @@ Description:  Generates a length histogram of input reads.
 
 Usage:	readlength.sh in=<input file>
 
+Parameters:
 in=<file>    	The 'in=' flag is needed only if the input file is not the first parameter.  'in=stdin.fq' will pipe from standard in.
 in2=<file>   	Use this if 2nd read of pairs are in a different file.
 out=<file>   	Write the histogram to this file.  Default is stdout.
@@ -18,6 +19,7 @@ nzo=t        	(nonzeroonly) Do not print empty bins.
 reads=-1     	If nonnegative, stop after this many reads.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -52,7 +54,7 @@ calcXmx () {
 calcXmx "$@"
 
 stats() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.MakeLengthHistogram $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.MakeLengthHistogram $@"
 #	echo $CMD >&2
 	eval $CMD
 }

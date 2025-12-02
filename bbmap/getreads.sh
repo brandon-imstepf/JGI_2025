@@ -18,6 +18,7 @@ id=             Comma delimited list of numbers or ranges, in any order.
                 For example:  id=5,93,17-31,8,0,12-13
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -51,7 +52,7 @@ calcXmx () {
 calcXmx "$@"
 
 function tf() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.GetReads $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.GetReads $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -35,6 +35,7 @@ maxradius=10        Maximum radius of progressive smoothing function.
 progressivemult=2   Increment radius each time depth increases by this factor.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -68,7 +69,7 @@ calcXmx () {
 calcXmx "$@"
 
 stats() {
-	local CMD="java $EA $EOOM -Xmx120m -cp $CP jgi.CallPeaks $@"
+	local CMD="java $EA $SIMD $EOOM -Xmx120m -cp $CP jgi.CallPeaks $@"
 #	echo $CMD >&2
 	eval $CMD
 }

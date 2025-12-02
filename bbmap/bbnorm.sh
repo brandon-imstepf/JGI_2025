@@ -119,6 +119,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -159,7 +160,7 @@ calcXmx () {
 calcXmx "$@"
 
 normalize() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.KmerNormalize bits=32 $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP jgi.KmerNormalize bits=32 $@"
 	echo $CMD >&2
 	eval $CMD
 }

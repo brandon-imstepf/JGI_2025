@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Tools;
 import structures.RingBuffer;
@@ -16,7 +17,7 @@ import structures.RingBuffer;
  *Band dynamically widens and narrows in response to sequence identity.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 7, 2025
  */
 public class WobbleAligner implements IDAligner{
@@ -33,6 +34,7 @@ public class WobbleAligner implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor */
 	public WobbleAligner() {}
 
 	/*--------------------------------------------------------------*/
@@ -56,11 +58,10 @@ public class WobbleAligner implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Tools.mid(6, 1+Math.max(query.length, ref.length)/20, 16);
-		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
-			subs+=(query[i]!=ref[i] ? 1 : 0);
-		}
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Tools.mid(7, 1+Math.max(qLen, rLen)/24, 24+(int)Math.sqrt(rLen)/6);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
+			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
 
@@ -82,13 +83,14 @@ public class WobbleAligner implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		
 		//Create a visualizer if an output file is defined
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
 		final int bandWidth0=decideBandwidth(query, ref);
-		final int maxDrift=2, ringSize=(bandWidth0*5)/4;
+		final int maxDrift=3, ringSize=bandWidth0;//(bandWidth0*5)/4;
 		final RingBuffer ring=new RingBuffer(ringSize);
 
 		// Create arrays for current and previous rows
@@ -107,16 +109,17 @@ public class WobbleAligner implements IDAligner{
 		// Best scoring position
 		int maxPos=0;
 		long maxScore=2*SUB;
+		final int RING_MULT=2;
 		
 		// Fill alignment matrix
 		for(int i=1; i<=qLen; i++){
 			// Calculate bonus bandwidth due to low local alignment quality
 			final int oldMaxScore=(int)(ring.getOldestUnchecked()>>SCORE_SHIFT);
 			final int recentMissingScore=(oldMaxScore+ringSize)-(int)(maxScore>>SCORE_SHIFT);
-			final int scoreBonus=Math.max(0, Math.min(ringSize*2, recentMissingScore*2));
+			final int scoreBonus=Math.max(0, RING_MULT*Math.min(ringSize, recentMissingScore));
 			
-			// Bonus bandwidth near the top row
-			final int bandWidth=bandWidth0+Math.max(10+bandWidth0*8-maxDrift*i, scoreBonus);
+			// Add bonus bandwidth from score and near the top row
+			final int bandWidth=bandWidth0+Math.max(16+bandWidth0*12-maxDrift*i, scoreBonus);
 			final int quarterBand=bandWidth/4;
 			// Center drift for this round
 			final int drift=Tools.mid(-1, maxPos-center, maxDrift);
@@ -168,7 +171,7 @@ public class WobbleAligner implements IDAligner{
 				maxPos=better ? j : maxPos;
 			}
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 			
 			// Swap rows
 			long[] temp=prev;
@@ -178,6 +181,7 @@ public class WobbleAligner implements IDAligner{
 		}
 		if(viz!=null) {viz.shutdown();}// Terminate visualizer
 		if(GLOBAL) {maxPos=rLen;maxScore=prev[rLen-1]+DEL_INCREMENT;}//The last cell may be empty 
+		loops.addAndGet(mloops);
 		return postprocess(maxScore, maxPos, qLen, rLen, posVector);
 	}
 	
@@ -267,9 +271,14 @@ public class WobbleAligner implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Counter for total alignment loops performed across all instances */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the total number of alignment loops performed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter value.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Output file path for visualization (null disables visualization) */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -277,26 +286,41 @@ public class WobbleAligner implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits used for position encoding in packed score */
 	private static final int POSITION_BITS=21;
+	/** Number of bits used for deletion count encoding in packed score */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount for extracting score from packed value */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position from packed score */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed score */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting alignment score from packed value */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for matching bases */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substituted bases */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for inserted bases */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deleted bases */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for ambiguous bases (N) */
 	private static final long N_SCORE=0L;
+	/** Sentinel value representing invalid or uninitialized scores */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined score penalty and position increment for deletions */
 	private static final long DEL_INCREMENT=DEL+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Debug flag for printing alignment operations */
 	private static final boolean PRINT_OPS=false;
+	/** Whether to perform global alignment (false for local alignment) */
 	public static final boolean GLOBAL=false;
 
 }

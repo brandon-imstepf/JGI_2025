@@ -7,14 +7,15 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 
+import align2.BBMap;
 import dna.Data;
 import dna.Scaffold;
 import fileIO.ByteFile;
+import fileIO.FileFormat;
 import fileIO.ReadWrite;
-import fileIO.TextFile;
 import fileIO.TextStreamWriter;
 import shared.KillSwitch;
-import shared.LineParserS1;
+import shared.LineParser1;
 import shared.Parse;
 import shared.Parser;
 import shared.PreParser;
@@ -39,6 +40,11 @@ import tracker.ReadStats;
  */
 public class SamToEst {
 	
+	/**
+	 * Program entry point for EST mapping analysis.
+	 * Parses command-line arguments and executes EST processing pipeline.
+	 * @param args Command-line arguments including input SAM, output stats, reference, and EST files
+	 */
 	public static void main(String[] args){
 		
 		{//Preparse block for help, config files, and outstream
@@ -105,6 +111,15 @@ public class SamToEst {
 		Shared.closeStream(outstream);
 	}
 	
+	/**
+	 * Constructs a SamToEst processor with input files and parameters.
+	 *
+	 * @param in_ Input SAM file path
+	 * @param stats_ Output statistics file path
+	 * @param ref_ Reference genome file path
+	 * @param est_ EST file path
+	 * @param fractionForAll_ Fraction threshold for classifying ESTs as fully mapped
+	 */
 	public SamToEst(String in_, String stats_, String ref_, String est_, float fractionForAll_){
 		in=in_;
 		stats=stats_;
@@ -113,19 +128,38 @@ public class SamToEst {
 		fractionForAll=fractionForAll_;
 	}
 	
+	private void align() {
+		FileFormat ff=FileFormat.testInput(in, FileFormat.SAM, null, false, false);
+		if(ff==null || ff.samOrBam() || (!ff.fastq() && !ff.fasta())) {return;}
+		String sam=in+".mapped.sam.gz";
+		String[] args=new String[] {"in="+in, "ref="+ref, "out="+sam, 
+			"k=13", "maxindel=100000", "customtag", "ordered", "nodisk"};
+		BBMap.main(args);
+		in=sam;
+		ranBBMap=true;
+	}
+	
+	/**
+	 * Main processing method that analyzes SAM file and generates statistics.
+	 * Reads SAM headers to extract reference information, processes alignment records
+	 * to reconstruct ESTs from fragmented pieces, and writes comprehensive mapping
+	 * statistics including intron analysis and coverage metrics.
+	 */
 	public void process(){
+		align();
 		HashMap<String, EST> table=new HashMap<String, EST>(initialSize);
-		TextFile tf=new TextFile(in, true);
-		String line=null;
+		ByteFile tf=ByteFile.makeByteFile(in, true);
+		LineParser1 lp=new LineParser1('\t');
+		byte[] line=null;
 		
 		String program=null;
 		String version=null;
 		
 		boolean bbmap=false;
 		float bbversion=-1;
-		LineParserS1 lp=new LineParserS1('\t');
 		
-		for(line=tf.nextLine(); line!=null && line.startsWith("@"); line=tf.nextLine()){
+		for(line=tf.nextLine(); line!=null && line[0]=='@'; line=tf.nextLine()){
+			lp.set(line);
 			final String a=lp.parseString(1);
 			
 			if(a.equals("@SQ")){
@@ -162,9 +196,9 @@ public class SamToEst {
 		boolean err=false;
 		for(; line!=null; line=tf.nextLine()){
 			
-			if(line.length()==0){
+			if(line.length==0){
 				
-			}else if(line.charAt(0)=='@'){
+			}else if(line[0]=='@'){
 				if(!err){
 					outstream.println("Unexpected header line: "+line);
 					outstream.println("This should not cause problems, and is probably due to concatenated sam files.\n" +
@@ -172,9 +206,8 @@ public class SamToEst {
 					err=true;
 				}
 				
-				if(line.startsWith("@SQ")){
-					String[] split=line.split("\t");
-					Scaffold sc=new Scaffold(split);
+				if(Tools.startsWith(line, "@SQ")){
+					Scaffold sc=new Scaffold(lp.set(line));
 //					if(!table.containsKey(sc.name)){
 //						table.put(sc.name, sc);
 //						refBases+=sc.length;
@@ -183,7 +216,7 @@ public class SamToEst {
 				}
 			}else{
 				
-				SamLine sl=new SamLine(line);
+				SamLine sl=new SamLine(lp.set(line));
 				if(USE_SECONDARY || sl.primary()){
 					
 					if(sl.mapped() && sl.cigar!=null){
@@ -358,8 +391,15 @@ public class SamToEst {
 
 			tsw.poisonAndWait();
 		}
+		if(ranBBMap && deleteTemp) {new File(in).delete();}
 	}
 
+	/**
+	 * Adds processed EST to statistics counters and classification bins.
+	 * Updates overall counts for mapped/unmapped bases, parts, and scaffolds.
+	 * Classifies EST based on mapping coverage and scaffold distribution.
+	 * @param est The EST object containing mapping results to process
+	 */
 	private void addEst(EST est){
 //		outstream.println("\n"+est);
 		estCount++;
@@ -411,16 +451,29 @@ public class SamToEst {
 		}
 	}
 	
+	/** Fraction threshold for classifying an EST as having all bases mapped */
 	public final float fractionForAll;
-	public final String in, stats, ref, estFile;
+	public String in;
+	public final String stats;
+	public final String ref;
+	public final String estFile;
+	public boolean ranBBMap=false;
+	public boolean deleteTemp=true;
 	
+	/** Total number of bases in reference sequences */
 	public long refBases=0;
+	/** Total number of bases in all EST sequences */
 	public long estBases=0;
+	/** Total number of EST bases that were successfully mapped */
 	public long estBasesMapped=0;
 
+	/** Number of reference sequences */
 	public long refCount=0;
+	/** Number of EST sequences processed */
 	public long estCount=0;
+	/** Total number of EST parts (fragments) processed */
 	public long partCount=0;
+	/** Number of EST parts that were successfully mapped */
 	public long partCountMapped=0;
 	
 	public long good=0, best=0, miss=0, zero=0;
@@ -428,26 +481,45 @@ public class SamToEst {
 	public long allPartsMapped=0, mostPartsMapped=0, somePartsMapped=0, noPartsMapped=0;
 	public long allBasesMapped=0, mostBasesMapped=0, someBasesMapped=0, noBasesMapped=0;
 	public long allBasesMappedB=0, mostBasesMappedB=0, someBasesMappedB=0, noBasesMappedB=0;
+	/**
+	 * Overall alignment statistics array: matches, substitutions, deletions, insertions, clips, N's
+	 */
 	public long[] msdicnOverall=new long[6];
+	/** List tracking intron lengths found in CIGAR strings */
 	public LongList introns=new LongList(1);
 	
+	/** Initial size for hash table allocation */
 	public int initialSize=4096;
 	public boolean ADD_FROM_REF=true;
 	public boolean USE_SECONDARY=false;
+	/** Minimum intron size to track in statistics */
 	public static int minIntron=10;
+	/** Whether to overwrite existing output files */
 	public static boolean overwrite=true;
+	/** Whether to append to existing output files */
 	public static boolean append=false;
 //	public HashMap<String, EST> //Only needed if sam file is unordered.
 	
+	/** Output stream for progress messages and debugging */
 	static PrintStream outstream=System.err;
 	
+	/** Represents a single EST sequence reconstructed from SAM alignment records.
+	 * Tracks mapping statistics, scaffold associations, and alignment quality metrics. */
 	public static class EST{
 		
+		/** Creates a new EST with the specified name.
+		 * @param name_ Name identifier for the EST sequence */
 		public EST(String name_){
 			name=name_;
 			outstream.println("New EST: "+name);
 		}
 		
+		/**
+		 * Adds a SAM alignment record to this EST.
+		 * Updates length, mapping statistics, and scaffold associations.
+		 * Processes CIGAR strings to extract alignment quality metrics.
+		 * @param sl SAM line record to add to this EST
+		 */
 		public void add(SamLine sl){
 			outstream.println("Adding samline "+sl.qname+" to EST "+name);
 			parts++;
@@ -476,6 +548,8 @@ public class SamToEst {
 			}
 		}
 		
+		/** Gets the number of matching bases in this EST's alignments.
+		 * @return Number of bases that match the reference */
 		public int match(){return msdicn[0];}
 		
 		@Override
@@ -491,11 +565,16 @@ public class SamToEst {
 			return sb.toString();
 		}
 		
+		/** EST sequence name identifier */
 		final String name;
 		int length=0, mappedLength=0;
 		int parts=0, mappedParts=0;
+		/** Set of scaffold names that this EST maps to */
 		HashSet<String> scafnames=new HashSet<String>(4);
 		
+		/**
+		 * Alignment statistics array: matches, substitutions, deletions, insertions, clips, N's
+		 */
 		int[] msdicn=KillSwitch.allocInt1D(6);
 		
 	}

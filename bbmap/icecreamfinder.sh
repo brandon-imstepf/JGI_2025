@@ -60,7 +60,7 @@ minpolymer=5    Don't trim poly-A sequence shorter than this.
 polyerror=0.2   Max error rate for trimming poly-A.
 
 
-Speed and sensitivity:
+Speed and sensitivity parameters:
 jni=f           Enable C code for higher speed and identical results.
 minratio=       Fraction of maximal alignment score to consider as matching.
                 Higher is more stringent; lower allows more sequencing errors.
@@ -95,6 +95,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -138,7 +139,7 @@ calcXmx () {
 calcXmx "$@"
 
 icecream() {
-	local CMD="java $EA $EOOM $z $z2 $z3 $JNI -cp $CP icecream.IceCreamFinder $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 $z3 $JNI -cp $CP icecream.IceCreamFinder $@"
 	if [[ $silent != 1 ]]; then
 		echo $CMD >&2
 	fi

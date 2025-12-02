@@ -25,8 +25,8 @@ import stream.ConcurrentReadInputStream;
 import stream.ConcurrentReadOutputStream;
 import stream.FastaReadInputStream;
 import stream.Read;
-import stream.ReadStreamWriter;
 import stream.SamLine;
+import stream.SamReadInputStream;
 import stream.SiteScore;
 import structures.ByteBuilder;
 import structures.ListNum;
@@ -40,6 +40,8 @@ import template.ThreadWaiter;
  */
 public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 
+	/** Program entry point for primer finding and alignment.
+	 * @param args Command-line arguments for configuration */
 	public static void main(String[] args){
 		Timer t=new Timer();
 		FindPrimers x=new FindPrimers(args);
@@ -49,6 +51,12 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		Shared.closeStream(x.outstream);
 	}
 	
+	/**
+	 * Constructs FindPrimers with parsed command-line arguments.
+	 * Initializes alignment parameters, input/output streams, and query sequences.
+	 * Supports both file-based queries and literal sequence strings.
+	 * @param args Command-line arguments containing input files, output paths, and alignment options
+	 */
 	public FindPrimers(String[] args){
 		
 		{//Preparse block for help, config files, and outstream
@@ -120,9 +128,8 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		}
 		cutoff=cutoff_;
 		
-//		ArrayList<byte[]> sharedHeader=new ArrayList<byte[]>();
-		ByteBuilder sharedHeader=new ByteBuilder();
-		sharedHeader.append("@HD\tVN:1.4\tSO:unsorted\n");
+		ArrayList<byte[]> sharedHeader=new ArrayList<byte[]>();
+		sharedHeader.add("@HD\tVN:1.4\tSO:unsorted".getBytes());
 		if(ref_!=null){
 			ArrayList<Read> list=FastaReadInputStream.toReads(ref_, FileFormat.FASTA, -1);
 			int max=0;
@@ -132,7 +139,7 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 				Read r=list.get(i);
 				max=Tools.max(max, r.length());
 				if(swapQuery){
-					sharedHeader.append("@SQ\tSN:"+r.name()+"\tLN:"+r.length()).nl();
+					sharedHeader.add(("@SQ\tSN:"+r.name()+"\tLN:"+r.length()).getBytes());
 				}
 				queries.add(r);
 //				if(rcomp){
@@ -153,7 +160,7 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 				max=Tools.max(max, r.length());
 				queries.add(r);
 				if(swapQuery){
-					sharedHeader.append("@SQ\tSN:"+r.name()+"\tLN:"+r.length()).nl();
+					sharedHeader.add(("@SQ\tSN:"+r.name()+"\tLN:"+r.length()).getBytes());
 				}
 			}
 			maxqlen=max;
@@ -162,9 +169,7 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 			maxqlen=0;
 		}
 		
-		if(sharedHeader.length()>0) {
-			ReadStreamWriter.HEADER=sharedHeader;
-		}
+		SamReadInputStream.setSharedHeader(sharedHeader);
 		
 		if(replicateAmbiguous){
 			queries=Tools.replicateAmbiguous(queries, 1);
@@ -187,6 +192,11 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		ffin1=FileFormat.testInput(in1, FileFormat.FASTQ, null, true, true);
 	}
 	
+	/**
+	 * Main processing method that executes primer alignment pipeline.
+	 * Creates input/output streams, spawns processing threads, and generates statistics.
+	 * @param t Timer for tracking execution time
+	 */
 	void process(Timer t){
 		
 		final ConcurrentReadInputStream cris;
@@ -237,6 +247,11 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		outstream.println("Min Identity:       "+minid);
 	}
 	
+	/**
+	 * Creates concurrent output stream for SAM format results.
+	 * Configures buffer size based on thread ordering requirements.
+	 * @return ConcurrentReadOutputStream for writing alignment results, or null if no output specified
+	 */
 	private ConcurrentReadOutputStream makeCros(){
 		if(ffout1==null){return null;}
 
@@ -349,6 +364,11 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 			}
 		}
 		
+		/**
+		 * Processes a list of reads by aligning each against query sequences.
+		 * Validates reads, performs alignment, and prepares output data.
+		 * @param ln ListNum containing reads to process
+		 */
 		void processList(ListNum<Read> ln){
 
 			//Grab the actual read list from the ListNum
@@ -466,6 +486,15 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 
 		/*--------------------------------------------------------------*/
 		
+		/**
+		 * Converts alignment result to SAM format bytes with identity scoring.
+		 * Generates complete SAM line including CIGAR, position, and custom tags.
+		 *
+		 * @param r Target read that was aligned
+		 * @param query Query sequence used for alignment
+		 * @param ss SiteScore containing alignment details, or null for unmapped
+		 * @return ByteBuilder containing SAM format line
+		 */
 		private ByteBuilder toBytes(Read r, Read query, SiteScore ss){
 			bb.clear();
 			if(ss==null){return toBytes(r, query);}
@@ -520,6 +549,14 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 			return bb;
 		}
 		
+		/**
+		 * Generates unmapped SAM entry for reads without valid alignments.
+		 * Creates SAM line with unmapped flag and minimal required fields.
+		 *
+		 * @param r Target read
+		 * @param query Query sequence
+		 * @return ByteBuilder containing unmapped SAM line
+		 */
 		private ByteBuilder toBytes(Read r, Read query){
 			bb.clear();
 //			if(cutoff>0){return bb;}
@@ -552,6 +589,9 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		}
 		
 		//This seems to be up to 30% faster if the raw class rather than interface is used.
+		/**
+		 * Alignment algorithm instance selected based on input type and configuration
+		 */
 		Aligner msa=Shared.AMINO_IN ? new SingleStateAlignerFlat2Amino() : useMSA2 ? new MultiStateAligner9PacBioAdapter2() : 
 			useSSA1D ? new SingleStateAlignerFlat2_1D() : useSSA2 ? new SingleStateAlignerFlat2() : new SingleStateAlignerFlat();
 //		SingleStateAlignerFlat msa=new SingleStateAlignerFlat(maxqlen+5, maxqlen+5);
@@ -572,12 +612,15 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		/** Number of bases retained by this thread */
 		protected long basesOutT=0;
 		
+		/** Sum of identity scores for alignments processed by this thread */
 		double identitySumT=0;
+		/** Count of alignments with identity scores processed by this thread */
 		long identityCountT=0;
 		
 		/** True only if this thread has completed successfully */
 		boolean success=false;
 		
+		/** Reusable ByteBuilder for constructing SAM format output lines */
 		private ByteBuilder bb=new ByteBuilder(1000);
 		
 		/** Shared input stream */
@@ -588,6 +631,12 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 		final int tid;
 	}
 	
+	/**
+	 * Creates SAM flag value from alignment strand information.
+	 * Sets reverse complement flag for minus strand alignments.
+	 * @param ss SiteScore containing strand information
+	 * @return SAM flag bits with strand information
+	 */
 	public static int makeFlag(SiteScore ss){
 		int flag=0;
 		if(ss.strand()==Shared.MINUS){flag|=0x10;}
@@ -600,51 +649,81 @@ public class FindPrimers implements Accumulator<FindPrimers.ProcessThread> {
 	
 	/*--------------------------------------------------------------*/
 	
+	/** Input file path for sequences to align */
 	private String in1=null;
+	/** Output file path for SAM format results */
 	private String out1=null;
+	/** Output file path for identity histogram */
 	private String outIdHist=null;
 	
+	/** Thread-safe histogram of alignment identity percentages (0-100) */
 	private AtomicIntegerArray idHist=new AtomicIntegerArray(101);
 	
+	/** Minimum identity threshold for reporting alignments */
 	private final float cutoff;
+	/** Whether to include reverse complement of queries in alignment */
 	private boolean rcomp=true;
+	/** Whether to expand ambiguous nucleotides in queries */
 	private boolean replicateAmbiguous=false;
+	/** Whether to swap query and target roles in alignment output */
 	private boolean swapQuery=false;
+	/** Whether to add 'r_' prefix to reverse complement query names */
 	private boolean addR=false;
+	/** Whether to include zero counts in identity histogram output */
 	private boolean printZeros=true;
+	/** Whether to output identity histogram in single column format */
 	private boolean oneColumn=false;
+	/** Whether to use MultiStateAligner9PacBioAdapter2 for alignment */
 	private boolean useMSA2=false;
+	/** Whether to use SingleStateAlignerFlat2 for alignment (default) */
 	private boolean useSSA2=true;
+	/** Whether to use SingleStateAlignerFlat2_1D for alignment */
 	private boolean useSSA1D=false;
 	
+	/** File format for input sequence file */
 	private final FileFormat ffin1;
+	/** File format for output SAM file */
 	private final FileFormat ffout1;
+	/** List of query/primer sequences to align against input reads */
 	private ArrayList<Read> queries;
+	/** Maximum length among all query sequences */
 	private final int maxqlen;
 	
 	@Override
 	public final ReadWriteLock rwlock() {return rwlock;}
+	/** Read-write lock for coordinating thread access */
 	private final ReadWriteLock rwlock=new ReentrantReadWriteLock();
 	
 	/*--------------------------------------------------------------*/
 	
+	/** Total number of reads processed across all threads */
 	protected long readsProcessed=0;
+	/** Total number of bases processed across all threads */
 	protected long basesProcessed=0;
 	
+	/** Total number of reads written to output across all threads */
 	protected long readsOut=0;
+	/** Total number of bases written to output across all threads */
 	protected long basesOut=0;
 
+	/** Maximum number of reads to process (-1 for unlimited) */
 	private long maxReads=-1;
 	
+	/** Sum of all alignment identity scores for average calculation */
 	double identitySum=0;
+	/** Count of alignments with identity scores for average calculation */
 	long identityCount=0;
 	
+	/** Whether output should maintain input order */
 	boolean ordered=true;
+	/** Whether any thread encountered an error during processing */
 	boolean errorState=false;
 	
 	/*--------------------------------------------------------------*/
 	
+	/** Output stream for status messages and statistics */
 	private java.io.PrintStream outstream=System.err;
+	/** Whether to print verbose status messages during execution */
 	public static boolean verbose=false;
 	
 }

@@ -3,7 +3,7 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified May 4, 2025
+Last modified October 13, 2025
 
 Description:  Loads fasta files and writes clade files.
 
@@ -29,6 +29,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -69,7 +70,7 @@ calcXmx () {
 calcXmx "$@"
 
 vector() {
-	local CMD="java $EA $EOOM $z -cp $CP bin.CladeLoader $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP clade.CladeLoader $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -19,8 +19,8 @@ import stream.ConcurrentReadOutputStream;
 import stream.FastaReadInputStream;
 import stream.Read;
 import stream.SamLine;
-import stream.SamReadStreamer;
-import stream.SamStreamer;
+import stream.Streamer;
+import stream.StreamerFactory;
 import structures.ListNum;
 import tracker.ReadStats;
 import var2.Realigner;
@@ -78,7 +78,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		ReadWrite.setZipThreads(Shared.threads());
 		
 //		samFilter.includeUnmapped=false;
-//		samFilter.includeSupplimentary=false;
+//		samFilter.includeSupplementary=false;
 //		samFilter.includeDuplicate=false;
 //		samFilter.includeNonPrimary=false;
 //		samFilter.includeQfail=false;
@@ -240,7 +240,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		Read.VALIDATE_IN_CONSTRUCTOR=Shared.threads()<4;
 		
 		//Create a read input stream
-		final SamStreamer ss=makeStreamer(ffin);
+		final Streamer ss=makeStreamer(ffin);
 		
 		//Load reference, if desired (and if present);
 		loadScafMapFromReference();
@@ -277,6 +277,11 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		}
 	}
 
+	/**
+	 * Loads scaffold mapping data from the reference file.
+	 * Initializes ScafMap for coordinate lookups and optionally configures
+	 * the Realigner with the loaded reference.
+	 */
 	private void loadScafMapFromReference(){
 		if(loadedRef){return;}
 		assert(ref!=null);
@@ -285,6 +290,8 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		loadedRef=true;
 	}
 
+	/** Template method for custom reference loading logic.
+	 * Currently contains placeholder code for processing reference sequences. */
 	private void loadReferenceCustom(){
 		ConcurrentReadInputStream cris=makeRefCris();
 		for(ListNum<Read> ln=cris.nextList(); ln!=null && ln.size()>0; ln=cris.nextList()) {
@@ -293,6 +300,11 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		}
 	}
 	
+	/**
+	 * Creates a concurrent read input stream for the reference file.
+	 * Validates that the reference is not paired-end data.
+	 * @return Configured and started ConcurrentReadInputStream for reference
+	 */
 	private ConcurrentReadInputStream makeRefCris(){
 		ConcurrentReadInputStream cris=ConcurrentReadInputStream.getReadInputStream(maxReads, true, ffref, null);
 		cris.start(); //Start the stream
@@ -302,14 +314,19 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		return cris;
 	}
 	
-	private SamStreamer makeStreamer(FileFormat ff){
+	private Streamer makeStreamer(FileFormat ff){
 		if(ff==null){return null;}
-		SamStreamer ss=new SamReadStreamer(ff, streamerThreads, true, maxReads);
+		Streamer ss=StreamerFactory.makeSamOrBamStreamer(ff, streamerThreads, true, false, maxReads, true);
 		ss.start(); //Start the stream
 		if(verbose){outstream.println("Started Streamer");}
 		return ss;
 	}
 	
+	/**
+	 * Creates a concurrent read output stream for writing processed reads.
+	 * Buffer size is optimized based on whether ordered output is required.
+	 * @return Configured and started ConcurrentReadOutputStream, or null if no output
+	 */
 	private ConcurrentReadOutputStream makeCros(){
 		if(ffout==null){return null;}
 
@@ -326,7 +343,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 	/*--------------------------------------------------------------*/
 	
 	/** Spawn process threads */
-	private void spawnThreads(final SamStreamer ss, final ConcurrentReadOutputStream ros){
+	private void spawnThreads(final Streamer ss, final ConcurrentReadOutputStream ros){
 		
 		//Do anything necessary prior to processing
 		
@@ -377,7 +394,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 	class ProcessThread extends Thread {
 		
 		//Constructor
-		ProcessThread(final SamStreamer ss_, final ConcurrentReadOutputStream ros_, final int tid_){
+		ProcessThread(final Streamer ss_, final ConcurrentReadOutputStream ros_, final int tid_){
 			ss=ss_;
 			ros=ros_;
 			tid=tid_;
@@ -402,7 +419,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		void processInner(){
 			
 			//Grab and process all lists
-			for(ListNum<Read> ln=ss.nextReads(); ln!=null; ln=ss.nextReads()){
+			for(ListNum<Read> ln=ss.nextList(); ln!=null; ln=ss.nextList()){
 //				if(verbose){outstream.println("Got list of size "+list.size());} //Disabled due to non-static access
 				
 				processList(ln);
@@ -410,6 +427,12 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 			
 		}
 		
+		/**
+		 * Processes a list of reads from the input stream.
+		 * Iterates through each read, applies processing logic, updates statistics,
+		 * and outputs results to the output stream.
+		 * @param ln ListNum containing reads to process
+		 */
 		void processList(ListNum<Read> ln){
 
 			//Grab the actual read list from the ListNum
@@ -479,7 +502,7 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 		boolean success=false;
 		
 		/** Shared input stream */
-		private final SamStreamer ss;
+		private final Streamer ss;
 		/** Shared output stream */
 		private final ConcurrentReadOutputStream ros;
 		/** Thread ID */
@@ -523,19 +546,25 @@ public class A_SampleSamStreamer implements Accumulator<A_SampleSamStreamer.Proc
 	/*--------------------------------------------------------------*/
 	
 	/** Threads dedicated to reading the sam file */
-	private int streamerThreads=SamStreamer.DEFAULT_THREADS;
+	private int streamerThreads=-1;
 	
+	/** Flag indicating whether reference has been loaded */
 	private boolean loadedRef=false;
 	
+	/** Whether to perform realignment of reads */
 	private boolean realign=false;
 	
+	/** Ploidy level for variant calling; default is 1 (haploid) */
 	private int ploidy=1;
 	
+	/** Scaffold mapping data loaded from reference file */
 	public ScafMap scafMap;
+	/** SAM filtering configuration for read selection criteria */
 	public final SamFilter samFilter=new SamFilter();
 	
 	@Override
 	public final ReadWriteLock rwlock() {return rwlock;}
+	/** Read-write lock for thread synchronization */
 	private final ReadWriteLock rwlock=new ReentrantReadWriteLock();
 	
 	/*--------------------------------------------------------------*/

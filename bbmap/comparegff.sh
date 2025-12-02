@@ -14,6 +14,7 @@ in=<file>       Query gff.
 ref=<file>      Reference gff.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -54,7 +55,7 @@ calcXmx () {
 calcXmx "$@"
 
 comparegff() {
-	local CMD="java $EA $EOOM $z -cp $CP gff.CompareGff $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP gff.CompareGff $@"
 	echo $CMD >&2
 	eval $CMD
 }

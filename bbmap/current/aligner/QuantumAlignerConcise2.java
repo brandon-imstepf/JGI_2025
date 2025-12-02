@@ -13,7 +13,7 @@ import structures.IntList;
  * This version is decomposed into 3 primary functions.
  * 
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class QuantumAlignerConcise2 implements IDAligner{
@@ -30,6 +30,7 @@ public class QuantumAlignerConcise2 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor for aligner instance */
 	public QuantumAlignerConcise2() {}
 
 	/*--------------------------------------------------------------*/
@@ -134,7 +135,7 @@ public class QuantumAlignerConcise2 implements IDAligner{
 		final long maxValue=(maxDiagUp&SCORE_MASK)>=leftScore ? maxDiagUp : leftScore;
 		final long scoreDif=prevRowScore-maxValue;// Determines whether j is within score band
 		final int lastPositionAdded=nextList.array[nextList.size-1];
-		final boolean add=j<rLen && (scoreDif<scoreBand || i<topBand);
+		final boolean add=j<=rLen && (scoreDif<scoreBand || i<topBand);
 		final boolean live=(EXTEND_MATCH && isMatch & lastPositionAdded<j+1);
 		curr[j]=(add || live ? maxValue : BAD);// Update or prune current cell
 		prev[j-1]=BAD;//Clear previous row
@@ -196,7 +197,10 @@ public class QuantumAlignerConcise2 implements IDAligner{
 		return id;
 	}
 	
+	/** Returns -1 indicating loop counting is not implemented */
 	public long loops() {return -1;}
+	/** No-op method for setting loop count.
+	 * @param x Loop count value (ignored) */
 	public void setLoops(long x) {}
 
 	/*--------------------------------------------------------------*/

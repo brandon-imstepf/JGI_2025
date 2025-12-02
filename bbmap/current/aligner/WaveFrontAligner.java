@@ -1,10 +1,15 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Implements a WaveFront alignment algorithm for global alignment.
  * This version is actually fast.
+ * 
+ *@author Brian Bushnell
+ *@contributor Isla
+ *@date April 30, 2025
  */
 public class WaveFrontAligner implements IDAligner {
 
@@ -16,6 +21,7 @@ public class WaveFrontAligner implements IDAligner {
 		Test.testAndPrint(c, args);
 	}
 
+    /** Creates a new WaveFrontAligner instance */
     public WaveFrontAligner() {}
 
 	@Override
@@ -31,10 +37,29 @@ public class WaveFrontAligner implements IDAligner {
         return alignStatic(a, b, pos, rStart, rStop);
     }
     
-    @Override
-    public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/**
+	 * Thread-safe counter for tracking total loop iterations across all alignments
+	 */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the current loop counter value for performance tracking */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter value.
+	 * @param x New loop counter value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output string for debugging or result storage */
+	public static String output=null;
 	
+	/**
+	 * Core wavefront alignment implementation using dynamic programming.
+	 * Computes edit distance between sequences using wavefront propagation across diagonals.
+	 * Uses rolling buffer optimization with only two arrays instead of full DP matrix.
+	 * Extends matches greedily before applying edit operations for efficiency.
+	 *
+	 * @param query Query sequence bytes
+	 * @param ref Reference sequence bytes
+	 * @param posVector Output positions (start=0, end=reference_length-1)
+	 * @return Identity score calculated as 1 - (edit_distance / max_sequence_length)
+	 */
 	public static float alignStatic(byte[] query, byte[] ref, int[] posVector){
 	    final int qLen=query.length;
 	    final int rLen=ref.length;
@@ -49,7 +74,7 @@ public class WaveFrontAligner implements IDAligner {
 	    }
 	    
 	    // The maximum reasonable edit distance for alignment
-	    final int maxEditDist=Math.min(Math.max(qLen, rLen), 4000);
+	    final int maxEditDist=(int)Math.max(qLen, rLen)+8;
 	    
 	    // Number of diagonals (k ranges from -qLen to rLen)
 	    final int numDiagonals=qLen+rLen+1;
@@ -72,7 +97,7 @@ public class WaveFrontAligner implements IDAligner {
 	    int finalEditDist=-1;
 	    
 	    // Counter for wavefront size estimation (total cells explored)
-	    int loopCounter=0;
+	    int loopCounter=0, loopCounter2=0;
 	    
 	    // Main loop - iterate through edit distances
 	    for(int d=0; d<=maxEditDist; d++){
@@ -89,7 +114,7 @@ public class WaveFrontAligner implements IDAligner {
 	            int reach=currentWF[diagIdx];
 	            if(reach<0) continue;
 	            
-	            loopCounter++;
+	            loopCounter++;//Often the innermost loop never triggers
 	            
 	            // Convert to matrix coordinates
 	            int i=reach;
@@ -99,7 +124,7 @@ public class WaveFrontAligner implements IDAligner {
 	            while(i<qLen && j<rLen && query[i]==ref[j]){
 	                i++;
 	                j++;
-	                loopCounter++;
+	                loopCounter2++;//Could go really far
 	            }
 	            
 	            // Update furthest reach (for visualization and completion check)
@@ -157,7 +182,7 @@ public class WaveFrontAligner implements IDAligner {
 	    }
 	    
 	    // Set loop count for metrics
-	    if(loops>=0) {loops+=loopCounter;}
+	    loops.addAndGet(Math.max(loopCounter, loopCounter2));
 	    
 	    // Calculate identity
 	    float identity=Math.max(0.0f, 1.0f-(float)finalEditDist/Math.max(qLen, rLen));
@@ -187,7 +212,4 @@ public class WaveFrontAligner implements IDAligner {
         }
         return id;
     }
-    
-    // For tracking cells processed
-    static long loops = -1;
 }

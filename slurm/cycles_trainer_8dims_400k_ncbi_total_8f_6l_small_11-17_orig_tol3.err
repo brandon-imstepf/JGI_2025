@@ -1,0 +1,8 @@
+java -ea -Xmx400g -Xms400g -cp /clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf/bbmap/current/ ml.Trainer in=../ncbi_master_11-7_splits/ncbi_master_11-7_orig_tol3_train.shuffled.tsv out=cycles_trained_8dims_400k_ncbi_total_8f_6l_small_11-17_orig_tol3.bbnet maxdims=358,125,275,75,25,1 mindims=358,50,150,25,5,1 cycles=4 nets=8 -Xmx400g
+
+Loading ../ncbi_master_11-7_splits/ncbi_master_11-7_orig_tol3_train.shuffled.tsv
+Inferring 356 inputs, 1 output, 0 weights.
+Data was organized into 595 sets.
+Using 64 worker threads, 8 trainer threads, 22 jobs/trainer/batch, 400000 batches, 4 cycles to train 32 networks total.
+Cycle 0
+[2025-11-19T12:23:14.271] error: *** JOB 19759129 ON n0002.dori0 CANCELLED AT 2025-11-19T12:23:14 DUE TO TIME LIMIT ***

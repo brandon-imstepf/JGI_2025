@@ -1,8 +1,8 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
-import shared.Timer;
 import shared.Tools;
 
 /**
@@ -14,7 +14,7 @@ import shared.Tools;
  *Restricts alignment to a fixed band centered on the diagonal.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class BandedAlignerM implements IDAligner{
@@ -31,6 +31,7 @@ public class BandedAlignerM implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor for BandedAlignerM aligner */
 	public BandedAlignerM() {}
 
 	/*--------------------------------------------------------------*/
@@ -80,6 +81,7 @@ public class BandedAlignerM implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		
 		//Create a visualizer if an output file is defined
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, MATCH_BITS));
@@ -139,7 +141,7 @@ public class BandedAlignerM implements IDAligner{
 				curr[j]=maxValue;
 			}
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 
 			// Swap rows
 			long[] temp=prev;
@@ -147,6 +149,7 @@ public class BandedAlignerM implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
+		loops.addAndGet(mloops);
 		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
 	}
 
@@ -246,9 +249,14 @@ public class BandedAlignerM implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Thread-safe counter for total alignment cells processed */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns total number of alignment cells processed across all alignments */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter for alignment cells processed.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Output filename for alignment visualization, null disables visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -256,26 +264,41 @@ public class BandedAlignerM implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits allocated for position information in packed scores */
 	private static final int POSITION_BITS=21;
+	/** Number of bits allocated for match count in packed scores */
 	private static final int MATCH_BITS=21;
+	/** Bit offset for alignment score in packed format */
 	private static final int SCORE_SHIFT=POSITION_BITS+MATCH_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from packed scores */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting match count from packed scores */
 	private static final long MATCH_MASK=((1L << MATCH_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting alignment score from packed format */
 	private static final long SCORE_MASK=~(POSITION_MASK | MATCH_MASK);
 
 	// Scoring constants
+	/** Score value for matching bases */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Penalty for substitution operations */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Penalty for insertion operations */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Penalty for deletion operations */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for alignments involving ambiguous bases (N characters) */
 	private static final long N_SCORE=0L;
+	/** Sentinel value indicating invalid alignment scores outside the band */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined score and match count increment for matching bases */
 	private static final long MATCH_INCREMENT=MATCH+(1L<<POSITION_BITS);
 
 	// Run modes
+	/** Debug flag to enable printing of alignment operation details */
 	private static final boolean PRINT_OPS=false;
+	/** Flag indicating global vs local alignment mode */
 	public static final boolean GLOBAL=false;
 
 }

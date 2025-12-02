@@ -1,0 +1,5 @@
+{
+    "java.project.sourcePaths": ["current"],
+    "java.project.outputPath": "current",
+    "java.configuration.updateBuildConfiguration": "automatic"
+}

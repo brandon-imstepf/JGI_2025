@@ -9,15 +9,15 @@ Last modified September 15, 2022
 Description:  Fast and accurate splice-aware read aligner.
 Please read bbmap/docs/guides/BBMapGuide.txt for more information.
 
-To index:     bbmap.sh ref=<reference fasta>
-To map:       bbmap.sh in=<reads> out=<output sam>
-To map without writing an index:
-    bbmap.sh ref=<reference fasta> in=<reads> out=<output sam> nodisk
+Usage:                      bbmap.sh ref=<fasta> in=<reads> out=<sam>
+Index only:                 bbmap.sh ref=<fasta>
+Map to existing index:      bbmap.sh in=<reads> out=<sam>
+Map without writing index:  bbmap.sh ref=<fasta> in=<reads> out=<sam> nodisk
 
 in=stdin will accept reads from standard in, and out=stdout will write to 
 standard out, but file extensions are still needed to specify the format of the 
 input and output files e.g. in=stdin.fa.gz will read gzipped fasta from 
-standard in; out=stdout.sam.gz will write gzipped sam.
+standard in; out=stdout.sam.gz will write gzipped sam; out=x.bam writes bam.
 
 Indexing Parameters (required when building the index):
 nodisk=f                Set to true to build index in memory and write nothing 
@@ -26,6 +26,7 @@ ref=<file>              Specify the reference sequence.  Only do this ONCE,
                         when building the index (unless using 'nodisk').
 build=1                 If multiple references are indexed in the same directory,
                         each needs a unique numeric ID (unless using 'nodisk').
+                        Later, this flag can be used to select an index.
 k=13                    Kmer length, range 8-15.  Longer is faster but uses 
                         more memory.  Shorter is more sensitive.
                         If indexing and mapping are done in two steps, K should
@@ -39,8 +40,6 @@ usemodulo=f             Throw away ~80% of kmers based on remainder modulo a
 rebuild=f               Force a rebuild of the index (ref= should be set).
 
 Input Parameters:
-build=1                 Designate index to use.  Corresponds to the number 
-                        specified when building the index.
 in=<file>               Primary reads input; required parameter.
 in2=<file>              For paired reads in two files.
 interleaved=auto        True forces paired/interleaved input; false forces 
@@ -306,6 +305,7 @@ Java Parameters:
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter 
 any problems, or post at: http://seqanswers.com/forums/showthread.php?t=41057
+For documentation and the latest version, visit: https://bbmap.org
 "   
 }
 
@@ -349,7 +349,7 @@ calcXmx "$@"
 
 
 bbmap() {
-	local CMD="java $EA $EOOM $z $z2 $JNI -cp $CP align2.BBMap build=1 overwrite=true fastareadlen=500 $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 $JNI -cp $CP align2.BBMap build=1 overwrite=true fastareadlen=500 $@"
 	echo $CMD >&2
 	eval $CMD
 }

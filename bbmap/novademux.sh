@@ -11,8 +11,7 @@ minimal crosstalk in the presence of errors.  Barcodes (indexes) must be
 embedded in read headers, and the expected barcodes must be provided
 as a text file with one barcode (or barcode pair) per line.
 
-Usage example for single-ended or interleaved files:
-
+Usage:
 novademux.sh in=reads.fq out=out_%.fq outu=unknown.fq expected=barcodes.txt
 
 For twin files:
@@ -55,13 +54,13 @@ addpolyg=f      It is recommended to set this to true on a platform where
 remap=          Change symbols for output filenames.  For example, remap=+-
                 would output barcode ACGT+TGCA to file ACGT-TCGA.fq.gz.
 
-Legacy Output Stats File Support:
+Legacy Output Stats File Support Parameters:
 legacy=         Set this to a path like '.' to output legacy stats files.
 samplemap=      An input csv or tsv containing barcodes and sample names,
                 for legacy stats.  If present 'expected' can be omitted.
 lane=0          Set this to a number to print the lane in legacy files.
 
-Barcode Parsing Modes (choose one):
+Barcode Parsing Mode Parameters (choose one):
 barcode         Parse the barcode automatically, assuming the standard
                 Illumina header format.  This is the default.
 header          Match the entire read header.
@@ -87,7 +86,7 @@ length=0        For prefix or suffix mode, use this many characters from
 column=0        Select the term when using a header delimiter.  This is
                 1-based (first term is column 1) so it must be positive.
 
-Barcode Assignment Mode (choose one):
+Barcode Assignment Mode Parameters (choose one):
 mode=prob       prob: Default mode.  Assigns reads to the bin where they most
                    likely belong, from gathering statistics across the pool.
                 tile: Similar to prob, but calculates statistics on a per-tile
@@ -105,7 +104,7 @@ server=auto     true:  Barcode counts are sent to a remote server for
                 auto:  Sets flag to false unless the local machine contains
                        proprietary probabilistic processing code.
 
-Sensitivity Cutoffs for Prob/Tile Mode:
+Sensitivity Cutoff Parameters for Prob/Tile Mode:
 maxhdist=6     Maximum Hamming distance (number of mismatches) allowed.
                 Lower values will reduce yield with little benefit.
 pairhdist=f     When true, maxhdist will apply to the Hamming distance of
@@ -124,7 +123,7 @@ matrixthreads=1 More threads is faster but adds nondeterminism.
 Note: These cutoffs are optimized for dual 10bp indexes.  For single 10bp
 indexes, 'minratio=5000 minprob=-3.2' is recommended.
 
-Sensitivity Cutoffs for HDist Mode
+Sensitivity Cutoff Parameters for HDist Mode:
 maxhdist=1      Maximum Hamming distance (number of mismatches) allowed.
                 Lower values will reduce yield and decrease crosstalk.
                 Setting maxhdist=0 will allow exact matches only.
@@ -138,7 +137,7 @@ clearzone=1     (cz) Minimum difference between the closest and second-closest
                 clearzone is set to at most 2.  Lower values increase both
                 yield and crosstalk.
 
-Buffering Parameters
+Buffering Parameters:
 streams=8       Allow at most this many active streams.  The actual number
                 of open files will be 1 greater than this if outu is set,
                 and doubled if output is paired and written in twin files 
@@ -152,7 +151,7 @@ rpb=8000        Dump buffers to files when they fill with this many reads.
 bpb=8000000     Dump buffers to files when they contain this many bytes.
                 Higher can be faster; lower uses less memory.
 
-Special Processing of Spike-ins (particularly for spike-ins with no barcodes)
+Spike-in Processing Parameters (particularly for spike-ins with no barcodes):
 spikelabel=     If and only if a spike-in label is set here, reads will be
                 aligned to a reference, and matching reads will be sent to
                 the file with this label.  May be a barcode or other string.
@@ -162,7 +161,7 @@ minid=0.7       Identity cutoff for matching the reference.
 mapall=f        Map all reads to the reference, instead of just unassigned
                 reads.
 
-Common parameters:
+Common Parameters:
 ow=t            (overwrite) Overwrites files that already exist.
 zl=4            (ziplevel) Set compression level, 1 (low) to 9 (max).
 int=auto        (interleaved) Determines whether INPUT file is considered 
@@ -177,6 +176,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -217,7 +217,7 @@ calcXmx () {
 calcXmx "$@"
 
 function demux() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP barcode.NovaDemux $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP barcode.NovaDemux $@"
 	echo $CMD >&2
 	eval $CMD
 }

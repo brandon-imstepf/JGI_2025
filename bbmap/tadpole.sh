@@ -11,10 +11,9 @@ but some values are not supported.  Specifically, it allows 1-31,
 multiples of 2 from 32-62, multiples of 3 from 63-93, etc.
 Please read bbmap/docs/guides/TadpoleGuide.txt for more information.
 
-Usage:
-Assembly:     tadpole.sh in=<reads> out=<contigs>
-Extension:    tadpole.sh in=<reads> out=<extended> mode=extend
-Correction:   tadpole.sh in=<reads> out=<corrected> mode=correct
+Usage (Assembly):  tadpole.sh k=62 in=<reads> out=<contigs>
+Extension:    tadpole.sh k=62 in=<reads> out=<extended> mode=extend
+Correction:   tadpole.sh k=62 in=<reads> out=<corrected> mode=correct
 
 Recommended parameters for optimal assembly:
 tadpole.sh in=<reads> out=<contigs> shave rinse pop k=<50-70% of read length>
@@ -101,7 +100,7 @@ processcontigs=f    Explore the contig connectivity graph.
 popbubbles=t        (pop) Pop bubbles; increases contiguity.  Requires 
                     additional time and memory and forces processcontigs=t.
 
-Processing modes:
+Processing mode parameters:
 mode=contig         contig: Make contigs from kmers.
                     extend: Extend sequences to be longer, and optionally
                             perform error correction.
@@ -241,7 +240,7 @@ calcXmx () {
 calcXmx "$@"
 
 tadpole() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP assemble.Tadpole $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP assemble.Tadpole $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -1,5 +1,6 @@
 package gff;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -9,6 +10,7 @@ import dna.AminoAcid;
 import dna.Data;
 import fileIO.ByteFile;
 import fileIO.FileFormat;
+import ml.CellNet;
 import prok.Orf;
 import prok.ProkObject;
 import shared.Parse;
@@ -22,29 +24,35 @@ import var2.VCFLine;
 import var2.Var;
 
 /**
- * Used by both the var2 and prok packages for processing gff files.
+ * Parses and represents GFF3 format annotation lines.
+ * Supports constructors from multiple input formats including GTF, VCF, Var objects, and ORF predictions.
+ * Implements Feature interface for genomic coordinate operations.
+ * Provides batch loading with type filtering and prokaryotic feature classification.
  * @author Brian Bushnell
  * @date Sep 12, 2018
- *
  */
 public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 	
+	/**
+	 * Parses tab-delimited GFF line into 9 standard fields.
+	 * @param line GFF format line bytes
+	 */
 	//#seqid	source	type	start	end	score	strand	phase	attributes
 	public GffLine(byte[] line){
 		int a=0, b=0;
 		
 		while(b<line.length && line[b]!='\t'){b++;}
 		assert(b>a) : "Missing field 0: "+new String(line);
-		seqid=parseSeqid ? intern(new String(line, a, b-a)) : null;
-//		assert(seqid==null || seqid.equals(new String(line, a, b-a)));
-//		assert(seqid!=null) : new String(line, a, b-a)+", "+a+", "+b+"\n"+line;
+		seqid=parseSeqid ? intern(new String(line, a, b-a, StandardCharsets.US_ASCII)) : null;
+//		assert(seqid==null || seqid.equals(new String(line, a, b-a, StandardCharsets.US_ASCII)));
+//		assert(seqid!=null) : new String(line, a, b-a, StandardCharsets.US_ASCII)+", "+a+", "+b+"\n"+line;
 		b++;
 		a=b;
 		
 		while(b<line.length && line[b]!='\t'){b++;}
 		assert(b>a) : "Missing field 1: "+new String(line);
 		if(b==a+1 && line[a]=='.'){source=DOTS;}
-		else{source=paseSource ? intern(new String(line, a, b-a)) : null;}
+		else{source=paseSource ? intern(new String(line, a, b-a, StandardCharsets.US_ASCII)) : null;}
 		b++;
 		a=b;
 		
@@ -52,8 +60,8 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		assert(b>a) : "Missing field 2: "+new String(line);
 		if(b==a+1 && line[a]=='.'){type=DOTS;}
 		else{
-			try {//This was to catch a probably intermittent hardware error; can't replicate.
-				type=(parseType ? intern(new String(line, a, b-a)) : null);
+			try { //This was to catch a probably intermittent hardware error; can't replicate.
+				type=(parseType ? intern(new String(line, a, b-a, StandardCharsets.US_ASCII)) : null);
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -106,14 +114,14 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		while(b<line.length && line[b]!='\t'){b++;}
 		assert(b>a) : "Missing field 8: "+new String(line);
 		if(b==a+1 && line[a]=='.'){attributes=DOTS;}
-		else{attributes=parseAttributes ? new String(line, a, b-a) : null;}
+		else{attributes=parseAttributes ? new String(line, a, b-a, StandardCharsets.US_ASCII) : null;}
 		b++;
 		a=b;
 		
 //		assert(strand>=0) : "\n"+this.toString()+"\n"+new String(line);
 	}
 	
-	//Mostly identical.
+	/** Creates GffLine from GTF format, converting attribute format. */
 	public GffLine(GtfLine gtf){
 		seqid=gtf.seqname;
 		source=gtf.source;
@@ -145,6 +153,7 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		attributes=sb.toString();
 	}
 	
+	/** Creates sequence_variant_obs GffLine from VCF variant call. */
 	public GffLine(VCFLine vcf){
 		seqid=vcf.scaf;
 		source=DOTS;
@@ -172,13 +181,15 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		bb.clear();
 	}
 	
-	public GffLine(Var v, double properPairRate, double totalQualityAvg, double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map){
+	/** Creates sequence_variant_obs GffLine from Var with calculated score. */
+	public GffLine(Var v, double properPairRate, double totalQualityAvg, double totalMapqAvg, 
+			double readLengthAvg, double rarity, int ploidy, ScafMap map, CellNet net){
 		seqid=v.scafName();
 		source=DOTS;
 		type="sequence_variant_obs";
 		start=v.start+1;
 		stop=Tools.max(v.start+1, v.stop);
-		score=(float)v.score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map);
+		score=(float)v.score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map, net);
 		strand=PLUS;
 		phase=-1;
 		final int vtype=v.type();
@@ -193,6 +204,7 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		bb.clear();
 	}
 	
+	/** Creates sequence_variant_obs GffLine from Var without quality scoring. */
 	public GffLine(Var v){
 		seqid=v.scafName();
 		source="BBTools";
@@ -223,6 +235,7 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		}
 	}
 	
+	/** Creates GffLine from prokaryotic ORF prediction with feature type and scoring. */
 	public GffLine(Orf o){
 		seqid=o.scafName;
 		source="BBTools";
@@ -254,16 +267,39 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		bb.clear();
 	}
 	
+	/**
+	 * Loads GFF file filtering by feature types.
+	 * @param fname File path
+	 * @param types Comma-separated feature types (null for all)
+	 * @param banUnprocessed Skip unprocessed prokaryotic types
+	 * @return List of matching GffLine objects
+	 */
 	public static ArrayList<GffLine> loadGffFile(String fname, String types, boolean banUnprocessed){
 		FileFormat ff=FileFormat.testInput(fname, FileFormat.GFF, null, false, false);
 		return loadGffFile(ff, types, banUnprocessed);
 	}
 	
+	/**
+	 * Loads GFF file into separate arrays by feature type.
+	 * @param gff File path
+	 * @param types Comma-separated feature types
+	 * @param banUnprocessed Skip unprocessed prokaryotic types
+	 * @return Array of lists, one per feature type
+	 */
 	public static ArrayList<GffLine>[] loadGffFileByType(String gff, String types, boolean banUnprocessed){
 		FileFormat ff=FileFormat.testInput(gff, FileFormat.GFF, null, false, false);
 		return loadGffFileByType(ff, types, banUnprocessed);
 	}
 	
+	/**
+	 * Loads GFF file into separate arrays by feature type using FileFormat.
+	 * Creates one ArrayList per specified feature type.
+	 *
+	 * @param ff FileFormat object for input file
+	 * @param types Comma-separated feature types
+	 * @param banUnprocessed Skip unprocessed prokaryotic types
+	 * @return Array of lists, one per feature type
+	 */
 	public static ArrayList<GffLine>[] loadGffFileByType(FileFormat ff, String types, boolean banUnprocessed){
 		ArrayList<GffLine> list=loadGffFile(ff, types, banUnprocessed);
 		String[] typeArray=types.split(",");
@@ -280,6 +316,16 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return lists;
 	}
 	
+	/**
+	 * Loads GFF file filtering by feature types using FileFormat.
+	 * Core loading method used by other load methods.
+	 * Validates strand information and filters by type and prokaryotic processing.
+	 *
+	 * @param ff FileFormat object for input file
+	 * @param types Comma-separated feature types to include (null for all)
+	 * @param banUnprocessed Skip unprocessed prokaryotic types
+	 * @return List of matching GffLine objects
+	 */
 	public static ArrayList<GffLine> loadGffFile(FileFormat ff, String types, boolean banUnprocessed){
 		HashSet<String> set=null;
 		if(types!=null){
@@ -311,15 +357,28 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return list;
 	}
 	
+	/**
+	 * Appends GFF representation of variant to ByteBuilder.
+	 * @param bb Output buffer
+	 * @param v Variant object
+	 * @param properPairRate Fraction of properly paired reads
+	 * @param totalQualityAvg Average base quality
+	 * @param totalMapqAvg Average mapping quality
+	 * @param readLengthAvg Average read length
+	 * @param rarity Variant rarity score
+	 * @param ploidy Expected ploidy
+	 * @param map Scaffold mapping
+	 * @param net Neural network for scoring
+	 */
 	public static void toText(ByteBuilder bb, Var v, double properPairRate, double totalQualityAvg, 
-			double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map){
+			double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map, CellNet net){
 //		assert(false);
 		bb.append(v.scafName(map)).append('\t');
 		bb.append('.').append('\t');
 		bb.append("sequence_variant_obs").append('\t');
 		bb.append(v.start+1).append('\t');
 		bb.append(Tools.max(v.start+1, v.stop)).append('\t');
-		bb.append(v.score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map), 2).append('\t');
+		bb.append(v.score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map, net), 2).append('\t');
 		bb.append('+').append('\t');
 		bb.append('.').append('\t');
 //		System.err.println(v.typeString()+", "+v.start+", "+v.stop);
@@ -332,6 +391,21 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		}else{assert(false) : vtype+"\n"+v;}
 	}
 	
+	/**
+	 * Creates GFF header with variant calling statistics.
+	 * @param properPairRate Fraction of properly paired reads
+	 * @param totalQualityAvg Average base quality
+	 * @param mapqAvg Average mapping quality
+	 * @param rarity Variant rarity threshold
+	 * @param minAlleleFraction Minimum allele fraction for variant calls
+	 * @param ploidy Expected ploidy
+	 * @param reads Total read count
+	 * @param pairs Paired read count
+	 * @param properPairs Properly paired read count
+	 * @param bases Total base count
+	 * @param ref Reference genome name
+	 * @return GFF header string with metadata
+	 */
 	public static String toHeader(double properPairRate, double totalQualityAvg, double mapqAvg, double rarity, double minAlleleFraction, int ploidy, 
 			long reads, long pairs, long properPairs, long bases, String ref){
 		StringBuilder sb=new StringBuilder();
@@ -362,6 +436,14 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return bb.toString();
 	}
 	
+	/**
+	 * Appends tab-separated GFF3 format to ByteBuilder.
+	 * Handles missing fields by substituting '.' placeholder.
+	 * Formats score with 2 decimal places when present.
+	 *
+	 * @param bb ByteBuilder to append to
+	 * @return The same ByteBuilder for method chaining
+	 */
 	public ByteBuilder appendTo(ByteBuilder bb){
 		bb.append(seqid==null ? "." : seqid).append('\t');
 		bb.append(source==null ? "." : source).append('\t');
@@ -380,10 +462,19 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return bb;
 	}
 	
+	/** Returns feature length in bases. */
 	public int length() {
 		return stop-start+1;
 	}
 	
+	/**
+	 * Finds index of byte value in array.
+	 * Used for strand character lookup.
+	 *
+	 * @param a Byte to find
+	 * @param array Array to search
+	 * @return Index of byte or -1 if not found
+	 */
 	private static int find(byte a, byte[] array){
 		for(int i=0; i<array.length; i++){
 			if(array[i]==a){return i;}
@@ -391,6 +482,11 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return -1;
 	}
 	
+	/**
+	 * Interns string for memory efficiency.
+	 * @param s String to intern
+	 * @return Interned string
+	 */
 	private static String intern(String s){
 		return Data.forceIntern(s);
 	}
@@ -436,6 +532,11 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 	@Override
 	public String seqid() {return seqid;}
 	
+	/**
+	 * Creates Range map from GFF lines grouped by sequence ID.
+	 * @param gffLines List of GFF features
+	 * @return Map of sequence ID to Range arrays for overlap queries
+	 */
 	public static HashMap<String, Range[]> makeRangeMap(ArrayList<GffLine> gffLines){
 		HashMap<String, ArrayList<GffLine>> lineMap=new HashMap<String, ArrayList<GffLine>>();
 		HashMap<String, Range[]> rangeMap=new HashMap<String, Range[]>();
@@ -457,6 +558,14 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return rangeMap;
 	}
 	
+	/**
+	 * Creates Range array for GFF features on single sequence.
+	 * Converts GffLine list to Range array and populates with feature data.
+	 * Removes empty ranges and condenses the array.
+	 *
+	 * @param listForOneSequence GFF features from single sequence
+	 * @return Range array for overlap queries, or null if empty
+	 */
 	public static Range[] makeRangesOneSequence(ArrayList<GffLine> listForOneSequence){
 		if(listForOneSequence==null || listForOneSequence.isEmpty()) {return null;}
 		String name=listForOneSequence.get(0).seqid;
@@ -523,14 +632,21 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 //		return list.toArray(new Range[list.size()]);
 //	}
 	
+	/** Returns 5' coordinate considering strand orientation. */
 	public int trueStart(){
 		return strand==0 ? start : stop;
 	}
 	
+	/** Returns 3' coordinate considering strand orientation. */
 	public int trueStop(){
 		return strand==0 ? stop : start;
 	}
 	
+	/**
+	 * Returns prokaryotic feature type constant.
+	 * Classifies rRNA by subunit (16S, 23S, 18S, 5S) based on attributes.
+	 * @return ProkObject type constant or -1 if unrecognized
+	 */
 	public final int prokType(){
 		if(type.equals("CDS")){
 			return ProkObject.CDS;
@@ -550,28 +666,47 @@ public class GffLine implements Comparable<GffLine>, Feature, Cloneable {
 		return -1;
 	}
 	
+	/** Returns true if feature has partial=true attribute. */
 	public final boolean partial(){return attributes!=null && attributes.contains("partial=true");}
 	
+	/** Returns true if feature coordinates are within scaffold bounds. */
 	public final boolean inbounds(int scaflen){return start>=0 && stop<scaflen;}
 	
+	/** Sequence/scaffold identifier */
 	public String seqid;
+	/** Feature source (program/database) */
 	public String source;
+	/** Feature type (CDS, rRNA, gene, etc) */
 	public String type;
+	/** 1-based start coordinate */
 	public int start;
+	/** 1-based end coordinate (inclusive) */
 	public int stop;
+	/** Feature score (-1 if missing) */
 	public float score;
+	/** Strand (0=+, 1=-, 2=?, 3=.) */
 	public int strand;
+	/** Coding phase (0, 1, 2, or -1 if missing) */
 	public int phase;
+	/** Semicolon-separated attribute string */
 	public String attributes;
 	
+	/** Strand character array for byte lookup */
 	private static final byte[] STRANDS=new byte[] {'+', '-', '?', '.'};
+	/** Strand constants: PLUS=0, MINUS=1, QMARK=2, DOT=3 */
 	public static final int PLUS=0, MINUS=1, QMARK=2, DOT=3;
+	/** Constant for missing field placeholder */
 	public static final String DOTS=".";
 	
+	/** Controls whether to parse and intern sequence IDs */
 	public static boolean parseSeqid=true;
+	/** Controls whether to parse and intern source field (typo in variable name) */
 	public static boolean paseSource=false;
+	/** Controls whether to parse and intern feature types */
 	public static boolean parseType=true;
+	/** Controls whether to parse score field (unused) */
 	public static boolean parseScore=false;
+	/** Controls whether to parse attributes field */
 	public static boolean parseAttributes=true;
 	
 	

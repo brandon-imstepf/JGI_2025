@@ -19,6 +19,7 @@ reflen=-1           If positive, use this as the total reference length.
                     Otherwise, assume basecov files report every ref base.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -52,7 +53,7 @@ calcXmx () {
 calcXmx "$@"
 
 summarize() {
-	local CMD="java $EA $EOOM $z -cp $CP covid.SummarizeCoverage $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP covid.SummarizeCoverage $@"
 #	echo $CMD >&2
 	eval $CMD
 }

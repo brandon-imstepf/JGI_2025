@@ -19,6 +19,7 @@ split=t            t: Splits reads at adapters.
                    f: Masks adapters with X symbols.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -52,7 +53,7 @@ calcXmx () {
 calcXmx "$@"
 
 removesmartbell() {
-	local CMD="java $EA $EOOM $z -cp $CP pacbio.RemoveAdapters2 $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP pacbio.RemoveAdapters2 $@"
 	echo $CMD >&2
 	eval $CMD
 }

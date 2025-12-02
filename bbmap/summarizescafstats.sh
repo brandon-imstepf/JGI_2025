@@ -23,6 +23,7 @@ in=<file>       A list of stats files, or a text file containing one stats file 
 out=<file>      Destination for summary.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -56,7 +57,7 @@ calcXmx () {
 calcXmx "$@"
 
 summarizescafstats() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.SummarizeCoverage $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.SummarizeCoverage $@"
 #	echo $CMD >&2
 	eval $CMD
 }

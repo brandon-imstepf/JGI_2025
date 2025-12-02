@@ -173,7 +173,7 @@ public class GeneCaller extends ProkObject {
 				}
 			}
 		}
-		
+
 		stCds2.add(brokenLists);
 		
 		//Find the optimal path through Orfs
@@ -350,6 +350,11 @@ public class GeneCaller extends ProkObject {
 		ArrayList<Orf> bestPath=new ArrayList<Orf>();
 		for(Orf orf=best; orf!=null; orf=orf.prev()){
 			bestPath.add(orf);
+		if(helper!=null && helper.shouldLogOracleDebug(orf)){
+			float prevScore=(orf.prev()==null ? 0 : orf.prev().pathScore());
+			helper.logOracleDebug("path includes "+helper.formatOrfForDebug(orf)+
+					" pathScore="+orf.pathScore()+" prevScore="+prevScore+" orfScore="+orf.orfScore);
+		}
 			if(orf.type==CDS){geneStartsOut++;}
 			else if(orf.type==tRNA){tRNAOut++;}
 			else if(orf.type==r16S){r16SOut++;}

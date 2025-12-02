@@ -14,7 +14,7 @@ Standard parameters:
 in=<file>       Input sketch file.
 out=<file>      Output sketch file.
 
-Additional files (optional):
+Additional file parameters (optional):
 16S=<file>      A fasta file of 16S sequences.  These should be renamed
                 so that they start with tid|# where # is the taxID.
                 Should not contain organelle rRNA.
@@ -46,6 +46,7 @@ Java Parameters:
 
 For more detailed information, please read /bbmap/docs/guides/BBSketchGuide.txt.
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -86,7 +87,7 @@ calcXmx () {
 calcXmx "$@"
 
 sendsketch() {
-	local CMD="java $EA $EOOM $z -cp $CP sketch.AddSSU $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP sketch.AddSSU $@"
 	echo $CMD >&2
 	eval $CMD
 }

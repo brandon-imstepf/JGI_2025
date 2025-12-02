@@ -1,8 +1,8 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
-import shared.Timer;
 import shared.Tools;
 
 /**
@@ -12,7 +12,7 @@ import shared.Tools;
  *Identity is approximate.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 19, 2025
  */
 public class BandedAlignerInt implements IDAligner{
@@ -29,6 +29,7 @@ public class BandedAlignerInt implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Creates a new BandedAlignerInt instance */
 	public BandedAlignerInt() {}
 	
 	/*--------------------------------------------------------------*/
@@ -78,6 +79,7 @@ public class BandedAlignerInt implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, 0));
 		
 		// Banding parameters
@@ -133,7 +135,7 @@ public class BandedAlignerInt implements IDAligner{
 				curr[j]=maxValue;
 			}
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 
 			// Swap rows
 			int[] temp=prev;
@@ -141,9 +143,22 @@ public class BandedAlignerInt implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
+		loops.addAndGet(mloops);
 		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
 	}
 	
+	/**
+	 * Extracts alignment results from final DP matrix row.
+	 * Calculates identity score from encoded position and score information.
+	 * Handles gap counting and applies safety checks for numerical stability.
+	 *
+	 * @param prev Final row of alignment matrix
+	 * @param qLen Query sequence length
+	 * @param bandStart Start of valid band region
+	 * @param bandEnd End of valid band region
+	 * @param posVector Optional output array for alignment positions [start, stop]
+	 * @return Identity score between 0.0 and 1.0
+	 */
 	private static final float postprocess(int[] prev, int qLen, int bandStart, int bandEnd, int[] posVector) {
 		
 		// Find best score outside of main loop
@@ -233,9 +248,14 @@ public class BandedAlignerInt implements IDAligner{
 		return id;
 	}
 	
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Counter for total alignment matrix cells processed across all instances */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns the total number of alignment matrix cells processed */
+	public long loops() {return loops.get();}
+	/** Sets the alignment loop counter.
+	 * @param x New loop counter value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output path for alignment visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -243,21 +263,35 @@ public class BandedAlignerInt implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Position will use the lower 15 bits (sufficient for 32kbp)
+	/** Number of bits used to encode position in packed score/position integers */
 	private static final int POSITION_BITS=15;
+	/** Bit mask for extracting position from packed score/position integers */
 	private static final int POSITION_MASK=(1 << POSITION_BITS)-1;
+	/** Bit mask for extracting score from packed score/position integers */
 	private static final int SCORE_MASK=~POSITION_MASK;
+	/** Bit shift amount for encoding scores in packed integers */
 	private static final int SCORE_SHIFT=POSITION_BITS;
 
 	// Equal weighting for operations
+	/** Score value for sequence matches in alignment */
 	private static final int MATCH=1 << SCORE_SHIFT;
+	/** Penalty value for substitutions in alignment */
 	private static final int SUB=(-1) << SCORE_SHIFT;
+	/** Penalty value for insertions in alignment */
 	private static final int INS=(-1) << SCORE_SHIFT;
+	/** Penalty value for deletions in alignment */
 	private static final int DEL=(-1) << SCORE_SHIFT;
+	/** Score value for alignments involving ambiguous bases (N) */
 	private static final int N_SCORE=0;
+	/** Sentinel value indicating invalid or uninitialized alignment cells */
 	private static final int BAD=Integer.MIN_VALUE/2;
 
 	// Run modes
+	/** Debug flag for printing alignment operations */
 	private static final boolean PRINT_OPS=false;
+	/**
+	 * Flag indicating whether to perform global (true) or local (false) alignment
+	 */
 	public static final boolean GLOBAL=false;
 
 

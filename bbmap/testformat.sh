@@ -3,18 +3,19 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified August 4, 2016
+Last modified November 6, 2025
 
 Description:  Tests file extensions and contents to determine format,
 quality, compression, interleaving, and read length.  More than one file
-may be specified.  Note that ASCII-33 (sanger) and ASCII-64 
-(old Illumina/Solexa) cannot always be differentiated.
+may be specified.  Note that ASCII-33 and ASCII-64 cannot always
+be differentiated.
 
 Usage:  testformat.sh <file>
 
 See also:  testformat2.sh, stats.sh
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -48,7 +49,7 @@ calcXmx () {
 calcXmx "$@"
 
 testformat() {
-	local CMD="java $EA $EOOM $z -cp $CP fileIO.FileFormat $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP fileIO.FileFormat $@"
 #	echo $CMD >&2
 	eval $CMD
 }

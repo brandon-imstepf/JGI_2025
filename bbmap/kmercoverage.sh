@@ -54,6 +54,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -94,7 +95,7 @@ calcXmx () {
 calcXmx "$@"
 
 kmercoverage() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.KmerCoverage prefilter=true bits=16 interleaved=false $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.KmerCoverage prefilter=true bits=16 interleaved=false $@"
 	echo $CMD >&2
 	eval $CMD
 }

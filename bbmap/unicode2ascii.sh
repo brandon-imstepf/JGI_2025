@@ -12,6 +12,7 @@ It is only retained because there is some situation in which it is needed.
 Usage:  unicode2ascii.sh in=<file> out=<file>
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -45,7 +46,7 @@ calcXmx () {
 calcXmx "$@"
 
 function unicode2ascii() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.UnicodeToAscii $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.UnicodeToAscii $@"
 	echo $CMD >&2
 	eval $CMD
 }

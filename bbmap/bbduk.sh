@@ -3,7 +3,7 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified November 18, 2024
+Last modified October 29, 2025
 
 Description:  Compares reads to the kmers in a reference dataset, optionally 
 allowing an edit distance. Splits the reads into two outputs - those that 
@@ -93,7 +93,7 @@ maxhistlen=6000     Set an upper bound for histogram lengths; higher uses
                     more memory.  The default is 6000 for some histograms
                     and 80000 for others.
 
-Histograms for mapped sam/bam files only:
+Histogram parameters for mapped sam/bam files only:
 histbefore=t        Calculate histograms from reads before processing.
 ehist=<file>        Errors-per-read histogram.
 qahist=<file>       Quality accuracy histogram of error rates versus quality 
@@ -110,7 +110,7 @@ vcf=<file>          Ignore substitution errors listed in this VCF file
 ignorevcfindels=t   Also ignore indels listed in the VCF.
 
 Processing parameters:
-k=27                Kmer length used for finding contaminants.  Contaminants 
+k=31                Kmer length used for finding contaminants.  Contaminants 
                     shorter than k will not be found.  k must be at least 1.
 rcomp=t             Look for reverse-complements of kmers in addition to 
                     forward kmers.
@@ -183,7 +183,7 @@ Reads only get sent to 'outm' purely based on kmer matches in kfilter mode.
 
 ktrim=f             Trim reads to remove bases matching reference kmers, plus
                     all bases to the left or right.
-                    Values: 
+                    Values:
                        f (don't trim), 
                        r (trim to the right), 
                        l (trim to the left)
@@ -275,7 +275,7 @@ ymin=-1             If positive, discard reads with a lesser Y coordinate.
 xmax=-1             If positive, discard reads with a greater X coordinate.
 ymax=-1             If positive, discard reads with a greater Y coordinate.
 
-Polymer trimming:
+Polymer trimming parameters:
 trimpolya=0         If greater than 0, trim poly-A or poly-T tails of
                     at least this length on either end of reads.
 trimpolygleft=0     If greater than 0, trim poly-G prefixes of at least this
@@ -287,7 +287,7 @@ filterpolyg=0       If greater than 0, remove reads with a poly-G prefix of
                     at least this length (on the left).
 Note: there are also equivalent poly-C flags.
 
-Polymer tracking:
+Polymer tracking parameters:
 pratio=base,base    'pratio=G,C' will print the ratio of G to C polymers.
 plen=20             Length of homopolymers to count.
 
@@ -311,7 +311,7 @@ entropymark=f       Mark each base with its entropy value.  This is on a scale
                     should be fastq or fasta+qual.
 NOTE: If set, entropytrim overrides entropymask.
 
-Cardinality estimation:
+Cardinality estimation parameters:
 cardinality=f       (loglog) Count unique kmers using the LogLog algorithm.
 cardinalityout=f    (loglogout) Count unique kmers in output reads.
 loglogk=31          Use this kmer length for counting.
@@ -320,7 +320,7 @@ khist=<file>        Kmer frequency histogram; plots number of kmers versus
                     kmer depth.  This is approximate.
 khistout=<file>     Kmer frequency histogram for output reads.
 
-Side Channel:
+Side Channel Parameters:
 sideout=<file>      Output for aligned reads.
 sideref=phix        Reference for side-channel alignment; must be a single
                     sequence and virtually repeat-free at selected k.
@@ -348,6 +348,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "	
 }
 
@@ -392,7 +393,7 @@ calcXmx () {
 calcXmx "$@"
 
 bbduk() {
-	local CMD="java $EA $EOOM $z $z2 $JNI -cp $CP jgi.BBDuk $@"
+	local CMD="java $EA $EOOM $z $z2 $SIMD $JNI -cp $CP jgi.BBDuk $@"
 	if [[ $silent == 0 ]] && [[ $json == 0 ]]; then
 		echo $CMD >&2
 	fi

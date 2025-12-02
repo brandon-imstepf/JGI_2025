@@ -113,7 +113,6 @@ metagenome=f    Assign scaffolds a random exponential coverage level,
 randomscaffold=f    Choose random scaffolds without respect to length.
 amp=1           Simulate highly-amplified MDA single-cell data by 
                 setting this to a higher number like 1000.
-replacenoref=f  Replace intra- and inter-scaffold Ns with random bases.
 pbadapter=      Add adapter sequence to some reads using this literal string.
 fragadapter=    Add this sequence to paired reads with insert size 
                 shorter than read length.
@@ -168,7 +167,7 @@ calcXmx () {
 calcXmx "$@"
 
 randomreads() {
-	local CMD="java $EA $EOOM $z -cp $CP align2.RandomReads3 build=1 $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP synth.RandomReads3 build=1 $@"
 	echo $CMD >&2
 	eval $CMD
 }

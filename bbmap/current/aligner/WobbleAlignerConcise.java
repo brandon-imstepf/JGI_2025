@@ -1,6 +1,7 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Tools;
 import structures.RingBuffer;
@@ -9,9 +10,10 @@ import structures.RingBuffer;
  * PRESENTATION-ONLY VERSION - DO NOT USE
  * This class contains simplified code for publication purposes.
  * For functional implementation, see {@link WobbleAligner}
+ * For optimal implementation, see {@link WobblePlusAligner3}
  * 
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 7, 2025
  */
 public class WobbleAlignerConcise implements IDAligner{
@@ -48,8 +50,9 @@ public class WobbleAlignerConcise implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int subs=0, bandwidth=Tools.mid(6, 1+Math.max(query.length, ref.length)/20, 16);
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Tools.mid(7, 1+Math.max(qLen, rLen)/24, 22+(int)Math.sqrt(rLen)/8);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
 			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
@@ -195,9 +198,10 @@ public class WobbleAlignerConcise implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	private static AtomicLong loops=new AtomicLong(0);
+	public long loops() {return loops.get();}
+	public void setLoops(long x) {loops.set(x);}
+	public static String output=null;
 
 	/*--------------------------------------------------------------*/
 	/*----------------          Constants           ----------------*/

@@ -5,12 +5,14 @@ import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dna.AminoAcid;
 import ml.CellNet;
@@ -55,6 +57,17 @@ public class CallGenesHelper {
     private int threadMatchCount = 0;
     private float cutoff = 0.5f;
     private boolean highpass = true;
+    private final CallGenesOracle oracle = new CallGenesOracle();
+    private final HashSet<GeneQuad> threadTruthRejects = new HashSet<>();
+    private boolean oracleDebugEnabled = false;
+    private String oracleDebugContig = null;
+    private int oracleDebugStart = -1;
+    private int oracleDebugStop = -1;
+    private byte oracleDebugStrand = -1;
+    private java.io.PrintWriter oracleDebugWriter = null;
+    {
+        oracle.setNeutralScore(nnCutoff);
+    }
     
     // Neural Network Fields
     private static CellNet primaryNet = null;
@@ -66,6 +79,56 @@ public class CallGenesHelper {
     private static float prefilterCutoff = 0.1f;
     private static final AtomicLong VECTOR_DEBUG_SEED = new AtomicLong(1L);
     private static final int BASE_FEATURE_COUNT = 8;
+    private enum NnMultiplierMode {
+        RATIO,
+        RATIO_POW2,
+        RATIO_POW3,
+        ADVISORY,
+        SIGMOID,
+        EXPONENTIAL,
+        DIRECT_ONLY,
+        CENTERED;
+
+        static NnMultiplierMode fromString(String name) {
+            if (name == null) { return RATIO; }
+            final String normalized = name.trim().toUpperCase(Locale.ROOT);
+            switch (normalized) {
+                case "RATIO":
+                case "DEFAULT":
+                    return RATIO;
+                case "RATIO_POW2":
+                case "RATIO2":
+                case "SQUARE":
+                    return RATIO_POW2;
+                case "RATIO_POW3":
+                case "RATIO3":
+                case "CUBE":
+                    return RATIO_POW3;
+                case "ADVISORY":
+                case "DIRECT":
+                case "DIRECT_ADVISORY":
+                    return ADVISORY;
+                case "SIGMOID":
+                    return SIGMOID;
+                case "EXPONENTIAL":
+                case "EXP":
+                    return EXPONENTIAL;
+                case "DIRECT_ONLY":
+                case "NN_ONLY":
+                case "NNONLY":
+                    return DIRECT_ONLY;
+                case "CENTERED":
+                case "CENTER":
+                    return CENTERED;
+                default:
+                    return RATIO;
+            }
+        }
+    }
+    private static NnMultiplierMode nnMultiplierMode = NnMultiplierMode.RATIO;
+    private static double nnExpAlpha = 4.0;
+    private static double nnSigmoidSlope = 10.0;
+    private static final boolean FORCE_VERBOSE_FP_TRACE = false;
     
     // Debug and assertion counters
     private static int netLoadAssertions = 0;
@@ -88,6 +151,8 @@ public class CallGenesHelper {
     private int threadTruePositives = 0;
     private int threadFalsePositives = 0;
     private ByteStreamWriter scoreCsvStream = null;
+    private static final AtomicBoolean SCORE_HEADER_WRITTEN = new AtomicBoolean(false);
+    private static final AtomicLong SCORE_ENTRY_SEQUENCE = new AtomicLong(0L);
     private Set<GeneQuad> calledCdsQuads = new HashSet<>();
     private Set<GeneQuad> threadCalledCdsQuads = new HashSet<>();
 
@@ -117,6 +182,18 @@ public class CallGenesHelper {
         if (a.equals("net")) { netFile = b; return true; }
         if (arg.equalsIgnoreCase("seq")) { seqMode = true; return true; }
         if (a.equals("compareto")) { compareToGff = b; return true; }
+        if (a.equals("oracle")) {
+            oracle.setMode(b);
+            return true;
+        }
+        if (a.equals("oracle_debug")) {
+            configureOracleDebug(b);
+            return true;
+        }
+        if (a.equals("oracle_debug_log")) {
+            configureOracleDebugLog(b);
+            return true;
+        }
         
         // Neural Network Parameters
         if (a.equals("net") || a.equals("neuralnet") || a.equals("nn")) {
@@ -128,12 +205,14 @@ public class CallGenesHelper {
             nnCutoff = Float.parseFloat(b);
             System.err.println("DEBUG: Neural network cutoff set to: " + nnCutoff);
             assert(nnCutoff > 0 && nnCutoff < 1) : "Neural network cutoff must be between 0 and 1, got: " + nnCutoff;
+            oracle.setNeutralScore(nnCutoff);
             return true;
         }
         if (a.equals("strength") || a.equals("nnstrength")) {
             nnStrength = Float.parseFloat(b);
             System.err.println("DEBUG: Neural network strength set to: " + nnStrength);
-            assert(nnStrength >= 0 && nnStrength <= 1) : "Neural network strength must be between 0 and 1, got: " + nnStrength;
+            //assert(nnStrength >= 0 && nnStrength <= 1) : "Neural network strength must be between 0 and 1, got: " + nnStrength;
+            assert(nnStrength >= 0) : "Neural network strength must be non-negative, got: " + nnStrength;
             return true;
         }
         if (a.equals("nndebug")) {
@@ -151,6 +230,21 @@ public class CallGenesHelper {
         }
         if (a.equals("prefilter_cutoff")) {
             prefilterCutoff = Float.parseFloat(b);
+            return true;
+        }
+        if (a.equalsIgnoreCase("nnmultiplier_mode") || a.equalsIgnoreCase("nnmultmode")) {
+            nnMultiplierMode = NnMultiplierMode.fromString(b);
+            System.err.println("DEBUG: Neural network multiplier mode set to: " + nnMultiplierMode);
+            return true;
+        }
+        if (a.equalsIgnoreCase("nn_sigmoid_slope")) {
+            nnSigmoidSlope = Double.parseDouble(b);
+            System.err.println("DEBUG: Neural network sigmoid slope set to: " + nnSigmoidSlope);
+            return true;
+        }
+        if (a.equalsIgnoreCase("nn_exp_alpha")) {
+            nnExpAlpha = Double.parseDouble(b);
+            System.err.println("DEBUG: Neural network exponential alpha set to: " + nnExpAlpha);
             return true;
         }
         if (a.equals("vectordebug") || a.equals("nnvectordebug")) {
@@ -177,7 +271,10 @@ public class CallGenesHelper {
                 this.trueGeneSet = data.set();
                 this.totalGffRows = data.totalRows();
                 this.totalGffGeneRows = data.geneRows();
+                oracle.setTruthLookup(this::isTrueGene);
             } catch (IOException e) { outstream.println("ERROR: Failed to load true genes file: " + trueGenesFile); e.printStackTrace(); }
+        } else {
+            oracle.setTruthLookup(null);
         }
         if (netFile != null) {
             net0 = CellNetParser.load(netFile);
@@ -220,6 +317,17 @@ public class CallGenesHelper {
         copy.enableLogging = this.enableLogging;
         copy.compareToGff = this.compareToGff;
         copy.calledCdsQuads = this.calledCdsQuads;
+        copy.oracle.setMode(this.oracle.getMode());
+        copy.oracle.setNeutralScore(nnCutoff);
+        if (this.trueGeneSet != null) {
+            copy.oracle.setTruthLookup(copy::isTrueGene);
+        }
+        copy.oracleDebugEnabled = this.oracleDebugEnabled;
+        copy.oracleDebugContig = this.oracleDebugContig;
+        copy.oracleDebugStart = this.oracleDebugStart;
+        copy.oracleDebugStop = this.oracleDebugStop;
+        copy.oracleDebugStrand = this.oracleDebugStrand;
+        copy.oracleDebugWriter = this.oracleDebugWriter;
         
         // Clone neural network for thread safety
         if (primaryNet != null) {
@@ -291,6 +399,8 @@ public class CallGenesHelper {
         } else { // Default Mode (with or without neural network score modification)
             finalOrfs = caller.callGenes(contig, pgm, true);
         }
+
+        finalOrfs = applyTruthRejections(contig, finalOrfs);
 
         if (finalOrfs != null && !finalOrfs.isEmpty()) {
             handleSequenceOutputs(contig, finalOrfs, rosAmino, ros16S, ros18S);
@@ -501,6 +611,11 @@ public class CallGenesHelper {
 
     public void setScoreWriter(ByteStreamWriter bsw) {
         this.scoreCsvStream = bsw;
+        if (bsw != null && SCORE_HEADER_WRITTEN.compareAndSet(false, true)) {
+            ByteBuilder header = new ByteBuilder();
+            header.append("ORF_ID,Original_Score,Modified_Score,Advisory_Score,Length,Status\n");
+            scoreCsvStream.add(header, 0);
+        }
     }
 
     /**
@@ -821,100 +936,285 @@ private static Map<String, String> readFastaFile(String filePath) throws IOExcep
      * Algorithm: mult = NN_output / cutoff; final_mult = ((mult - 1) × strength) + 1; modified_score = original_score × final_mult
      */
     public void modifyOrfScoreWithNeuralNetwork(Orf orf, Read contigRead) {
-        // ASSERTION: Ensure we have a neural network available
         assert(threadNeuralNet != null) : "SCORE_MOD_ASSERTION: Thread neural network is null";
         assert(threadFeatureVector != null) : "SCORE_MOD_ASSERTION: Thread feature vector is null";
         assert(orf != null) : "SCORE_MOD_ASSERTION: ORF is null";
         assert(contigRead != null) : "SCORE_MOD_ASSERTION: Contig read is null";
-        
-        final float originalScore = orf.orfScore;
 
-        // Phase 2: Prefilter based on score/length ratio
-        if (!nnAllOrfs && orf.length() > 0 && (originalScore / orf.length()) < prefilterCutoff) {
-            orf.orfScore = -1; // Explicitly mark the ORF as invalid
+        final CallGenesOracle.Mode oracleMode = oracle.getMode();
+        final boolean bypassFilters = (oracleMode == CallGenesOracle.Mode.TRUTH);
+        final float originalScore = orf.orfScore;
+        final float scorePerBase = orf.length() > 0 ? (originalScore / orf.length()) : 0f;
+        final boolean verboseTarget = false;
+
+        if (!bypassFilters && !nnAllOrfs && scorePerBase < prefilterCutoff) {
+            orf.orfScore = -1;
             return;
         }
-        
-        // Increment call counter first
+
         scoreModificationCalls++;
-        
-        if (!nnAllOrfs && originalScore < nnMinScore) {
+        if (!bypassFilters && !nnAllOrfs && originalScore < nnMinScore) {
             return;
         }
-        
-        // Debug output every 10000 calls to reduce spam but still track progress
+
         if (scoreModificationCalls % 10000 == 0) {
             System.err.println("DEBUG: Neural network called " + scoreModificationCalls + " times. Current ORF: " + orf.start + "-" + orf.stop + ", score: " + originalScore);
         }
-        
-        final boolean emitVectorDebug = shouldEmitVectorDebug();
-        try {
-            // OPTIMIZED: Generate feature vector directly into float array to avoid string operations
-            final int featureLength = generateFeatureVectorDirect(orf, contigRead, threadFeatureVector);
-            if (emitVectorDebug) {
-                emitVectorDebugVector(orf, contigRead, threadFeatureVector, featureLength);
-            }
-            
-            // Run neural network inference
-            threadNeuralNet.applyInput(threadFeatureVector);
-            threadNeuralNet.feedForward();
-            float[] output = threadNeuralNet.getOutput();
-            
-            // ASSERTION: Ensure output is valid
-            assert(output != null && output.length > 0) : "SCORE_MOD_ASSERTION: Neural network output is null or empty";
-            assert(!Float.isNaN(output[0]) && !Float.isInfinite(output[0])) : "SCORE_MOD_ASSERTION: Neural network output is NaN or infinite: " + output[0];
-            
-            // Apply score modification algorithm
-            float mult = output[0] / nnCutoff;
-            float finalMult = ((mult - 1) * nnStrength) + 1;
-            float modifiedScore = originalScore * finalMult;
-            
-            // ASSERTION: Ensure modified score is reasonable
-            assert(!Float.isNaN(modifiedScore) && !Float.isInfinite(modifiedScore)) : "SCORE_MOD_ASSERTION: Modified score is NaN or infinite: " + modifiedScore;
-            
-            // Update the ORF's score directly
-            orf.orfScore = modifiedScore;
-            
-            // Debug output for first few calls only
-            if (nnDebug && scoreModificationCalls <= 5) {
-                System.err.println("DEBUG: NN output: " + output[0] + ", mult: " + mult + ", finalMult: " + finalMult);
-                System.err.println("DEBUG: Original score: " + originalScore + " -> Modified score: " + modifiedScore);
-            }
-            
-            // Log score data for CSV
-            if (scoreCsvStream != null) {
-                String orfId = contigRead.id + "_" + orf.start;
-                
-                String status = "Unknown";
-                if (trueGeneSet != null) {
-                    GeneQuad orfQuad = new GeneQuad(contigRead.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
-                    if (trueGeneSet.contains(orfQuad)) {
-                        status = "TP";
-                    } else {
-                        status = "FP";
-                    }
-                }
 
-                ByteBuilder bb = new ByteBuilder();
-                bb.append(orfId).append(',');
-                bb.append(String.format(java.util.Locale.ROOT, "%.4f", originalScore)).append(',');
-                bb.append(String.format(java.util.Locale.ROOT, "%.4f", modifiedScore)).append(',');
-                bb.append(orf.length()).append(',');
-                bb.append(status).nl();
-                scoreCsvStream.add(bb, contigRead.numericID);
-               }
-            
-        } catch (Exception e) {
-            if (nnDebug) {
-                System.err.println("ERROR: Neural network score modification failed: " + e.getMessage());
-                e.printStackTrace();
+        GeneQuad orfQuad = null;
+        float advisoryScore;
+
+        if (oracleMode == CallGenesOracle.Mode.TRUTH) {
+            orfQuad = new GeneQuad(contigRead.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+            advisoryScore = oracle.scoreTruth(orfQuad);
+            if (matchesOracleDebug(orfQuad)) {
+                logOracleDebug("oracle truth score for " + formatGeneQuad(orfQuad) + " = " + advisoryScore + " originalScore=" + originalScore);
             }
-            
-            // ASSERTION: Neural network operations should not fail
-            assert(false) : "SCORE_MOD_ASSERTION: Exception during neural network score modification: " + e.getMessage();
+        } else if (oracleMode == CallGenesOracle.Mode.NEUTRAL) {
+            advisoryScore = oracle.scoreNeutral();
+        } else {
+            final boolean emitVectorDebug = shouldEmitVectorDebug();
+            try {
+                final int featureLength = generateFeatureVectorDirect(orf, contigRead, threadFeatureVector);
+                if (emitVectorDebug) {
+                    emitVectorDebugVector(orf, contigRead, threadFeatureVector, featureLength);
+                }
+                threadNeuralNet.applyInput(threadFeatureVector);
+                threadNeuralNet.feedForward();
+                float[] output = threadNeuralNet.getOutput();
+                assert(output != null && output.length > 0) : "SCORE_MOD_ASSERTION: Neural network output is null or empty";
+                assert(!Float.isNaN(output[0]) && !Float.isInfinite(output[0])) : "SCORE_MOD_ASSERTION: Neural network output is NaN or infinite: " + output[0];
+                advisoryScore = output[0];
+            } catch (Exception e) {
+                if (nnDebug) {
+                    System.err.println("ERROR: Neural network score modification failed: " + e.getMessage());
+                    e.printStackTrace();
+                }
+                assert(false) : "SCORE_MOD_ASSERTION: Exception during neural network score modification: " + e.getMessage();
+                return;
+            }
+        }
+
+        if (oracleMode == CallGenesOracle.Mode.TRUTH) {
+            if (advisoryScore <= 0f) {
+                if (orfQuad == null) {
+                    orfQuad = new GeneQuad(contigRead.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+                }
+                threadTruthRejects.add(orfQuad);
+                if (matchesOracleDebug(orfQuad)) {
+                    logOracleDebug("rejecting " + formatGeneQuad(orfQuad) + " advisory=" + advisoryScore + " originalScore=" + originalScore);
+                }
+                orf.orfScore = -1f;
+                return;
+            }
+        }
+        float desiredMult = computeDesiredMultiplier(advisoryScore);
+        float finalMult;
+        float modifiedScore;
+        if (nnMultiplierMode == NnMultiplierMode.DIRECT_ONLY) {
+            finalMult = desiredMult;
+            modifiedScore = advisoryScore;
+        } else if (nnMultiplierMode == NnMultiplierMode.CENTERED) {
+            float centered = (advisoryScore - nnCutoff) / (nnCutoff > 0f ? nnCutoff : 1f);
+            finalMult = centered * nnStrength;
+            modifiedScore = originalScore * finalMult;
+        } else {
+            finalMult = ((desiredMult - 1f) * nnStrength) + 1f;
+            modifiedScore = originalScore * finalMult;
+        }
+        assert(!Float.isNaN(modifiedScore) && !Float.isInfinite(modifiedScore)) : "SCORE_MOD_ASSERTION: Modified score is NaN or infinite: " + modifiedScore;
+        orf.orfScore = modifiedScore;
+        if (verboseTarget) {
+            // verbose logging is disabled (reserved for future diagnostics)
+        }
+
+        if (oracleMode == CallGenesOracle.Mode.TRUTH && matchesOracleDebug(orfQuad)) {
+            logOracleDebug("accepted " + formatGeneQuad(orfQuad) + " advisory=" + advisoryScore + " finalMult=" + finalMult + " modified=" + modifiedScore);
+        } else if (nnDebug && scoreModificationCalls <= 5) {
+            System.err.println("DEBUG: Advisory=" + advisoryScore + ", desiredMult=" + desiredMult + ", finalMult=" + finalMult);
+            System.err.println("DEBUG: Original score: " + originalScore + " -> Modified score: " + modifiedScore);
+        }
+
+        if (scoreCsvStream != null) {
+            String orfId = contigRead.id + "_" + orf.start;
+            String status = "Unknown";
+            if (trueGeneSet != null) {
+                GeneQuad csvQuad = new GeneQuad(contigRead.id, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+                status = trueGeneSet.contains(csvQuad) ? "TP" : "FP";
+            }
+            ByteBuilder bb = new ByteBuilder();
+            bb.append(orfId).append(',');
+            bb.append(String.format(java.util.Locale.ROOT, "%.4f", originalScore)).append(',');
+            bb.append(String.format(java.util.Locale.ROOT, "%.4f", modifiedScore)).append(',');
+            bb.append(String.format(java.util.Locale.ROOT, "%.4f", advisoryScore)).append(',');
+            bb.append(orf.length()).append(',');
+            bb.append(status).nl();
+            long entryId = SCORE_ENTRY_SEQUENCE.getAndIncrement();
+            scoreCsvStream.add(bb, entryId);
         }
     }
-    
+
+    private ArrayList<Orf> applyTruthRejections(Read contig, ArrayList<Orf> orfs) {
+        if (oracle.getMode() != CallGenesOracle.Mode.TRUTH) {
+            threadTruthRejects.clear();
+            return orfs;
+        }
+        if (orfs == null || orfs.isEmpty()) {
+            threadTruthRejects.clear();
+            return orfs;
+        }
+        final String contigId = contig.id;
+        Iterator<Orf> iterator = orfs.iterator();
+        while (iterator.hasNext()) {
+            Orf orf = iterator.next();
+            GeneQuad quad = new GeneQuad(contigId, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+            if (threadTruthRejects.remove(quad)) {
+                if (matchesOracleDebug(quad)) {
+                    logOracleDebug("removing " + formatGeneQuad(quad) + " from final path");
+                }
+                iterator.remove();
+            }
+        }
+        threadTruthRejects.clear();
+        return orfs;
+    }
+
+    private boolean isTrueGene(GeneQuad quad) {
+        return quad != null && trueGeneSet != null && trueGeneSet.contains(quad);
+    }
+
+    private void configureOracleDebug(String spec) {
+        oracleDebugEnabled = false;
+        oracleDebugContig = null;
+        oracleDebugStart = -1;
+        oracleDebugStop = -1;
+        oracleDebugStrand = -1;
+        if (spec == null || spec.isEmpty()) {
+            return;
+        }
+        String[] parts = spec.split(":");
+        if (parts.length >= 1 && !parts[0].isEmpty()) {
+            oracleDebugContig = parts[0].trim();
+        }
+        if (parts.length >= 2) {
+            String[] span = parts[1].split("-");
+            if (span.length == 2) {
+                try {
+                    oracleDebugStart = Integer.parseInt(span[0].trim());
+                    oracleDebugStop = Integer.parseInt(span[1].trim());
+                } catch (NumberFormatException e) {
+                    oracleDebugStart = oracleDebugStop = -1;
+                }
+            }
+        }
+        if (parts.length >= 3 && !parts[2].isEmpty()) {
+            char c = parts[2].trim().charAt(0);
+            oracleDebugStrand = (byte)(c == '-' ? 1 : 0);
+        }
+        oracleDebugEnabled = true;
+    }
+
+    private void configureOracleDebugLog(String path) {
+        if (oracleDebugWriter != null) {
+            oracleDebugWriter.close();
+            oracleDebugWriter = null;
+        }
+        if (path == null || path.isEmpty()) {
+            return;
+        }
+        try {
+            java.io.File logfile = new java.io.File(path).getCanonicalFile();
+            logfile.getParentFile().mkdirs();
+            oracleDebugWriter = new java.io.PrintWriter(new java.io.FileWriter(logfile, false));
+            oracleDebugWriter.println("# Oracle debug log started at " + new java.util.Date());
+            oracleDebugWriter.flush();
+        } catch (Exception e) {
+            oracleDebugWriter = null;
+            System.err.println("WARNING: Failed to open oracle_debug_log '" + path + "': " + e.getMessage());
+        }
+    }
+
+    private boolean matchesOracleDebug(GeneQuad quad) {
+        if (!oracleDebugEnabled || quad == null) { return false; }
+        if (oracleDebugContig != null && !oracleDebugContig.equals(quad.contig())) { return false; }
+        if (oracleDebugStart > 0 && quad.start() != oracleDebugStart) { return false; }
+        if (oracleDebugStop > 0 && quad.stop() != oracleDebugStop) { return false; }
+        if (oracleDebugStrand >= 0 && quad.strand() != oracleDebugStrand) { return false; }
+        return true;
+    }
+
+    private String formatGeneQuad(GeneQuad quad) {
+        if (quad == null) { return "(null)"; }
+        char strandChar = quad.strand() == 1 ? '-' : '+';
+        return quad.contig() + ":" + quad.start() + "-" + quad.stop() + strandChar;
+    }
+
+    public void logOracleDebug(String message) {
+        if (!oracleDebugEnabled) { return; }
+        final String formatted = "[ORACLE_DEBUG] " + message;
+        if (oracleDebugWriter != null) {
+            oracleDebugWriter.println(formatted);
+            oracleDebugWriter.flush();
+        } else {
+            System.err.println(formatted);
+        }
+    }
+
+    public boolean shouldLogOracleDebug(Orf orf) {
+        if (!oracleDebugEnabled || orf == null) { return false; }
+        GeneQuad quad = new GeneQuad(orf.scafName, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+        return matchesOracleDebug(quad);
+    }
+
+    public String formatOrfForDebug(Orf orf) {
+        if (orf == null) { return "(null)"; }
+        GeneQuad quad = new GeneQuad(orf.scafName, orf.start + 1, orf.stop + 1, (byte)orf.strand);
+        return formatGeneQuad(quad);
+    }
+
+    private float computeDesiredMultiplier(float advisoryScore) {
+        final float safeCutoff = (nnCutoff > 0f) ? nnCutoff : 1f;
+        float ratio = advisoryScore / safeCutoff;
+        if (!Float.isFinite(ratio)) { ratio = 1f; }
+        ratio = clamp(ratio, 0f, 10f);
+        switch (nnMultiplierMode) {
+            case RATIO_POW2:
+                return (float)Math.pow(ratio, 2.0);
+            case RATIO_POW3:
+                return (float)Math.pow(ratio, 3.0);
+            case ADVISORY:
+                return clamp(advisoryScore, 0f, 1f);
+            case SIGMOID:
+                double slope = nnSigmoidSlope <= 0 ? 10.0 : nnSigmoidSlope;
+                double x = advisoryScore - nnCutoff;
+                double logistic = 1.0 / (1.0 + Math.exp(-slope * x));
+                return (float)logistic;
+            case EXPONENTIAL:
+                double alpha = nnExpAlpha;
+                if (alpha <= 0) { alpha = 4.0; }
+                double centered = advisoryScore - nnCutoff;
+                double expMult = Math.exp(alpha * centered);
+                return (float)clamp((float)expMult, 0f, 10f);
+            case DIRECT_ONLY:
+                return clamp(advisoryScore, 0f, 1f);
+            case CENTERED:
+                return (advisoryScore - nnCutoff) / (nnCutoff > 0f ? nnCutoff : 1f);
+            case RATIO:
+            default:
+                return ratio;
+        }
+    }
+
+    private static float clamp(float value, float min, float max) {
+        if (value < min) { return min; }
+        if (value > max) { return max; }
+        return value;
+    }
+
+    private boolean isVerboseFpTarget(Read contigRead, Orf orf) {
+        return false;
+    }
+
     /**
      * Optimized feature vector generation that directly populates float array
      * Avoids expensive string operations and parsing

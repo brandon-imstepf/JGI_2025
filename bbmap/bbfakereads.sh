@@ -6,6 +6,8 @@ Written by Brian Bushnell
 Last modified February 17, 2015
 
 Description:  Generates fake read pairs from ends of contigs or single reads.
+Specifically for simulating a fake LMP library from long reads or an assembly;
+for synthetic read generation from a reference see randomreads.sh or randomreadsmg.sh.
 
 Usage:        bbfakereads.sh in=<file> out=<outfile> out2=<outfile2>
 
@@ -40,6 +42,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -74,7 +77,7 @@ calcXmx () {
 calcXmx "$@"
 
 function fakereads() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.FakeReads $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP synth.FakeReads $@"
 	echo $CMD >&2
 	eval $CMD
 }

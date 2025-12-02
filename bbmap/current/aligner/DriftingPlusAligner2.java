@@ -1,9 +1,9 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Shared;
-import shared.Timer;
 import shared.Tools;
 
 /**
@@ -17,7 +17,7 @@ import shared.Tools;
  *Band dynamically widens in response to low sequence identity.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class DriftingPlusAligner2 implements IDAligner{
@@ -34,6 +34,7 @@ public class DriftingPlusAligner2 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Creates a new DriftingPlusAligner2 instance with default settings */
 	public DriftingPlusAligner2() {}
 
 	/*--------------------------------------------------------------*/
@@ -57,11 +58,10 @@ public class DriftingPlusAligner2 implements IDAligner{
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
 	private static int decideBandwidth(byte[] query, byte[] ref) {
-		int bandwidth=Tools.mid(8, 1+Math.max(query.length, ref.length)/16, 40);
-		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
-			subs+=(query[i]!=ref[i] ? 1 : 0);
-		}
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Tools.mid(8, 1+Math.max(qLen, rLen)/16, 40+(int)Math.sqrt(rLen)/4);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
+			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
 
@@ -86,6 +86,7 @@ public class DriftingPlusAligner2 implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
@@ -140,8 +141,7 @@ public class DriftingPlusAligner2 implements IDAligner{
 			maxPos=0;
 			int posFromSimd=0;
 			if(Shared.SIMD) {
-				posFromSimd=shared.SIMDAlign.alignBandVectorAndReturnMaxPos(q, ref, bandStart, bandEnd, 
-						prev, curr, MATCH, N_SCORE, SUB, INS);
+				posFromSimd=shared.SIMDAlign.alignBandVectorAndReturnMaxPos(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 				// Process only cells within the band
 				for(int j=bandStart; j<=bandEnd; j++){
@@ -192,7 +192,7 @@ public class DriftingPlusAligner2 implements IDAligner{
 				}
 			}
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 			final int score=(int)(maxScore>>SCORE_SHIFT);
 			missingScore=i-score;//How much score is missing compared to a perfect match
 
@@ -202,6 +202,7 @@ public class DriftingPlusAligner2 implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
+		loops.addAndGet(mloops);
 		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
 	}
 
@@ -292,9 +293,18 @@ public class DriftingPlusAligner2 implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/**
+	 * Thread-safe counter for total alignment loop iterations across all instances
+	 */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns total loop iterations performed by all aligner instances */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter value.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/**
+	 * Output file path for alignment visualization (null disables visualization)
+	 */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -302,26 +312,41 @@ public class DriftingPlusAligner2 implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits used to store reference position in score field */
 	private static final int POSITION_BITS=21;
+	/** Number of bits used to store deletion count in score field */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount to access alignment score in packed field */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting reference position from score field */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from score field */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting alignment score from packed field */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for matching bases (+1 in high bits) */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substitutions (-1 in high bits) */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions (-1 in high bits) */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deletions (-1 in high bits) */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for alignments involving ambiguous bases (N) - no penalty */
 	private static final long N_SCORE=0L;
+	/** Score representing invalid/impossible alignment states */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined score and position increment for deletion operations */
 	private static final long DEL_INCREMENT=(1L<<POSITION_BITS)+DEL;
 
 	// Run modes
+	/** Debug flag for printing alignment operation details */
 	private static final boolean PRINT_OPS=false;
+	/** Whether to use global alignment scoring (false = glocal alignment) */
 	public static final boolean GLOBAL=false;
 
 }

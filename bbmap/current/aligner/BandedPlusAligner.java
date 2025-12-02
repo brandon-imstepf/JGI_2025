@@ -1,7 +1,9 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
+import shared.PreParser;
 import shared.Shared;
 
 /**
@@ -13,13 +15,14 @@ import shared.Shared;
  *Restricts alignment to a fixed band around the diagonal.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date April 24, 2025
  */
 public class BandedPlusAligner implements IDAligner{
 
 	/** Main() passes the args and class to Test to avoid redundant code */
 	public static <C extends IDAligner> void main(String[] args) throws Exception {
+		args=new PreParser(args, System.err, null, false, true, false).args;
 	    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
 		@SuppressWarnings("unchecked")
 		Class<C> c=(Class<C>)Class.forName(stackTrace[(stackTrace.length<3 ? 1 : 2)].getClassName());
@@ -30,6 +33,7 @@ public class BandedPlusAligner implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Creates a new BandedPlusAligner instance */
 	public BandedPlusAligner() {}
 
 	/*--------------------------------------------------------------*/
@@ -52,12 +56,11 @@ public class BandedPlusAligner implements IDAligner{
 	/*--------------------------------------------------------------*/
 	
 	/** Tests for high-identity indel-free alignments needing low bandwidth */
-	private static int decideBandwidth(long[] query, long[] ref) {
-		int bandwidth=Math.min(100, 4+Math.max(query.length, ref.length)/8);
-		int subs=0;
-		for(int i=0, minlen=Math.min(query.length, ref.length); i<minlen && subs<bandwidth; i++) {
-			subs+=(query[i]!=ref[i] ? 1 : 0);
-		}
+	private static int decideBandwidth(byte[] query, byte[] ref) {
+		int subs=0, qLen=query.length, rLen=ref.length;
+		int bandwidth=Math.min(60+(int)Math.sqrt(rLen), 4+Math.max(qLen, rLen)/8);
+		for(int i=0, minlen=Math.min(qLen, rLen); i<minlen && subs<bandwidth; i++) {
+			subs+=(query[i]!=ref[i] ? 1 : 0);}
 		return Math.min(subs+1, bandwidth);
 	}
 
@@ -82,10 +85,11 @@ public class BandedPlusAligner implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
-		final int bandWidth=decideBandwidth(query, ref);
+		final int bandWidth=decideBandwidth(query0, ref0);
 		// Initialize band limits for use outside main loop
 		int bandStart=1, bandEnd=rLen-1;
 
@@ -114,7 +118,7 @@ public class BandedPlusAligner implements IDAligner{
 			final long q=query[i-1];
 			
 			if(Shared.SIMD) {
-				shared.SIMDAlign.alignBandVector(q, ref, bandStart, bandEnd, prev, curr, MATCH, N_SCORE, SUB, INS);
+				shared.SIMDAlign.alignBandVector(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 
 				// Process only cells within the band
@@ -151,7 +155,7 @@ public class BandedPlusAligner implements IDAligner{
 			}
 			
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 
 			// Swap rows
 			long[] temp=prev;
@@ -159,6 +163,7 @@ public class BandedPlusAligner implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
+		loops.addAndGet(mloops);
 		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
 	}
 
@@ -252,9 +257,16 @@ public class BandedPlusAligner implements IDAligner{
 		return id;
 	}
 
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/**
+	 * Thread-safe counter for total alignment loops performed across all instances
+	 */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Returns the total number of alignment loops performed */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter value.
+	 * @param x New loop count value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Optional output file path for alignment visualization */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -262,26 +274,41 @@ public class BandedPlusAligner implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits allocated for position information in packed scores */
 	private static final int POSITION_BITS=21;
+	/** Number of bits allocated for deletion count in packed scores */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount for score portion of packed long values */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from packed scores */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from packed scores */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting score portion from packed long values */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Score increment for matching bases in bit-packed format */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Score penalty for substitutions in bit-packed format */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Score penalty for insertions in bit-packed format */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Score penalty for deletions in bit-packed format */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Score for ambiguous base matches (N vs any base) */
 	private static final long N_SCORE=0L;
+	/** Sentinel value indicating invalid or uninitialized alignment scores */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined increment for deletions including position tracking */
 	private static final long DEL_INCREMENT=(1L<<POSITION_BITS)+DEL;
 
 	// Run modes
+	/** Debug flag for printing alignment operation details */
 	private static final boolean PRINT_OPS=false;
+	/** Whether to use global alignment mode instead of local alignment */
 	public static boolean GLOBAL=false;
 
 }

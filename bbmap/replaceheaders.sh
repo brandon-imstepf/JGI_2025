@@ -23,7 +23,7 @@ fastawrap=70        Length of lines in fasta output.
 qin=auto            ASCII offset for input quality.  May be 33 (Sanger), 64 (Illumina), or auto.
 qout=auto           ASCII offset for output quality.  May be 33 (Sanger), 64 (Illumina), or auto (same as input).
 
-Renaming modes (if not default):
+Renaming mode parameters (if not default):
 addprefix=f         Rename the read by prepending the new name to the existing name.
 
 Sampling parameters:
@@ -38,6 +38,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -71,7 +72,7 @@ calcXmx () {
 calcXmx "$@"
 
 function reheader() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.ReplaceHeaders $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.ReplaceHeaders $@"
 	echo $CMD >&2
 	eval $CMD
 }

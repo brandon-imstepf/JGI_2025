@@ -11,6 +11,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 import fileIO.FileFormat;
+import shared.PreParser;
 import shared.Shared;
 import shared.Timer;
 import shared.Tools;
@@ -21,9 +22,10 @@ public class Test {
 	
     public static void main(String[] args) {
 	    
+    	args=new PreParser(args, null, false).args;
     	long loops=(args.length>2 ? Integer.parseInt(args[2]) : 400);
     	int threads=(args.length>3 ? Integer.parseInt(args[3]) : 1);
-		Shared.SIMD=(args.length>4 && args[4].equalsIgnoreCase("SIMD"));
+    	int minLoops=(args.length>4 ? Integer.parseInt(args[4]) : 1);
     	
 	    if (args.length>1) {
 	    	String a=args[0], b=args[1];
@@ -33,67 +35,50 @@ public class Test {
 
 	    	System.err.println(header());
 	    	
-	    	final long loops2=(seq2.length<500 ? loops : Tools.mid(1, loops, threads));
+	    	final long loops2=(seq2.length<500 ? loops : Tools.mid(1, loops, Tools.max(minLoops, threads)));
 	        test(new GlocalAligner(), seq1, seq2, loops2, threads);
-	        test(new GlocalPlusAligner(), seq1, seq2, loops2, threads);
-//	        test(new GlocalPlusAligner4(), seq1, seq2, loops2, threads);
-	        test(new GlocalPlusAligner5(), seq1, seq2, loops2, threads);
 //	        test(new CrossCutAligner(), seq1, seq2, loops2, threads);
 	        test(new BandedAligner(), seq1, seq2, loops, threads);
-//	        test(new BandedAlignerM(), seq1, seq2, loops, threads);
-	        test(new BandedPlusAligner(), seq1, seq2, loops, threads);
-	        test(new BandedPlusAligner2(), seq1, seq2, loops, threads);
-//	        test(new BandedPlusAlignerInt(), seq1, seq2, loops, threads);
 	        test(new DriftingAligner(), seq1, seq2, loops, threads);
-//	        test(new DriftingAlignerM(), seq1, seq2, loops, threads);
-	        test(new DriftingPlusAligner(), seq1, seq2, loops, threads);
-	        test(new DriftingPlusAligner2(), seq1, seq2, loops, threads);
-	        test(new DriftingPlusAligner3(), seq1, seq2, loops, threads);
 	        test(new WobbleAligner(), seq1, seq2, loops, threads);
-	        test(new WobblePlusAligner(), seq1, seq2, loops, threads);
-	        test(new WobblePlusAligner2(), seq1, seq2, loops, threads);
-	        test(new WobblePlusAligner3(), seq1, seq2, loops, threads);
-	        test(new WobblePlusAligner5(), seq1, seq2, loops, threads);
 	        test(new QuantumAligner(), seq1, seq2, loops, threads);
-	        test(new QuantumPlusAligner(), seq1, seq2, loops, threads);
-//	        test(new QuantumAlignerM(), seq1, seq2, loops, threads);
-//	        test(new QuantumPlusAligner3(), seq1, seq2, loops, threads);
-	        test(new QuantumPlusAligner4(), seq1, seq2, loops, threads);
-	        test(new SquabbleAligner(), seq1, seq2, loops, threads);
-//	        test(new WaveFrontAligner(), seq1, seq2, loops, threads);
-//	        test(new SingleStateAlignerFlat2(), seq1, seq2, loops, threads);
+	        test(new QuabbleAligner(), seq1, seq2, loops, threads);
+	        test(new XDropHAligner(), seq1, seq2, loops, threads);
+	        test(new WaveFrontAligner2(), seq1, seq2, loops, threads);
 	        
-	    } else {
-	        // Demo with 3 test sequences
-	    	byte[] seq1="ACGTACGTACGTACGTACGTACGTACGTAC".getBytes();
-	    	byte[] seq2="ACGTACTATACGTACGCTACGTACGTACGTC".getBytes(); // Similar with changes
-	    	byte[] seq3="TTTGGGCCCAAATTTGGGCCCAAATTTGGG".getBytes(); // Very different
-	        int[] pos=new int[2];
+//	        test(new GlocalAligner(), seq1, seq2, loops2, threads);
+//	        test(new GlocalPlusAligner(), seq1, seq2, loops2, threads);
+////	        test(new GlocalPlusAligner2(), seq1, seq2, loops2, threads);
+////	        test(new GlocalPlusAligner3(), seq1, seq2, loops2, threads);
+////	        test(new GlocalPlusAligner4(), seq1, seq2, loops2, threads);
+//	        test(new GlocalPlusAligner5(), seq1, seq2, loops2, threads);
+//	        test(new CrossCutAligner(), seq1, seq2, loops2, threads);
+//	        test(new BandedAligner(), seq1, seq2, loops, threads);
+////	        test(new BandedAlignerM(), seq1, seq2, loops, threads);
+//	        test(new BandedPlusAligner(), seq1, seq2, loops, threads);
+//	        test(new BandedPlusAligner2(), seq1, seq2, loops, threads);
+////	        test(new BandedPlusAlignerInt(), seq1, seq2, loops, threads);
+//	        test(new BandedByteAligner(), seq1, seq2, loops, threads);
+//	        test(new DriftingAligner(), seq1, seq2, loops, threads);
+////	        test(new DriftingAlignerM(), seq1, seq2, loops, threads);
+//	        test(new DriftingPlusAligner(), seq1, seq2, loops, threads);
+//	        test(new DriftingPlusAligner2(), seq1, seq2, loops, threads);
+//	        test(new DriftingPlusAligner3(), seq1, seq2, loops, threads);//Broken?
+//	        test(new WobbleAligner(), seq1, seq2, loops, threads);
+////	        test(new WobblePlusAligner(), seq1, seq2, loops, threads);
+////	        test(new WobblePlusAligner2(), seq1, seq2, loops, threads);
+//	        test(new WobblePlusAligner3(), seq1, seq2, loops, threads);
+//	        test(new WobblePlusAligner5(), seq1, seq2, loops, threads);//Broken?
+//	        test(new QuantumAligner(), seq1, seq2, loops, threads);
+////	        test(new QuantumPlusAligner(), seq1, seq2, loops, threads);
+////	        test(new QuantumAlignerM(), seq1, seq2, loops, threads);
+////	        test(new QuantumPlusAligner3(), seq1, seq2, loops, threads);
+//	        test(new QuantumPlusAligner4(), seq1, seq2, loops, threads);
+//	        test(new SquabbleAligner(), seq1, seq2, loops, threads);
+////	        test(new WaveFrontAligner(), seq1, seq2, loops, threads);
+////	        test(new SingleStateAlignerFlat2(), seq1, seq2, loops, threads);
+//	        
 	        
-	        System.out.println("Seq1-Seq1 int:\t"+GlocalAlignerInt.alignStatic(seq1, seq1, pos));
-	        System.out.println("Seq1-Seq2 int:\t"+GlocalAlignerInt.alignStatic(seq1, seq2, pos));
-	        System.out.println("Seq1-Seq3 int:\t"+GlocalAlignerInt.alignStatic(seq1, seq3, pos));
-	        System.out.println("Seq2-Seq3 int:\t"+GlocalAlignerInt.alignStatic(seq2, seq3, pos));
-
-	        System.out.println("Seq1-Seq1 long:\t"+GlocalAligner.alignStatic(seq1, seq1, pos));
-	        System.out.println("Seq1-Seq2 long:\t"+GlocalAligner.alignStatic(seq1, seq2, pos));
-	        System.out.println("Seq1-Seq3 long:\t"+GlocalAligner.alignStatic(seq1, seq3, pos));
-	        System.out.println("Seq2-Seq3 long:\t"+GlocalAligner.alignStatic(seq2, seq3, pos));
-
-	        System.out.println("Seq1-Seq1 band:\t"+BandedAlignerInt.alignStatic(seq1, seq1, pos));
-	        System.out.println("Seq1-Seq2 band:\t"+BandedAlignerInt.alignStatic(seq1, seq2, pos));
-	        System.out.println("Seq1-Seq3 band:\t"+BandedAlignerInt.alignStatic(seq1, seq3, pos));
-	        System.out.println("Seq2-Seq3 band:\t"+BandedAlignerInt.alignStatic(seq2, seq3, pos));
-
-	        System.out.println("Seq1-Seq1 gloc:\t"+GlocalAlignerOld.alignForward(seq1, seq1));
-	        System.out.println("Seq1-Seq2 gloc:\t"+GlocalAlignerOld.alignForward(seq1, seq2));
-	        System.out.println("Seq1-Seq3 gloc:\t"+GlocalAlignerOld.alignForward(seq1, seq3));
-	        System.out.println("Seq2-Seq3 gloc:\t"+GlocalAlignerOld.alignForward(seq2, seq3));
-
-	        System.out.println("Seq1-Seq1 ssa:\t"+new SingleStateAlignerFlat2().align(seq1, seq1, pos));
-	        System.out.println("Seq1-Seq2 ssa:\t"+new SingleStateAlignerFlat2().align(seq1, seq2, pos));
-	        System.out.println("Seq1-Seq3 ssa:\t"+new SingleStateAlignerFlat2().align(seq1, seq3, pos));
-	        System.out.println("Seq2-Seq3 ssa:\t"+new SingleStateAlignerFlat2().align(seq2, seq3, pos));
 	    }
 	}
     
@@ -108,6 +93,18 @@ public class Test {
 
 		f=aligner.Test.test(ida, "AA", "AA");
 		assert(f==1f);
+
+		f=aligner.Test.test(ida, "AAA", "A");
+		assert(f==0.33333333f);
+
+		f=aligner.Test.test(ida, "CCC", "A");
+		assert(f==0f);
+
+		f=aligner.Test.test(ida, "AA", "AGA");
+		assert(f==0.6666667f) : f;
+
+		f=aligner.Test.test(ida, "AGA", "AA");
+		assert(f==0.6666667f) : f;
 
 		f=aligner.Test.test(ida, "AT", "AA");
 		assert(f==0.5f) : f;
@@ -132,6 +129,9 @@ public class Test {
 
 		f=aligner.Test.test(ida, "AAAAAA", "AAAAAA");
 		assert(f==1f) : f;
+
+		f=aligner.Test.test(ida, "CCCCCC", "AAAAAA");
+		assert(f==0f) : f;
 
 		f=aligner.Test.test(ida, "AAAAAA", "AAAAAA");
 		assert(f==1f) : f;
@@ -160,6 +160,9 @@ public class Test {
 		f=aligner.Test.test(ida, "AAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAA");
 		assert(f==1f) : f;
 
+		f=aligner.Test.test(ida, "CCCCCCCCCCCCCCCC", "A");
+		assert(f==0f) : f;
+
 		f=aligner.Test.test(ida, "AAAAAATTTTAAAAAA", "AAAAAAAAAAAAAAAA");
 		assert(f==0.75f) : f;
 
@@ -168,6 +171,14 @@ public class Test {
 
 		return true;
     }
+    
+    public static final void print(long[] curr, String name) {
+	    System.err.print(name+" Score:\t");
+	    for(int i=0; i<curr.length; i++) {System.err.print((curr[i]>>42)+" ");}
+	    System.err.print("\n"+name+" Dels: \t");
+	    for(int i=0; i<curr.length; i++) {System.err.print((((curr[i]>>21)&0xFFFF)+" "));}
+	    System.err.println();
+	}
 	    
     public static byte[] toSequence(String a) {
     	if(a.length()<100 && new File(a).isFile()) {
@@ -202,7 +213,7 @@ public class Test {
     
     public static <C extends IDAligner> void testAndPrint(Class<C> c, String[] args) {
     	IDAligner ida=createNewInstance(c);
-		if(args==null || args.length<1) {
+		if(args==null || args.length<1 || (args.length==1 && args[0].equalsIgnoreCase("simd"))) {
 			Shared.SIMD=true;
 			Test.validate(ida);
 			return;

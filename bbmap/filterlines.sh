@@ -35,6 +35,7 @@ To read from stdin, set 'in=stdin'.  The format should be specified with an exte
 To write to stdout, set 'out=stdout'.  The format should be specified with an extension, like 'out=stdout.fasta'
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -74,7 +75,7 @@ calcXmx () {
 calcXmx "$@"
 
 function filterlines() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.FilterLines $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.FilterLines $@"
 	echo $CMD >&2
 	eval $CMD
 }

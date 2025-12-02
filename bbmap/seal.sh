@@ -10,17 +10,17 @@ by counting the number of long kmers that match between a read and
 a set of reference sequences.  Designed for RNA-seq with alternative splicing.
 Please read bbmap/docs/guides/SealGuide.txt for more information.
 
-Usage Examples (not comprehensive):
+Usage:  seal.sh in=<file> *.fa pattern=out_%.fq outu=unmapped.fq stats=stats.txt
 
-Sequence quantification:
+Sequence quantification examples:
 seal.sh in=<file> ref=<file> rpkm=rpkm.txt stats=stats.txt
 or
 seal.sh in=<file> ref=<file,file,file...> refstats=refstats.txt
 
-Splitting:
+Splitting examples:
 seal.sh in=<file> ref=<file,file,file...> pattern=out_%.fq outu=unmapped.fq
 or
-seal.sh in=<file> *.fasta pattern=out_%.fq outu=unmapped.fq
+seal.sh in=<file> *.fasta.gz pattern=out_%.fq.gz outu=unmapped.fq.gz
 
 Input may be fasta or fastq, compressed or uncompressed.
 If you pipe via stdin/stdout, please include the file type; e.g. for gzipped 
@@ -37,7 +37,7 @@ ref=<file,file>     Comma-delimited list of reference files or directories.
 literal=<seq,seq>   Comma-delimited list of literal reference sequences.
 touppercase=f       (tuc) Change all bases upper-case.
 interleaved=auto    (int) t/f overrides interleaved autodetection.
-                    Must be set mainually when streaming fastq input.
+                    Must be set manually when streaming fastq input.
 qin=auto            Input quality offset: 33 (Sanger), 64, or auto.
 reads=-1            If positive, quit after processing X reads or pairs.
 copyundefined=f     (cu) Process non-AGCT IUPAC reference bases by making all
@@ -57,7 +57,7 @@ pattern=<file>      Use this to write reads to one stream per ref sequence
                     match, replacing the % character with the sequence name.
                     For example, pattern=%.fq for ref sequences named dog and 
                     cat would create dog.fq and cat.fq.
-stats=<file>        Write statistics about which contamininants were detected.
+stats=<file>        Write statistics about which contaminants were detected.
 refstats=<file>     Write statistics on a per-reference-file basis.
 rpkm=<file>         Write RPKM for each reference sequence (for RNA-seq).
 dump=<file>         Dump kmer tables to a file, in fasta format.
@@ -197,6 +197,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "	
 }
 
@@ -237,7 +238,7 @@ calcXmx () {
 calcXmx "$@"
 
 seal() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.Seal $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP jgi.Seal $@"
 	echo $CMD >&2
 	eval $CMD
 }

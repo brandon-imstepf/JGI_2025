@@ -45,7 +45,7 @@ import structures.StringCount;
 import tracker.EntropyTracker;
 import tracker.PolymerTracker;
 import tracker.ReadStats;
-import var2.CallVariants;
+import var2.AnalyzeVars;
 import var2.ScafMap;
 import var2.Var;
 import var2.VarMap;
@@ -117,7 +117,7 @@ public class BBDuk {
 		boolean rcomp_=true;
 		boolean forbidNs_=false;
 		boolean useForest_=false, useTable_=false, useArray_=true, prealloc_=false;
-		int k_=27, kbig_=-1;
+		int k_=31, kbig_=-1;
 		int mink_=-1;
 		int ways_=-1; //Currently disabled for speed
 		int maxBadKmers_=0;
@@ -173,6 +173,8 @@ public class BBDuk {
 			}else if(Parser.parseQuality(arg, a, b)){
 				//do nothing
 			}else if(Parser.parseFasta(arg, a, b)){
+				//do nothing
+			}else if(Parser.parseSam(arg, a, b)){
 				//do nothing
 			}else if(parser.parseInterleaved(arg, a, b)){
 				//do nothing
@@ -1053,6 +1055,12 @@ public class BBDuk {
 		}
 	}
 	
+	/**
+	 * Processes array of reference paths and adds modified paths to list.
+	 * @param array Array of reference file paths
+	 * @param list Output list to store processed paths
+	 * @return Modified array of reference paths
+	 */
 	String[] modifyRefPath(String[] array, ArrayList<String> list){
 		if(array==null){return array;}
 		for(String s : array){
@@ -1062,6 +1070,14 @@ public class BBDuk {
 		return list.toArray(new String[0]);
 	}
 	
+	/**
+	 * Resolves reference path shortcuts to actual file paths.
+	 * Handles special keywords like "phix", "adapters", "truseq", etc.
+	 * to their corresponding resource files.
+	 *
+	 * @param s Reference path or keyword
+	 * @return Resolved file path
+	 */
 	public static String modifyRefPath(String s){
 		if(s==null || Tools.isReadableFile(s)){
 			//do nothing
@@ -1107,6 +1123,11 @@ public class BBDuk {
 	/*--------------------------------------------------------------*/
 	
 	
+	/**
+	 * Main processing method that coordinates the entire workflow.
+	 * Loads variants if specified, initializes quality recalibration,
+	 * calls process2 for core processing, and calculates final statistics.
+	 */
 	public void process(){
 		
 		if(samref!=null){
@@ -1180,6 +1201,12 @@ public class BBDuk {
 	}
 	
 	
+	/**
+	 * Core processing method that loads reference kmers and processes input reads.
+	 * Fills kmer tables from reference sequences, then spawns threads to match
+	 * reads against reference kmers and perform filtering/trimming operations.
+	 * @param startTime Start time in nanoseconds for timing calculations
+	 */
 	public void process2(long startTime){
 		
 		/* Start phase timer */
@@ -1187,7 +1214,7 @@ public class BBDuk {
 
 		if(DISPLAY_PROGRESS && !json){
 			outstream.println("Initial:");
-			Shared.printMemory();
+			Shared.printMemory(outstream);
 			outstream.println();
 		}
 		
@@ -1376,6 +1403,11 @@ public class BBDuk {
 		}
 	}
 	
+	/**
+	 * Formats processing statistics as JSON string.
+	 * @param startTime Processing start time in nanoseconds
+	 * @return JSON-formatted statistics string
+	 */
 	private String toJson(long startTime){
 
 		jsonStats.add("k", k);
@@ -1460,11 +1492,23 @@ public class BBDuk {
 		return jsonStats.toString();
 	}
 	
+	/**
+	 * Formats ratio as percentage string with two decimal places.
+	 * @param numerator Numerator value
+	 * @param denominator Denominator value
+	 * @return Percentage string (e.g., "45.32%")
+	 */
 	public static String toPercent(long numerator, long denominator){
 		if(denominator<1){return "0.00%";}
 		return Tools.format("%.2f%%",numerator*100.0/denominator);
 	}
 	
+	/**
+	 * Right-pads string with spaces to minimum length.
+	 * @param s Input string
+	 * @param minLen Minimum desired length
+	 * @return Padded string
+	 */
 	private static String padRight(String s, int minLen){
 		while(s.length()<minLen){s=s+" ";}
 		return s;
@@ -1661,6 +1705,8 @@ public class BBDuk {
 		tsw.poisonAndWait();
 	}
 	
+	/** Formats RQC statistics map as string output.
+	 * @return Formatted RQC statistics string */
 	public static String rqcString(){
 		if(RQC_MAP==null){return null;}
 		StringBuilder sb=new StringBuilder();
@@ -1678,6 +1724,8 @@ public class BBDuk {
 		return sb.toString();
 	}
 	
+	/** Populates RQC statistics map with processing counts.
+	 * Adds input, filtered, trimmed, and output read/base counts. */
 	private void addToRqcMap(){
 		putRqc("inputReads", readsIn, false, false);
 		putRqc("inputBases", basesIn, false, false);
@@ -1699,6 +1747,14 @@ public class BBDuk {
 		putRqc("outputBases", basesOut, true, false);
 	}
 	
+	/**
+	 * Adds or updates entry in RQC statistics map.
+	 *
+	 * @param key Statistics key name
+	 * @param value Count value to store
+	 * @param evict Whether to replace existing value
+	 * @param add Whether to add to existing value
+	 */
 	public static void putRqc(String key, Long value, boolean evict, boolean add){
 		if(RQC_MAP==null){RQC_MAP=new HashMap<String,Long>();}
 		Long old=RQC_MAP.get(key);
@@ -1784,6 +1840,8 @@ public class BBDuk {
 		}
 	}
 	
+	/** Calculates ratio of two specified polymer bases.
+	 * @return Ratio of polymer base counts (base1/base2) */
 	public double getPolymerRatio(){
 		return pTracker.calcRatioCumulative(polymerChar1, polymerChar2, polymerLength);
 	}
@@ -2876,7 +2934,7 @@ public class BBDuk {
 						if(bprob==null || bprob.length<r2.length()){bprob=new float[r2.length()];}
 						
 						//Do overlap trimming
-						r2.reverseComplement();
+						r2.reverseComplementFast();
 //						int bestInsert=BBMergeOverlapper.mateByOverlap(r1, r2, aprob, bprob, overlapVector, minOverlap0, minOverlap,
 //								overlapMargin, overlapMaxMismatches0, overlapMaxMismatches, overlapMinq);
 						int bestInsert=BBMergeOverlapper.mateByOverlapRatio(r1, r2, aprob, bprob, overlapVector, minOverlap0, minOverlap,
@@ -2901,7 +2959,7 @@ public class BBDuk {
 							}
 						}
 						
-						r2.reverseComplement();
+						r2.reverseComplementFast();
 						
 						if(bestInsert>0 && !ambig){
 							if(bestInsert<r1.length()){
@@ -3282,8 +3340,8 @@ public class BBDuk {
 			}
 			
 			if(fixVariants){
-				CallVariants.fixVars(r1, varMap, scafMap);
-				CallVariants.fixVars(r2, varMap, scafMap);
+				AnalyzeVars.fixVars(r1, varMap, scafMap);
+				AnalyzeVars.fixVars(r2, varMap, scafMap);
 			}
 
 			if(readstats!=null){
@@ -3298,8 +3356,8 @@ public class BBDuk {
 			}
 
 			if(fixVariants && unfixVariants){
-				CallVariants.unfixVars(r1);
-				CallVariants.unfixVars(r2);
+				AnalyzeVars.unfixVars(r1);
+				AnalyzeVars.unfixVars(r2);
 			}
 		}
 		
@@ -4522,7 +4580,7 @@ public class BBDuk {
 			if(!r.mapped() || r.bases==null || r.samline==null || r.match==null){return true;}
 			//TODO: Add Vars as well, like in FilterSam
 			if(Read.countSubs(r.match)<=maxBadSubs){return true;}
-			ArrayList<Var> list=CallVariants.findUniqueSubs(r, r.samline, varMap, scafMap, maxBadSubAlleleDepth, maxBadAlleleFraction, minBadSubReadDepth, minBadSubEDist);
+			ArrayList<Var> list=AnalyzeVars.findUniqueSubs(r, r.samline, varMap, scafMap, maxBadSubAlleleDepth, maxBadAlleleFraction, minBadSubReadDepth, minBadSubEDist);
 			return list==null || list.size()<=maxBadSubs;
 		}
 		
@@ -4601,6 +4659,11 @@ public class BBDuk {
 	/*----------------        Static Methods        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Parses literal sequence argument into array of sequences.
+	 * @param arg Comma-separated list of literal sequences
+	 * @return Array of processed literal sequences
+	 */
 	public static final String[] processLiteralArg(String arg) {
 //		System.err.println("Caught "+arg);
 		if(arg==null) {return null;}
@@ -4615,6 +4678,11 @@ public class BBDuk {
 		return ret;
 	}
 	
+	/**
+	 * Processes individual literal sequence term, expanding polymer shortcuts.
+	 * @param b Single literal sequence or polymer specification
+	 * @return Processed literal sequence
+	 */
 	public static final String processLiteralTerm(String b) {
 //		System.err.println("Parsing "+b);
 		assert(b.length()>0) : "Invalid literal sequence: '"+b+"'";
@@ -4666,14 +4734,30 @@ public class BBDuk {
 		return ret;
 	}
 	
+	/**
+	 * Computes reverse complement of kmer.
+	 * @param kmer Input kmer
+	 * @param len Kmer length
+	 * @return Reverse complement kmer
+	 */
 	final long rcomp(long kmer, int len){
 		return amino ? kmer : AminoAcid.reverseComplementBinaryFast(kmer, len);
 	}
 	
+	/**
+	 * Determines if kmer passes speed filtering threshold.
+	 * @param key Kmer hash value
+	 * @return true if kmer should be processed
+	 */
 	final boolean passesSpeed(long key){
 		return speed<1 || ((key&Long.MAX_VALUE)%17)>=speed;
 	}
 	
+	/**
+	 * Determines if kmer fails speed filtering threshold.
+	 * @param key Kmer hash value
+	 * @return true if kmer should be skipped
+	 */
 	final boolean failsSpeed(long key){
 		return speed>0 && ((key&Long.MAX_VALUE)%17)<speed;
 	}
@@ -4982,9 +5066,13 @@ public class BBDuk {
 	/** Stores JSON output */
 	JsonObject jsonStats;
 	
+	/** Total number of input reads processed */
 	long readsIn=0;
+	/** Total number of input bases processed */
 	long basesIn=0;
+	/** Total number of reads written to output */
 	long readsOut=0;
+	/** Total number of bases written to output */
 	long basesOut=0;
 	
 	long readsQTrimmed=0;
@@ -5001,9 +5089,13 @@ public class BBDuk {
 	long readsPolyTrimmed=0;
 	long basesPolyTrimmed=0;
 	
+	/** Number of reads modified by kmer trimming */
 	long readsKTrimmed=0;
+	/** Number of bases removed by kmer trimming */
 	long basesKTrimmed=0;
+	/** Number of reads removed by kmer filtering */
 	long readsKFiltered=0;
+	/** Number of bases removed by kmer filtering */
 	long basesKFiltered=0;
 	
 	long badGcReads;
@@ -5018,12 +5110,16 @@ public class BBDuk {
 	long readsTrimmedBySwift;
 	long basesTrimmedBySwift;
 	
+	/** Number of reference reads processed for kmer loading */
 	long refReads=0;
+	/** Number of reference bases processed for kmer loading */
 	long refBases=0;
+	/** Number of reference kmers encountered during loading */
 	long refKmers=0;
 	
 //	public long modsum=0; //123
 	
+	/** Number of unique kmers actually stored in hash tables */
 	long storedKmers=0;
 	
 	/*--------------------------------------------------------------*/

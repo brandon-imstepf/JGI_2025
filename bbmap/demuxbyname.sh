@@ -13,7 +13,7 @@ open file handles.
 Usage:
 demuxbyname.sh in=<file> in2=<file> out=<file> out2=<file> names=<string,string,...>
 
-Alternately:
+Alternate Usage:
 demuxbyname.sh in=<file> out=<file> outu=<file> names=<file> barcode
 This will parse the barcode from Illumina reads with a header like this:
 @A00178:73:HH7H3DSXX:4:1101:13666:1047 1:N:0:ACGTTGGT+TGACGCAT
@@ -53,7 +53,7 @@ names=          List of strings (or files containing strings) to parse from
                 at most 2 files would be created, and anything not matching 
                 those names would go to outu.
 
-Processing Modes (determines how to convert a read into a name):
+Processing Mode Parameters (determine how to convert a read into a name):
 prefixmode=t    (pm) Match prefix of read header.  If false, match suffix of
                 read header.  prefixmode=f is equivalent to suffixmode=t.
 barcode=f       Parse barcodes from Illumina headers.
@@ -96,7 +96,7 @@ length=0        If positive, use a suffix or prefix of this length from read
                 characters of read names.
 hdist=0         Allow a hamming distance for demultiplexing barcodes.  This
                 requires a list of names (barcodes).  It is unrelated to 
-                probabiilty mode's hdist3.
+                probability mode's hdist3.
 replace=        Replace some characters in the output filenames.  For example,
                 replace=+- would replace the + symbol in headers with the - 
                 symbol in output filenames.  So you could match the barcode 
@@ -133,6 +133,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -173,7 +174,7 @@ calcXmx () {
 calcXmx "$@"
 
 function demuxbyname() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP jgi.DemuxByName2 $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP jgi.DemuxByName2 $@"
 	echo $CMD >&2
 	eval $CMD
 }

@@ -20,6 +20,7 @@ bitset=t        Track read ID's to detect secondary alignments.
                 Necessary for mappers that incorrectly output multiple primary alignments per read.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -44,7 +45,7 @@ if [ -z "$1" ] || [[ $1 == -h ]] || [[ $1 == --help ]]; then
 fi
 
 function gradesam() {
-	local CMD="java $EA $EOOM -Xmx200m -cp $CP align2.GradeSamFile $@"
+	local CMD="java $EA $SIMD $EOOM -Xmx200m -cp $CP align2.GradeSamFile $@"
 #	echo $CMD >&2
 	eval $CMD
 }

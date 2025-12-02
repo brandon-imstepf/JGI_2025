@@ -11,12 +11,14 @@ Usage:  countgc in=<input> out=<output> format=<format>
 
 Input may be stdin or a fasta or fastq file, compressed or uncompressed.
 Output (which is optional) is tab-delimited.
+Parameters:
 format=1:   name   length   A   C   G   T   N
 format=2:   name   GC
 format=4:   name   length   GC
 Note that in format 1, A+C+G+T=1 even when N is nonzero.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -50,7 +52,7 @@ calcXmx () {
 calcXmx "$@"
 
 countgc() {
-	local CMD="java $EA $EOOM $z -cp $CP jgi.CountGC $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP jgi.CountGC $@"
 	echo $CMD >&2
 	eval $CMD
 }

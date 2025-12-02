@@ -21,6 +21,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -55,7 +56,7 @@ calcXmx () {
 calcXmx "$@"
 
 a_sample_mt() {
-	local CMD="java $EA $EOOM $z -cp $CP tax.AnalyzeAccession $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP tax.AnalyzeAccession $@"
 	echo $CMD >&2
 	eval $CMD
 }

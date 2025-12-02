@@ -2,6 +2,12 @@ package template;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
+/**
+ * Utility class for managing and synchronizing thread operations.
+ * Provides static methods to start, wait for, and synchronize thread execution
+ * with optional result accumulation and thread-safe locking mechanisms.
+ * @author Brian Bushnell
+ */
 public class ThreadWaiter {
 	
 	/** Wait for all threads to start running */
@@ -19,13 +25,14 @@ public class ThreadWaiter {
 		return success;
 	}
 	
-	/** Wait for completion of all threads */
+	/** Wait for completion of all threads except self */
 	public static final <T extends Thread> boolean waitForThreadsToFinish(Iterable<T> iter){
 
 		//Wait for completion of all threads
 		boolean success=true;
+		final Thread self=Thread.currentThread();
 		for(T t : iter){
-
+			if(t==self) {continue;}
 			//Wait until this thread has terminated
 			while(t.getState()!=Thread.State.TERMINATED){
 				try {
@@ -41,6 +48,31 @@ public class ThreadWaiter {
 		return success;
 	}
 	
+	/** Wait for completion of all threads except self */
+	public static final <T extends Thread> boolean waitForThreadsToFinish(T[] iter){
+
+		//Wait for completion of all threads
+		boolean success=true;
+		final Thread self=Thread.currentThread();
+		for(T t : iter){
+			if(t==self) {continue;}
+			//Wait until this thread has terminated
+			while(t.getState()!=Thread.State.TERMINATED){
+				try {
+					//Attempt a join operation
+					t.join();
+				} catch (InterruptedException e) {
+					//Potentially handle this, if it is expected to occur
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		return success;
+	}
+	
+	/** Starts all threads in the provided collection.
+	 * @param iter Collection of threads to start */
 	public static final <T extends Thread> void startThreads(Iterable<T> iter){
 		for(Thread t : iter){t.start();}
 	}

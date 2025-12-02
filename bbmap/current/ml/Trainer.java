@@ -374,6 +374,22 @@ public class Trainer implements Accumulator<WorkerThread> {
 				minDims=Parse.parseIntArray(b, ",", "x");
 			}else if(a.equals("maxdims") || a.equals("maxdimensions")){
 				maxDims=Parse.parseIntArray(b, ",", "x");
+			}else if(a.equals("loss") || a.equals("losstype")){
+				LossFunctions.setLossType(b);
+			}else if(a.equals("lossposweight") || a.equals("lpw")){
+				LossFunctions.setPositiveWeight(Float.parseFloat(b));
+			}else if(a.equals("lossnegweight") || a.equals("lnw")){
+				LossFunctions.setNegativeWeight(Float.parseFloat(b));
+			}else if(a.equals("lossepsilon") || a.equals("losseps")){
+				LossFunctions.setEpsilon(Float.parseFloat(b));
+			}else if(a.equals("losssmooth") || a.equals("tverskysmooth")){
+				LossFunctions.setTverskySmooth(Float.parseFloat(b));
+			}else if(a.equals("lossalpha") || a.equals("tverskyalpha")){
+				LossFunctions.setTverskyAlpha(Float.parseFloat(b));
+			}else if(a.equals("lossbeta") || a.equals("tverskybeta")){
+				LossFunctions.setTverskyBeta(Float.parseFloat(b));
+			}else if(a.equals("losslegacyweighting") || a.equals("losslegacyweights")){
+				LossFunctions.setLegacyWeighting(Parse.parseBoolean(b));
 			}else if(a.equals("in") || a.equals("data") || a.equals("din")){
 				dataIn=b;
 			}else if(a.equals("validateset") || a.equals("validate") || a.equals("vin") || a.equals("vset")){

@@ -3,7 +3,7 @@
 usage(){
 echo "
 Written by Brian Bushnell
-Last modified October 6, 2020
+Last modified July 31, 2025
 
 Description:  Calls variants from sam or bam input.
 In default mode, all input files are combined and treated as a single sample.
@@ -27,7 +27,7 @@ out=<file>      Output variant list in var format.  If the name ends
 vcf=<file>      Output variant list in vcf format.
 outgff=<file>   Output variant list in gff format.
 ref=<file>      Reference fasta.  Required to display ref alleles.
-                Variant calling wil be more accurate with the reference.
+                Variant calling will be more accurate with the reference.
 vcfin=<file>    Force calls at these locations, even if allele count is 0.
 shist=<file>    (scorehist) Output for variant score histogram.
 zhist=<file>    (zygosityhist) Output for zygosity histogram.
@@ -117,11 +117,11 @@ minreadmapq=4   Ignore alignments with lower mapq.
 contigs=        Comma-delimited list of contig names to include. These 
                 should have no spaces, or underscores instead of spaces.
 secondary=f     Include secondary alignments.
-supplimentary=f Include supplimentary alignments.
+supplementary=f Include supplementary alignments.
 duplicate=f     Include reads flagged as duplicates.
 invert=f        Invert sam filters.
 
-Variant-Calling Cutoffs:
+Variant-Calling Cutoff Parameters:
 minreads=2              (minad) Ignore variants seen in fewer reads.
 maxreads=BIG            (maxad) Ignore variants seen in more reads.
 mincov=0                Ignore variants in lower-coverage locations.
@@ -160,6 +160,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -200,7 +201,7 @@ calcXmx () {
 calcXmx "$@"
 
 callvariants() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP var2.CallVariants $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP var2.CallVariants $@"
 	echo $CMD >&2
 	eval $CMD
 }

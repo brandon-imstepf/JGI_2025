@@ -5,11 +5,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
 
-import align2.QualityTools;
 import dna.AminoAcid;
 import fileIO.FileFormat;
-import shared.KillSwitch;
-import shared.Parse;
+import ml.CellNet;
+import shared.LineParser2;
 import shared.Parser;
 import shared.Shared;
 import shared.Timer;
@@ -19,20 +18,36 @@ import stream.SamLine;
 import structures.ByteBuilder;
 
 /**
- * Tracks data for a variation.
- * Uses half-open coordinates.
- * @author Brian Bushnell
- * @date November 4, 2016
- *
- */
+* Represents a single genomic variant with associated quality metrics and statistics.
+* Stores variant position, type, allele information, and comprehensive read-level data
+* for variant calling quality assessment and filtering.
+* 
+* Core variant calling class that accumulates evidence from multiple reads,
+* calculates statistical scores for variant confidence, and outputs results
+* in standard formats (VAR, VCF). Handles all major variant types including
+* substitutions, insertions, deletions, and junction variants.
+* 
+* Key features:
+* - Multi-threaded variant accumulation from read alignments
+* - Sophisticated statistical scoring algorithms for quality assessment
+* - Bias detection (strand bias, read bias, positional bias)
+* - Homopolymer and repeat region analysis
+* - Support for multiple output formats with comprehensive metadata
+* 
+* @author Brian Bushnell
+* @contributor Isla
+* @date November 4, 2016
+*/
 public class Var implements Comparable<Var>, Serializable, Cloneable {
 
+	private static final long serialVersionUID=3328626403863586829L;
+
 	/**
+	 * Main method for testing and loading variant files.
+	 * Supports both VAR and VCF format input files for validation and analysis.
 	 * 
+	 * @param args Command line arguments: [0] = input file path, [1+] = optional parameters
 	 */
-	private static final long serialVersionUID = 3328626403863586829L;
-
-
 	public static void main(String[] args){
 		if(args.length>1){
 			for(int i=1; i<args.length; i++){			
@@ -61,23 +76,48 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 	
 	@Override
 	public Var clone(){
-		try {
+		try{
 			return (Var)super.clone();
-		} catch (CloneNotSupportedException e) {
-			// TODO Auto-generated catch block
+		}catch(CloneNotSupportedException e){
 			e.printStackTrace();
 			throw new RuntimeException();
 		}
 	}
 	
+	/**
+	 * Creates variant from basic parameters using allele as integer ASCII code.
+	 * Convenience constructor that converts single-character alleles from ASCII codes
+	 * to byte arrays using the pre-allocated AL_MAP lookup table. Used primarily
+	 * for single-base substitutions where the allele is known as a character code.
+	 * 
+	 * @param scafnum_ Scaffold/chromosome number (0-based indexing)
+	 * @param start_ Start position in reference coordinates (0-based, inclusive)
+	 * @param stop_ Stop position in reference coordinates (0-based, exclusive)
+	 * @param allele_ Single-character allele as ASCII integer code
+	 * @param type_ Variant type constant (SUB, INS, DEL, etc.)
+	 */
 	public Var(int scafnum_, int start_, int stop_, int allele_, int type_){
 		this(scafnum_, start_, stop_, AL_MAP[allele_], type_);
 	}
 
-	public Var(Var v) {
+	/**
+	 * Copy constructor - creates new variant with identical properties.
+	 * @param v Source variant to copy
+	 */
+	public Var(Var v){
 		this(v.scafnum, v.start, v.stop, v.allele, v.type);
 	}
 	
+	/**
+	* Primary constructor for creating variants.
+	* Validates coordinates and allele data, computes hash code for efficient storage.
+	* 
+	* @param scafnum_ Scaffold/chromosome number
+	* @param start_ Start position (0-based, inclusive)
+	* @param stop_ Stop position (0-based, exclusive) 
+	* @param allele_ Allele sequence as byte array
+	* @param type_ Variant type (SUB, INS, DEL, etc.)
+	*/
 	public Var(int scafnum_, int start_, int stop_, byte[] allele_, int type_){
 		scafnum=scafnum_;
 		start=start_;
@@ -85,428 +125,157 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		allele=allele_;
 		type=type_;
 		hashcode=hash();
-//		stamp=stamper.getAndIncrement();
+		
+		// Validate allele is either empty, single base, or multi-base sequence
 		assert(allele.length>1 || allele==AL_0 ||
-				allele==AL_A || allele==AL_C || allele==AL_G || allele==AL_T || allele==AL_N) : new String(new String(allele_)+", "+allele_.length);
-		assert(start<=stop) : "\n"+Var.toBasicHeader()+"\n"+this+"\n";
-//		if(type()==SUB && allele.length==1){ //TODO: 123 - mainly for testing
-//			final byte call=allele[0];
-//			final Scaffold scaf=ScafMap.defaultScafMap.getScaffold(scafnum);
-//			final byte ref=scaf.bases[start];
-////			System.err.println((char)call+"="+(char)ref+" at scaf "+scafnum+" pos "+start);
-//			assert(ref!=call) : (char)call+"="+(char)ref+" at scaf "+scafnum+" pos "+start;
-//		}
-//		assert(false) : this.alleleCount();
+				allele==AL_A || allele==AL_C || allele==AL_G || allele==AL_T || allele==AL_N) : 
+				new String(allele_)+", "+allele_.length;
+		assert(start<=stop) : "\n"+VarHelper.toBasicHeader()+"\n"+this+"\n";
 	}
 	
+	/**
+	 * Constructs variant by parsing delimited text line from VAR format file.
+	 * Parses all 24+ fields including position, type, counts, and quality statistics.
+	 * Used for loading existing variant data from disk storage.
+	 * 
+	 * @param line Byte array containing tab-delimited variant data
+	 * @param delimiter Field separator character (typically tab)
+	 */
 	public Var(final byte[] line, final byte delimiter){
-		int a=0, b=0;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 0: "+new String(line);
-		scafnum=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 1: "+new String(line);
-		start=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 2: "+new String(line);
-		stop=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 3: "+new String(line);
-		type=typeInitialArray[line[a]];
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>=a) : "Missing field 4: "+new String(line);
-		if(b==a){allele=AL_0;}
-		else if(b==a+1){allele=AL_MAP[line[a]];}
-		else{allele=Arrays.copyOfRange(line, a, b);}
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 5: "+new String(line);
-		r1plus=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 6: "+new String(line);
-		r1minus=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 7: "+new String(line);
-		r2plus=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 8: "+new String(line);
-		r2minus=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 9: "+new String(line);
-		properPairCount=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 10: "+new String(line);
-		lengthSum=Parse.parseLong(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 11: "+new String(line);
-		mapQSum=Parse.parseLong(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 12: "+new String(line);
-		mapQMax=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 13: "+new String(line);
-		baseQSum=Parse.parseLong(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 14: "+new String(line);
-		baseQMax=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 15: "+new String(line);
-		endDistSum=Parse.parseLong(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 16: "+new String(line);
-		endDistMax=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 17: "+new String(line);
-		idSum=Parse.parseLong(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 18: "+new String(line);
-		idMax=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 19: "+new String(line);
-		coverage=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 20: "+new String(line);
-		minusCoverage=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 21: "+new String(line);
-		nearbyVarCount=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		assert(b>a) : "Missing field 22: "+new String(line);
-		flagged=Parse.parseInt(line, a, b)>0;
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-//		assert(b>a) : "Missing field 21: "+new String(line);
-//		int contigEndDist=Parse.parseInt(line, a, b); //Unused
-		b++;
-		a=b;
-		
-		while(b<line.length && line[b]!=delimiter){b++;}
-		if(b>a){
-//			phredScore=Parse.parseFloat(line, a, b);
-			b++;
-			a=b;
-		}
-		
-		hashcode=hash();
-		assert(allele.length>1 || allele==AL_0 ||
-				allele==AL_A || allele==AL_C || allele==AL_G || allele==AL_T || allele==AL_N);
-		assert(start<=stop) : this.toString();
-		assert(type>=LJUNCT || type==type_old()) : type+", "+type_old()+", "+this.toString();
-	}
-
-	//#CHROM POS    ID        REF  ALT     QUAL
-	public static Var fromVCF(byte[] line, ScafMap scafMap, boolean parseCoverage, boolean parseExtended) {
-		int a=0, b=0;
-		
-		//CHROM
-		while(b<line.length && line[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 0: "+new String(line);
-		String scaf=new String(line, a, b-a);
-		b++;
-		a=b;
-		
-		//POS
-		while(b<line.length && line[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 1: "+new String(line);
-		int pos=Parse.parseInt(line, a, b);
-		b++;
-		a=b;
-
-		//ID
-		while(b<line.length && line[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 2: "+new String(line);
-		//String id=new String(line, a, b-a);
-		b++;
-		a=b;
-		
-		//REF
-		while(b<line.length && line[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 3: "+new String(line);
-		//byte[] ref=Arrays.copyOf(line, a, b);
-		int reflen=line[a]=='.' ? 0 : b-a;
-		b++;
-		a=b;
-
-		//ALT
-		while(b<line.length && line[b]!='\t'){b++;}
-		assert(b>a) : "Missing field 4: "+new String(line);
-		byte[] alt;
-		if(b<=a+1){alt=AL_MAP[line[a]];}
-		else{alt=Arrays.copyOfRange(line, a, b);}
-		b++;
-		a=b;
-
-		//QUAL, FILTER, INFO
-		
-		int infoStart=b;
-		
-//		while(b<line.length && line[b]!='\t'){b++;}
-//		assert(b>a) : "Missing field 5: "+new String(line);
-//		int qual=Parse.parseInt(line, a, b);
-//		b++;
-//		a=b;
-		
-		final int start;
-		if(alt.length!=reflen && alt.length>0){//For indels, which have an extra base
-			alt=Arrays.copyOfRange(alt, 1, alt.length);
-			start=pos;
-			if(alt.length==0){alt=AL_0;}
-			else if(alt.length==1 && AL_MAP[alt[0]]!=null){alt=AL_MAP[alt[0]];}
-			if(reflen==1){reflen--;}//insertion
-		}else{
-			start=pos-1;
-		}
-		final int readlen=(alt==null || alt.length==0 || alt[0]=='.' ? 0 : alt.length);
-		final int stop=start+reflen;
-		assert(scaf!=null);
-		assert(scafMap!=null);
-		final int scafNum=scafMap.getNumber(scaf);
-		assert(scafNum>=0) : scaf+"\n"+scafMap.keySet()+"\n"+scafMap.altKeySet()+"\n";
-//		final Scaffold scaffold=scafMap.getScaffold(scafNum);
-		
-		int type=-1;
-		if(parseExtended){
-			type=Tools.max(type, parseVcfIntDelimited(line, "TYP=", infoStart));
-			if(type<0){type=typeStartStop(start, stop, alt);}
-		}else{
-			type=typeStartStop(start, stop, alt);
-		}
-		Var v=new Var(scafNum, start, stop, alt, type);
-//		System.err.println(new String(line)+"\n"+v.toString()+"\nstart="+start+", stop="+stop+", type="+type+"\n");
-//		assert(false);
-		
-		if(parseCoverage){
-			infoStart=Tools.indexOfDelimited(line, "R1P=", infoStart, (byte)';');
-			
-			//R1P=2;R1M=0;R2P=0;R2M=0;
-			int r1p=Tools.max(0, parseVcfIntDelimited(line, "R1P=", infoStart));
-			int r1m=Tools.max(0, parseVcfIntDelimited(line, "R1M=", infoStart));
-			int r2p=Tools.max(0, parseVcfIntDelimited(line, "R2P=", infoStart));
-			int r2m=Tools.max(0, parseVcfIntDelimited(line, "R2M=", infoStart));
-			
-			//AD=2;DP=24;MCOV=0;PPC=0;
-			int cov=parseVcfIntDelimited(line, "DP=", infoStart);
-			assert(cov>0) : new String(line, infoStart, line.length-infoStart);
-			int mcov=parseVcfIntDelimited(line, "MCOV=", infoStart);
-			
-			v.coverage=cov;
-			v.minusCoverage=mcov;
-			v.r1plus=r1p;
-			v.r1minus=r1m;
-			v.r2plus=r2p;
-			v.r2minus=r2m;
-		}
-		
-		if(parseExtended){
-			infoStart=Tools.indexOfDelimited(line, "PPC=", infoStart, (byte)';');
-			
-			//Some extended fields
-			//AD=2;DP=24;MCOV=0;PPC=0;
-			int pc=Tools.max(0, parseVcfIntDelimited(line, "PPC=", infoStart));
-			
-			//AF=0.0833;RAF=0.0833;LS=280;
-			double raf=parseVcfDoubleDelimited(line, "RAF=", infoStart);
-			long ls=Tools.max(0, parseVcfLongDelimited(line, "LS=", infoStart));
-	
-			//MQS=86;MQM=43;BQS=64;BQM=32;
-			long mqs=Tools.max(0, parseVcfLongDelimited(line, "MQS=", infoStart));
-			int mqm=Tools.max(0, parseVcfIntDelimited(line, "MQM=", infoStart));
-			long bqs=Tools.max(0, parseVcfLongDelimited(line, "BQS=", infoStart));
-			int bqm=Tools.max(0, parseVcfIntDelimited(line, "BQM=", infoStart));
-			
-			//EDS=18;EDM=9;IDS=1984;IDM=992;
-			long eds=Tools.max(0, parseVcfLongDelimited(line, "EDS=", infoStart));
-			int edm=Tools.max(0, parseVcfIntDelimited(line, "EDM=", infoStart));
-			long ids=Tools.max(0, parseVcfLongDelimited(line, "IDS=", infoStart));
-			int idm=Tools.max(0, parseVcfIntDelimited(line, "IDM=", infoStart));
-			
-			//NVC=0;FLG=0;CED=601;HMP=0;SB=0.1809;DP4=37,28,15,97
-			int nvc=Tools.max(0, parseVcfIntDelimited(line, "NVC=", infoStart));
-			int flg=Tools.max(0, parseVcfIntDelimited(line, "FLG=", infoStart));
-//			int ced=Tools.max(0, parseVcfIntDelimited(line, "CED=", infoStart));
-			
-			v.properPairCount=pc;
-			v.revisedAlleleFraction=raf;
-			v.lengthSum=ls;
-			v.mapQSum=mqs;
-			v.mapQMax=mqm;
-			v.baseQSum=bqs;
-			v.baseQMax=bqm;
-			v.endDistSum=eds;
-			v.endDistMax=edm;
-			v.idSum=ids;
-			v.idMax=idm;
-			v.nearbyVarCount=nvc;
-			v.flagged=(flg>0);
-		}
-		
-		return v;
-	}
-	
-	//Parses INFO field
-	private static int parseVcfIntDelimited(byte[] line, String query, int start){
-		return (int)Tools.min(Integer.MAX_VALUE, parseVcfLongDelimited(line, query, start));
-	}
-	
-	//Parses INFO field
-	private static long parseVcfLongDelimited(byte[] line, String query, final int start){
-		int loc=Tools.indexOfDelimited(line, query, start, (byte)';');
-//		System.err.println(loc+", "+(line.length)+", "+(line.length-loc));
-//		System.err.println(loc+", "+new String(line, loc, line.length-loc));
-//		if(true){KillSwitch.kill();}
-		if(loc<0){return -1;}
-		long current=0;
-		long mult=1;
-		if(loc>0){
-			if(line[loc+query.length()]=='-'){mult=-1; loc++;}
-			for(int i=loc+query.length(); i<line.length; i++){
-				final byte x=line[i];
-				if(Tools.isDigit(x)){
-					current=current*10+(x-'0');
-				}else{
-					assert(x==tab || x==colon) : x+", "+query+", "+new String(line, loc, i-loc+1);
-					break;
-				}
-			}
-		}
-		return mult*current;
-	}
-	
-	//Parses INFO field
-	private static double parseVcfDoubleDelimited(byte[] line, String query, int start){
-		int loc=Tools.indexOfDelimited(line, query, start, (byte)';');
-		if(loc<0){return -1;}
-		if(loc>0){
-			loc=loc+query.length();
-			int loc2=loc+1;
-			while(loc2<line.length){
-				byte b=line[loc2];
-				if(b==tab || b==colon){break;}
-				loc2++;
-			}
-			return Parse.parseDouble(line, loc, loc2);
-		}
-		return -1;
+	    LineParser2 lp=new LineParser2(delimiter);
+	    lp.set(line);
+	    
+	    // Parse core variant information
+	    scafnum=lp.parseInt(0); // Field 0: Scaffold number
+	    start=lp.parseInt(1); // Field 1: Start position (0-based)
+	    stop=lp.parseInt(2); // Field 2: Stop position (exclusive)
+	    type=typeInitialArray[lp.parseByte(3, 0)]; // Field 3: Variant type
+	    
+	    // Field 4: Allele sequence with special handling for empty/single bases
+	    int alleleLen=lp.length(4);
+	    if(alleleLen==0){
+	        allele=AL_0; // Empty allele for deletions
+	    }else if(alleleLen==1){
+	        allele=AL_MAP[lp.parseByte(4, 0)]; // Single base - use pre-allocated array
+	    }else{
+	        allele=lp.parseByteArray(4); // Multi-base sequence
+	    }
+	    
+	    // Parse read count statistics by strand and read pair
+	    r1plus=lp.parseInt(5); // Field 5: Read 1 plus strand count
+	    r1minus=lp.parseInt(6); // Field 6: Read 1 minus strand count  
+	    r2plus=lp.parseInt(7); // Field 7: Read 2 plus strand count
+	    r2minus=lp.parseInt(8); // Field 8: Read 2 minus strand count
+	    properPairCount=lp.parseInt(9); // Field 9: Proper pair count
+	    
+	    // Parse quality and mapping statistics  
+	    lengthSum=lp.parseLong(10); // Field 10: Sum of supporting read lengths
+	    mapQSum=lp.parseLong(11); // Field 11: Sum of mapping qualities
+	    mapQMax=lp.parseInt(12); // Field 12: Maximum mapping quality
+	    baseQSum=lp.parseLong(13); // Field 13: Sum of base qualities
+	    baseQMax=lp.parseInt(14); // Field 14: Maximum base quality
+	    
+	    // Parse positional and identity statistics
+	    endDistSum=lp.parseLong(15); // Field 15: Sum of distances from read ends
+	    endDistMax=lp.parseInt(16); // Field 16: Maximum distance from read ends
+	    idSum=lp.parseLong(17); // Field 17: Sum of alignment identities  
+	    idMax=lp.parseInt(18); // Field 18: Maximum alignment identity
+	    
+	    // Parse coverage and annotation data
+	    coverage=lp.parseInt(19); // Field 19: Total coverage at position
+	    minusCoverage=lp.parseInt(20); // Field 20: Minus strand coverage
+	    nearbyVarCount=lp.parseInt(21); // Field 21: Count of nearby variants
+	    flagged=lp.parseInt(22)>0; // Field 22: Flagged status (boolean)
+	    
+	    // Fields 23-24 (contig end distance, phred score) are parsed but not stored
+	    // These are calculated dynamically when needed
+	    
+	    // Compute hash and validate object state
+	    hashcode=hash();
+	    assert(allele.length>1 || allele==AL_0 || 
+	           allele==AL_A || allele==AL_C || allele==AL_G || 
+	           allele==AL_T || allele==AL_N);
+	    assert(start<=stop) : this.toString();
+	    assert(type>=LJUNCT || type==type_old()) : type+", "+type_old()+", "+this.toString();
 	}
 	
 	/*--------------------------------------------------------------*/
 	/*----------------           Mutators           ----------------*/
 	/*--------------------------------------------------------------*/
 
-	public Var clear() {
+	/**
+	 * Resets all accumulated statistics to initial state while preserving variant identity.
+	 * Clears read counts, quality metrics, and flags but maintains position and allele data.
+	 * Used when reprocessing variants or clearing cached statistics.
+	 * 
+	 * @return This Var object for method chaining
+	 */
+	public Var clear(){
+		// Reset coverage tracking
 		coverage=-1;
 		minusCoverage=-1;
 		
+		// Clear all read count statistics
 		r1plus=0;
 		r1minus=0;
 		r2plus=0;
 		r2minus=0;
 		properPairCount=0;
 		
+		// Reset mapping quality statistics
 		mapQSum=0;
 		mapQMax=0;
 		
+		// Reset base quality statistics
 		baseQSum=0;
 		baseQMax=0;
 		
+		// Reset positional statistics
 		endDistSum=0;
 		endDistMax=0;
 		
+		// Reset identity statistics
 		idSum=0;
 		idMax=0;
 		
 		lengthSum=0;
 		
+		// Reset derived statistics and flags
 		revisedAlleleFraction=-1;
 		nearbyVarCount=-1;
 		forced=false;
 		flagged=false;
 		return this;
 	}
-	
-	//Only called by MergeSamples from VCFLine arrays.
+
+	/**
+	 * Adds coverage data from another variant (used in multi-sample processing).
+	 * Only merges coverage statistics, not read-level data or quality metrics.
+	 * Variants must be equivalent (same position and allele).
+	 * 
+	 * @param b Source variant to merge coverage from
+	 */
 	public void addCoverage(Var b){
 		assert(this.equals(b));
-		coverage+=b.coverage;
-		minusCoverage+=b.minusCoverage;
+		coverage+=b.coverage; // Add total coverage
+		minusCoverage+=b.minusCoverage; // Add minus strand coverage
 	}
-	
-	//Called in various places such as when processing each read
+
+	/**
+	 * Merges complete statistical data from another equivalent variant.
+	 * Combines read counts, quality metrics, and positional statistics.
+	 * Used when consolidating variants from multiple processing threads.
+	 * 
+	 * @param b Source variant with data to merge
+	 */
 	public void add(Var b){
 		final int oldReads=alleleCount();
 		
-//		assert(oldReads>0) : this;
+		// Validate current state before merging
 		assert(oldReads==0 || baseQSum/oldReads<=60) : this;
+		assert(this.equals(b)); // Must be same variant
 		
-		assert(this.equals(b));
+		// Merge read count statistics by strand and pair
 		r1plus+=b.r1plus;
 		r1minus+=b.r1minus;
 		r2plus+=b.r2plus;
@@ -514,150 +283,194 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		properPairCount+=b.properPairCount;
 		lengthSum+=b.lengthSum;
 		
+		// Merge mapping quality statistics (sum and max)
 		mapQSum+=b.mapQSum;
 		mapQMax=Tools.max(mapQMax, b.mapQMax);
+		
+		// Merge base quality statistics (sum and max)
 		baseQSum+=b.baseQSum;
 		baseQMax=Tools.max(baseQMax, b.baseQMax);
 
+		// Merge positional statistics (distance from read ends)
 		endDistSum+=b.endDistSum;
 		endDistMax=Tools.max(endDistMax, b.endDistMax);
 
+		// Merge identity statistics
 		idSum+=b.idSum;
 		idMax=Tools.max(idMax, b.idMax);
 
-//		assert(count()>0 && count()>oldReads) : "\n"+this+"\n"+b;
+		// Validate merged state
 		assert(alleleCount()>=oldReads) : "\n"+this+"\n"+b;
 		assert(alleleCount()==oldReads+b.alleleCount()) : "\n"+this+"\n"+b;
 		assert(alleleCount()==0 || baseQSum/alleleCount()<=60) : "\n"+this+"\n"+b;
 	}
-	
+
+	/**
+	 * Adds evidence from a single read supporting this variant.
+	 * Calculates read-specific statistics and updates accumulated metrics.
+	 * 
+	 * @param r Read containing this variant
+	 */
 	public void add(Read r){
 		final SamLine sl=r.samline;
-		final int bstart=calcBstart(r, sl);
-		final int bstop=calcBstop(bstart, r);
+		final int bstart=calcBstart(r, sl); // Find variant start in read
+		final int bstop=calcBstop(bstart, r); // Find variant end in read
 		add(r, bstart, bstop);
 	}
-		
-	public void add(Read r, final int bstart, final int bstop){
 
+	/**
+	 * Adds evidence from a read with pre-calculated variant boundaries.
+	 * Updates strand counts, quality metrics, and positional statistics.
+	 * Core method for accumulating variant evidence from aligned reads.
+	 * 
+	 * @param r Read supporting this variant
+	 * @param bstart Start position of variant within read bases
+	 * @param bstop Stop position of variant within read bases  
+	 */
+	public void add(Read r, final int bstart, final int bstop){
 		final int oldReads=alleleCount();
 		final SamLine sl=r.samline;
 		
-		if(sl.strand()==0){
+		// Update strand-specific read counts
+		if(sl.strand()==0){ // Plus strand
 			if(sl.pairnum()==0){
-				r1plus++;
+				r1plus++; // Read 1 plus
 			}else{
-				r2plus++;
+				r2plus++; // Read 2 plus
 			}
-		}else{
+		}else{ // Minus strand
 			if(sl.pairnum()==0){
-				r1minus++;
+				r1minus++; // Read 1 minus
 			}else{
-				r2minus++;
+				r2minus++; // Read 2 minus
 			}
 		}
 		
+		// Update read-level statistics
 		lengthSum+=r.length();
 		properPairCount+=(sl.properPair() ? 1 : 0);
+		
+		// Update mapping quality statistics
 		mapQSum+=sl.mapq;
 		mapQMax=Tools.max(mapQMax, sl.mapq);
 		
+		// Calculate and update base quality for this variant
 		int baseQ=calcBaseQ(bstart, bstop, r, sl);
 		baseQSum+=baseQ;
 		baseQMax=Tools.max(baseQMax, baseQ);
 		
+		// Calculate and update distance from read ends
 		int endDist=calcEndDist(bstart, bstop, r);
 		endDistSum+=endDist;
 		endDistMax=Tools.max(endDistMax, endDist);
 		
+		// Calculate and update alignment identity
 		int id=(int)(1000*Read.identitySkewed(r.match, false, false, false, true));
 		idSum+=id;
 		idMax=Tools.max(idMax, id);
 		
+		// Validate updated state
 		assert(alleleCount()>0) : this;
 		assert(alleleCount()==oldReads+1) : this;
 		assert(baseQSum/alleleCount()<=60) : this;
 	}
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------        Helper Methods        ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/**
+	 * Converts reads to variant list using scaffold mapping for coordinate resolution.
+	 * Convenience wrapper that resolves scaffold name to number.
+	 * 
+	 * @param r Read to analyze for variants
+	 * @param sl SAM alignment line
+	 * @param callNs Whether to call variants at N positions
+	 * @param scafMap Scaffold mapping for name resolution
+	 * @return List of variants found in the read, or null if none
+	 */
 	public static ArrayList<Var> toVars(Read r, SamLine sl, boolean callNs, ScafMap scafMap){
-//		if(!r.containsVariants()){return null;}
 		final int scafnum=scafMap.getNumber(sl.rnameS());
 		return toVars(r, sl, callNs, scafnum);
 	}
-	
+
 	/**
-	 * @TODO This crashes on indels in the last position in the match string.
-	 * @param r
-	 * @param sl
-	 * @param callNs
-	 * @param scafnum
-	 * @return A list of variants
+	 * Extracts all variants from a read alignment.
+	 * Processes match string to identify substitutions, insertions, deletions, and junctions.
+	 * Handles read orientation and creates appropriate Var objects for each variant type.
+	 * 
+	 * @param r Read with alignment information
+	 * @param sl SAM line with mapping details
+	 * @param callNs Whether to report variants at N positions in reference
+	 * @param scafnum Scaffold number for variant coordinates
+	 * @return List of Var objects representing all variants in the read
 	 */
 	public static ArrayList<Var> toVars(Read r, SamLine sl, boolean callNs, final int scafnum){
-		final boolean hasV=r.containsVariants();
+		final boolean hasV=r.containsVariants(); // Check for substitutions/indels
 		final boolean callSID=(CALL_DEL || CALL_INS || CALL_SUB) && hasV;
 		final boolean callJ=(CALL_JUNCTION) && (hasV || r.containsClipping());
 		if(!callSID && !callJ){return null;}
 		
+		// Prepare read for variant analysis
 		r.toLongMatchString(false);
 		if(sl.strand()==1 && !r.swapped()){
-			r.reverseComplement();
+			r.reverseComplementFast(); // Orient read to match reference
 			r.setSwapped(true);
 		}
 		
+		// Extract different variant types
 		ArrayList<Var> sidList=null, jList=null;
 		if(callSID){sidList=toSubsAndIndels(r, sl, callNs, scafnum);}
-		if(callJ){jList=toJunctions(r, sl, scafnum, hasV, 8);}
+		if(callJ){jList=VarHelper.toJunctions(r, sl, scafnum, hasV, 8);}
 		
+		// Combine results
 		if(sidList!=null){
 			if(jList!=null){sidList.addAll(jList);}
 			return sidList;
 		}else{
 			return jList;
 		}
-		
-
-		//Note: Did not un-rcomp the read
 	}
-	
+
 	/**
-	 * @TODO This crashes on indels in the last position in the match string.
-	 * @param r
-	 * @param sl
-	 * @param callNs
-	 * @param scafnum
-	 * @return A list of variants
+	 * Extracts substitutions, insertions, and deletions from read alignment.
+	 * Parses match string character by character to identify variant positions.
+	 * Creates Var objects for each variant with appropriate coordinates and alleles.
+	 * 
+	 * @param r Read with variant information
+	 * @param sl SAM alignment line
+	 * @param callNs Whether to call variants at N positions
+	 * @param scafnum Scaffold number for coordinates
+	 * @return List of substitution and indel variants
 	 */
 	private static ArrayList<Var> toSubsAndIndels(Read r, SamLine sl, boolean callNs, final int scafnum){
 		final byte[] match=r.match;
 		final byte[] bases=r.bases;
-		final int rpos0=sl.pos-1;
+		final int rpos0=sl.pos-1; // Reference start position (0-based)
 		ArrayList<Var> list=new ArrayList<Var>();
 
-		int bstart=-1, bstop=-1;
-		int rstart=-1, rstop=-1;
-		int mode=-1;
+		// Track current variant state
+		int bstart=-1, bstop=-1; // Base positions in read
+		int rstart=-1, rstop=-1; // Reference positions
+		int mode=-1; // Current match state
 		
+		// Parse match string to find variants
 		int mpos=0, bpos=0, rpos=rpos0;
 		for(; mpos<match.length; mpos++){
 			byte m=match[mpos];
 			
+			// Handle end of current variant
 			if(m!=mode){
-				if(mode=='D'){
+				if(mode=='D'){ // End of deletion
 					bstop=bpos;
 					rstop=rpos;
-//					assert(false) : (char)m+", "+(char)mode+", "+rstart+", "+bstart;
 					if(CALL_DEL){
 						Var v=new Var(scafnum, rstart, rstop, 0, DEL);
 						v.add(r, bstart, bstop);
 						list.add(v);
 					}
 					bstart=bstop=rstart=rstop=-1;
-				}else if(mode=='I'){
+				}else if(mode=='I'){ // End of insertion
 					bstop=bpos;
 					rstop=rpos;
 					int blen=bstop-bstart;
@@ -675,38 +488,35 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 				}
 			}
 			
-			if(m=='C'){
+			// Process current match character
+			if(m=='C'){ // Clipping (soft/hard)
 				bpos++;
-			}else if(m=='m' || m=='S' || m=='N'){
+			}else if(m=='m' || m=='S' || m=='N'){ // Match, substitution, or N
 				if(m=='S' || (m=='N' && callNs)){
-//					System.err.println(sl.toString()+"\n"+ScafMap.defaultScafMap.getScaffold(scafnum).getSequence(sl)); //123
-//					System.err.println(ScafMap.defaultScafMap.getScaffold(scafnum));
 					if(CALL_SUB){
 						Var v=new Var(scafnum, rpos, rpos+1, bases[bpos], SUB);
-						//					System.err.println(v.toString());
 						v.add(r, bpos, bpos+1);
 						list.add(v);
 
-						if(TEST_REF_VARIANTS && v.type()==SUB && v.allele.length==1){ //TODO: 123 - mainly for testing
+						// Validate substitution against reference if available
+						if(TEST_REF_VARIANTS && v.type()==SUB && v.allele.length==1){
 							final byte call=v.allele[0];
 							final Scaffold scaf=ScafMap.defaultScafMap().getScaffold(scafnum);
 							final byte ref=scaf.bases[v.start];
-							//						System.err.println((char)call+"="+(char)ref+" at scaf "+scafnum+" pos "+start);
 							assert(ref!=call) : (char)call+"="+(char)ref+" at scaf "+scafnum+" pos "+v.start+"\n"
 							+sl+"\n"+ScafMap.defaultScafMap().getScaffold(scafnum).getSequence(sl)+"\n";
 						}
 					}
-					
 				}
 				bpos++;
 				rpos++;
-			}else if(m=='D'){
+			}else if(m=='D'){ // Deletion
 				if(mode!=m){
 					rstart=rpos;
 					bstart=bpos;
 				}
 				rpos++;
-			}else if(m=='I'){
+			}else if(m=='I'){ // Insertion
 				if(mode!=m){
 					rstart=rpos;
 					bstart=bpos;
@@ -718,6 +528,7 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			mode=m;
 		}
 		
+		// Handle variant at end of match string
 		if(mode=='D'){
 			bstop=bpos;
 			rstop=rpos;
@@ -726,7 +537,6 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 				v.add(r, bstart, bstop);
 				list.add(v);
 			}
-			bstart=bstop=rstart=rstop=-1;
 		}else if(mode=='I'){
 			bstop=bpos;
 			rstop=rpos-1;
@@ -744,154 +554,48 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 				v.add(r, bstart, bstop);
 				list.add(v);
 			}
-			bstart=bstop=rstart=rstop=-1;
 		}
 		
 		return list;
 	}
-	
-	/** Short or long match */
-	private static int countLeftClip(byte[] match){
-		
-		byte mode=match[0];
-		if(mode!='C'){return 0;}
-		int current=0;
-		boolean hasDigit=false;
-		
-		for(int mpos=0; mpos<match.length; mpos++){
-			byte c=match[mpos];
-			
-			if(mode==c){
-				current++;
-			}else if(Tools.isDigit(c)){
-				current=(hasDigit ? current : 0)*10+c-'0';
-				hasDigit=true;
-			}else{
-				break;
-			}
-		}
-		return current;
-	}
 
-	/** Short or long match */
-	private static int countRightClip(byte[] match){
-		int mpos=match.length-1;
-		boolean hasDigit=false;
-		while(mpos>=0 && Tools.isDigit(match[mpos])){
-			hasDigit=true;
-			mpos--;
-		}
-		if(!hasDigit){return countRightClipLong(match);}//Necessary line
-		
-		byte mode=match[mpos];
-		if(mode!='C'){return 0;}
-		int current=0;
-		
-		for(; mpos<match.length; mpos++){
-			byte c=match[mpos];
-			
-			if(mode==c){
-				current++;
-			}else if(Tools.isDigit(c)){
-				current=(hasDigit ? current : 0)*10+c-'0';
-				hasDigit=true;
-			}else{
-				break;
-			}
-		}
-		return current;
-	}
-	
-	/** Long-match */
-	private static int countLeftClipLong(byte[] longmatch){
-		for(int i=0; i<longmatch.length; i++){
-			if(longmatch[i]!='C'){return i;}
-		}
-		return longmatch.length;
-	}
-	
-	/** Long-match */
-	private static int countRightClipLong(byte[] longmatch){
-		for(int i=0, j=longmatch.length-1; i<longmatch.length; i++, j--){
-			if(longmatch[j]!='C'){return i;}
-		}
-		return longmatch.length;
-	}
-	
-	private static ArrayList<Var> toJunctions(Read r, SamLine sl, final int scafnum,
-			boolean containsVars, final int minClip){
-		final byte[] match0=r.match, match;
-		final byte[] bases=r.bases;
-//		final int rpos0=sl.pos-1;
-		final int start, stop;
-		int leftClip=countLeftClip(match0), rightClip=countRightClip(match0);
-		if(leftClip==0 && rightClip==0){//try soft-clipping
-			int[] rvec=KillSwitch.allocInt1D(2);
-			byte[] smatch=SoftClipper.softClipMatch(match0, minClip, false, r.start, r.stop, rvec);
-			if(smatch==null){
-				return null;
-			}else{
-				start=rvec[0];
-				stop=rvec[1];
-				match=smatch;
-				leftClip=countLeftClip(match);
-				rightClip=countRightClip(match);
-			}
-		}else{
-			if(leftClip<minClip && rightClip<minClip){return null;}
-			start=r.start;
-			stop=r.stop;
-			match=match0;
-		}
-		
-		ArrayList<Var> list=new ArrayList<Var>();
-		if(leftClip>=minClip){//LJUNCT
-			int bpos=leftClip-1;
-			byte jcall=bases[bpos];
-			int jpos=start+leftClip;
-			Var v=new Var(scafnum, jpos, jpos+1, jcall, LJUNCT);
-			v.add(r, bpos, bpos+1);
-			list.add(v);
-		}
-		if(rightClip>=minClip){//RJUNCT
-			int bpos=bases.length-rightClip;
-			byte jcall=bases[bpos];
-			int jpos=stop-rightClip+1;
-			Var v=new Var(scafnum, jpos, jpos+1, jcall, RJUNCT);
-			v.add(r, bpos, bpos+1);
-			list.add(v);
-		}
-		return list;
-	}
-
+	/**
+	 * Calculates the starting position of this variant within the read bases.
+	 * Parses match string to find where the variant begins in the read sequence.
+	 * 
+	 * @param r Read containing the variant
+	 * @param sl SAM line with alignment information
+	 * @return Starting base position of variant in read (0-based)
+	 */
 	public int calcBstart(Read r, SamLine sl){
 		r.toLongMatchString(false);
 		byte[] match=r.match;
-		final int rstart=sl.pos-1;
+		final int rstart=sl.pos-1; // Reference start position
 		final int type=type();
 		
 		int bstart=-1;
 		
+		// Parse match string to find variant position
 		for(int mpos=0, rpos=rstart, bpos=0; mpos<match.length; mpos++){
 			byte m=match[mpos];
-			if(m=='C'){
+			if(m=='C'){ // Clipping
 				bpos++;
-			}else if(m=='m' || m=='S' || m=='N'){
-				if(rpos==rstart){
+			}else if(m=='m' || m=='S' || m=='N'){ // Match/substitution/N
+				if(rpos==rstart){ // Found variant position
 					assert(type==SUB || type==NOCALL) : type+", "+bpos+", "+rpos+"\n"+new String(match);
 					bstart=bpos;
 					break;
 				}
 				bpos++;
 				rpos++;
-			}else if(m=='D'){
+			}else if(m=='D'){ // Deletion
 				if(rpos==rstart){
 					assert(type==DEL) : type+", "+rpos+"\n"+new String(match);
 					bstart=bpos;
 					break;
 				}
 				rpos++;
-			}else if(m=='I'){
+			}else if(m=='I'){ // Insertion
 				if(rpos==rstart && type==INS){
 					bstart=bpos;
 					break;
@@ -904,16 +608,32 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		assert(bstart>=0);
 		return bstart;
 	}
-	
+
+	/**
+	 * Calculates the ending position of this variant within the read bases.
+	 * 
+	 * @param bstart Starting position of variant in read
+	 * @param r Read containing the variant
+	 * @return Ending base position of variant in read (exclusive)
+	 */
 	public int calcBstop(int bstart, Read r){
 		assert(bstart>=0);
-		int bstop=bstart+readlen();
+		int bstop=bstart+readlen(); // Add variant length
 		assert(bstop<=r.length());
 		return bstop;
 	}
-	
+
+	/**
+	 * Calculates distance from variant to nearest read end.
+	 * Used for detecting variants near read ends which may be less reliable.
+	 * 
+	 * @param bstart Starting position of variant in read
+	 * @param bstop Ending position of variant in read
+	 * @param r Read containing the variant
+	 * @return Distance to nearest read end
+	 */
 	public int calcEndDist(int bstart, int bstop, Read r){
-		int dist=Tools.min(bstart, r.length()-bstop);
+		int dist=Tools.min(bstart, r.length()-bstop); // Distance to nearest end
 		assert(dist>=0 && dist<=r.length()/2) : dist+", "+r.length()+", "+bstart+", "+bstop+"\n"+this+"\n"+
 			"\n"+new String(r.match)+"\n"+r.samline+"\n";
 		assert(dist<=(r.length()-readlen())/2) : "\ndist="+dist+", r.len="+r.length()+", readlen="+readlen()+", allele='"+new String(allele)+
@@ -921,49 +641,61 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			"\nthis="+this+"\nmatch="+new String(r.match)+"\nsamline="+r.samline+"\n";
 		return dist;
 	}
-	
-	String toString(byte[] array) {
+
+	/**
+	 * Debug method for converting byte array to readable string.
+	 * @param array Byte array to convert
+	 * @return Comma-separated string of byte values
+	 */
+	String toString(byte[] array){
 		StringBuilder sb=new StringBuilder();
 		for(byte b : array){
 			sb.append((int)b).append(',');
 		}
 		return sb.toString();
 	}
-	
+
+	/**
+	 * Calculates average base quality for this variant position.
+	 * Handles strand orientation and special cases for deletions.
+	 * 
+	 * @param bstart0 Starting base position (forward orientation)
+	 * @param bstop0 Ending base position (forward orientation)
+	 * @param r Read with quality information
+	 * @param sl SAM line with strand information
+	 * @return Average base quality score for the variant
+	 */
 	public int calcBaseQ(final int bstart0, final int bstop0, Read r, SamLine sl){
 		final byte[] quals=r.quality;
-		if(quals==null){return Shared.FAKE_QUAL;}
+		if(quals==null){return Shared.FAKE_QUAL;} // No quality data available
 		final int type=type();
 		final int bstart, bstop;
 		final int len=r.length();
 		
+		// Adjust coordinates for read orientation
 		if(sl.strand()==0 || (sl.strand()==1 && r.swapped())){
-			bstart=bstart0;
+			bstart=bstart0; // Forward orientation
 			bstop=bstop0;
 		}else{
-			bstart=len-bstop0-1;
+			bstart=len-bstop0-1; // Reverse complement coordinates
 			bstop=len-bstart0-1;
 			assert(bstop-bstart==bstop0-bstart0);
 		}
 		
 		int sum=0, avg=0;
-		if(type==DEL){
+		if(type==DEL){ // Special handling for deletions
 			if(bstart==0){
-				sum=avg=quals[0];
+				sum=avg=quals[0]; // Use first base quality
 			}else if(bstop>=len-1){
-				sum=avg=quals[len-1];
+				sum=avg=quals[len-1]; // Use last base quality
 			}else{
 				assert(bstop==bstart) : bstart0+", "+bstop0+", "+bstart+", "+bstop+"\n"+
 						r.length()+", "+r.swapped()+", "+type()+", "+readlen()+", "+reflen()+
 						"\n"+this+"\n"+new String(r.match)+"\n"+r.samline+"\n";
-				
-//				-1, 73, -1, 73
-//				151, true, 2, 0, 1
-				
-				sum=quals[bstart]+quals[bstop+1];
+				sum=quals[bstart]+quals[bstop+1]; // Average flanking bases
 				avg=sum/2;
 			}
-		}else{
+		}else{ // Sum qualities for variant bases
 			for(int i=bstart; i<bstop; i++){
 				sum+=quals[i];
 			}
@@ -972,41 +704,73 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		return avg;
 	}
 
+	/**
+	 * Calculates reference sequence length affected by this variant.
+	 * @return Number of reference bases spanned (stop - start)
+	 */
 	public int reflen(){
 		return stop-start;
 	}
-	
+
+	/**
+	 * Calculates read sequence length of this variant's allele.
+	 * @return Length of alternative allele sequence
+	 */
 	int readlen(){
 		return (allele==null || allele.length==0 || allele[0]=='.' ? 0 : allele.length);
 	}
-	
+
+	/**
+	 * Gets the variant type constant for this variant.
+	 * @return Type constant (SUB, INS, DEL, etc.)
+	 */
 	public int type(){return type;}
-	
+
+	/**
+	 * Legacy method for calculating variant type from coordinates and allele.
+	 * Used for validation and backward compatibility.
+	 * @return Calculated variant type
+	 */
 	int type_old(){
 		int reflen=reflen(), readlen=readlen();
 		return typeReadlenReflen(readlen, reflen, allele);
 	}
-	
+
+	/**
+	 * Determines variant type from start/stop coordinates and allele.
+	 * @param start Variant start position
+	 * @param stop Variant stop position  
+	 * @param allele Alternative allele sequence
+	 * @return Variant type constant
+	 */
 	static int typeStartStop(int start, int stop, byte[] allele){
 		final int readlen=(allele.length==0 || allele[0]=='.' ? 0 : allele.length);
 		final int reflen=stop-start;
 		return typeReadlenReflen(readlen, reflen, allele);
 	}
-	
+
+	/**
+	 * Determines variant type from read length, reference length, and allele content.
+	 * Core typing logic used by multiple variant type calculation methods.
+	 * 
+	 * @param readlen Length of alternative allele
+	 * @param reflen Length of reference sequence affected
+	 * @param allele Alternative allele sequence
+	 * @return Variant type constant (INS, DEL, SUB, or NOCALL)
+	 */
 	static int typeReadlenReflen(int readlen, int reflen, byte[] allele){
-		if(reflen<readlen){return INS;}
-		if(reflen>readlen){return DEL;}
-//		assert(readlen>0) : start+", "+stop+", "+reflen+", "+readlen+", "+new String(allele);
-//		if(reflen==0){return INS;}
-//		if(readlen==0){return DEL;}
-//		assert(start<=stop) : start+", "+stop;
-//		assert(reflen==readlen) : reflen+", "+readlen+", "+new String(allele)+", "+start+", "+stop;
-		for(byte b : allele){
-			if(b!='N'){return SUB;}
+		if(reflen<readlen){return INS;} // Insertion: read longer than reference
+		if(reflen>readlen){return DEL;} // Deletion: reference longer than read
+		for(byte b : allele){ // Same length: check for substitutions
+			if(b!='N'){return SUB;} // Non-N substitution
 		}
-		return NOCALL;
+		return NOCALL; // All N bases = no-call
 	}
-	
+
+	/**
+	 * Gets human-readable string representation of variant type.
+	 * @return Type name (e.g., "SUB", "INS", "DEL")
+	 */
 	String typeString(){
 		return typeArray[type()];
 	}
@@ -1015,114 +779,179 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 	/*----------------       Contract Methods       ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/*--------------------------------------------------------------*/
+	/*----------------       Contract Methods       ----------------*/
+	/*--------------------------------------------------------------*/
+
+	/**
+	* Tests equality with another object (must be a Var).
+	* Uses optimized comparison with hash code pre-check for performance.
+	* 
+	* @param b Object to compare against
+	* @return True if objects represent the same variant
+	*/
 	@Override
+	/**
+	* Tests equality with another object (must be a Var).
+	* Uses optimized comparison with hash code pre-check for performance.
+	* 
+	* @param b Object to compare against
+	* @return True if objects represent the same variant
+	*/
 	public boolean equals(Object b){
 		return equals((Var)b);
 	}
-	
+
+	/**
+	 * Tests equality with another Var object.
+	 * Two variants are equal if they have the same position, type, and allele.
+	 * Uses hash code comparison for fast inequality detection.
+	 * 
+	 * @param b Var to compare against
+	 * @return True if variants are equivalent
+	 */
 	public boolean equals(Var b){
-		return hashcode==b.hashcode && compareTo(b)==0;
+		return hashcode==b.hashcode && compareTo(b)==0; // Hash pre-check + full comparison
 	}
-	
+
+	/**
+	* Returns hash code for this variant.
+	* Used for efficient storage in hash-based collections.
+	* 
+	* @return Pre-computed hash code value
+	*/
 	@Override
+	/**
+	* Returns hash code for this variant.
+	* Used for efficient storage in hash-based collections.
+	* 
+	* @return Pre-computed hash code value
+	*/
 	public int hashCode(){
 		return hashcode;
 	}
-	
-	public long toKey() {
-		final int len=(type==DEL ? reflen() : readlen()); 
+
+	/**
+	* Generates unique key for this variant for use in bloom filters and hash maps.
+	* Combines type, allele hash, length, and position into compact 64-bit key.
+	* Uses bit shifting to pack multiple fields efficiently.
+	* 
+	* @return 64-bit key with high bit cleared (always positive)
+	*/
+	public long toKey(){
+		final int len=(type==DEL ? reflen() : readlen()); // Use appropriate length for type
 		final long key=type^((hash(allele)&0x3F)>>alleleShift)^(len>>lenShift)^(Long.rotateRight(start, startShift));
-		return key&0x7FFFFFFFFFFFFFFFL;
-		
-//		long key=Long.rotateLeft(start, 30)^Long.rotateLeft(scafnum, 10)^hash(allele);
-//		return key&0x3FFFFFFFFFFFFFFFL;
+		return key&0x7FFFFFFFFFFFFFFFL; // Clear high bit to ensure positive
 	}
-	
+
+	/**
+	 * Compares this variant to another for sorting.
+	 * Primary sort: scaffold number
+	 * Secondary sort: adjusted start position (deletions sort slightly earlier)
+	 * Tertiary sort: variant type  
+	 * Quaternary sort: stop position
+	 * Final sort: allele sequence
+	 * 
+	 * @param v Variant to compare against
+	 * @return Negative, zero, or positive for less than, equal, or greater than
+	 */
 	@Override
+	/**
+	* Compares this variant to another for sorting.
+	* Primary sort: scaffold number
+	* Secondary sort: adjusted start position (deletions sort slightly earlier)
+	* Tertiary sort: variant type  
+	* Quaternary sort: stop position
+	* Final sort: allele sequence
+	* 
+	* @param v Variant to compare against
+	* @return Negative, zero, or positive for less than, equal, or greater than
+	*/
 	public int compareTo(Var v){
-		if(scafnum!=v.scafnum){return scafnum-v.scafnum;}
+		if(scafnum!=v.scafnum){return scafnum-v.scafnum;} // Sort by scaffold first
+		
 		final int typeA=type(), typeB=v.type();
-		int stA=start+(typeA==DEL ? -1 : 0);
+		int stA=start+(typeA==DEL ? -1 : 0); // Adjust deletion positions slightly earlier
 		int stB=v.start+(typeB==DEL ? -1 : 0);
-		if(stA!=stB){return stA-stB;}
-		if(typeA!=typeB){return typeA-typeB;}
-		if(stop!=v.stop){return stop-v.stop;}
-		return compare(allele, v.allele);
+		if(stA!=stB){return stA-stB;} // Sort by adjusted start position
+		if(typeA!=typeB){return typeA-typeB;} // Sort by variant type
+		if(stop!=v.stop){return stop-v.stop;} // Sort by stop position
+		return compare(allele, v.allele); // Sort by allele sequence
 	}
-	
+
+	/**
+	 * Compares two byte arrays lexicographically.
+	 * Used for allele comparison in variant sorting.
+	 * 
+	 * @param a First byte array
+	 * @param b Second byte array  
+	 * @return Comparison result (negative/zero/positive)
+	 */
 	public int compare(byte[] a, byte[] b){
-		if(a==b){return 0;}
-		if(a.length!=b.length){return b.length-a.length;}
+		if(a==b){return 0;} // Same reference
+		if(a.length!=b.length){return b.length-a.length;} // Sort by length (longer first)
 		for(int i=0; i<a.length; i++){
 			byte ca=a[i], cb=b[i];
-			if(ca!=cb){return ca-cb;}
+			if(ca!=cb){return ca-cb;} // Lexicographic comparison
 		}
 		return 0;
 	}
-	
+
+	/**
+	 * Returns string representation of this variant.
+	 * Uses quick formatting with default parameters for debugging.
+	 * 
+	 * @return Formatted variant string
+	 */
 	@Override
+	/**
+	* Returns string representation of this variant.
+	* Uses quick formatting with default parameters for debugging.
+	* 
+	* @return Formatted variant string
+	*/
 	public String toString(){
 		return toTextQuick(new ByteBuilder()).toString();
 	}
 
+	/**
+	 * Generates formatted text representation with default parameters.
+	 * Quick version for debugging and logging purposes.
+	 * 
+	 * @param bb ByteBuilder to append formatted text to
+	 * @return ByteBuilder with formatted variant data
+	 */
 	public ByteBuilder toTextQuick(ByteBuilder bb){
-		return toText(bb, 0.99f, 30, 30, 150, 1, 2, null);
+		return toText(bb, 0.99f, 30, 30, 150, 1, 2, null, null); // Default parameters for quick output
 	}
-	
-	public static String toVarHeader(double properPairRate, double totalQualityAvg, double mapqAvg, double rarity, double minAlleleFraction, int ploidy, 
-			long reads, long pairs, long properPairs, long bases, String ref){
-		StringBuilder sb=new StringBuilder();
+
+	/**
+	* Generates comprehensive formatted text representation in VAR format.
+	* Includes all statistical data, quality metrics, and calculated scores.
+	* 
+	* @param bb ByteBuilder to append formatted output
+	* @param properPairRate Overall proper pair rate for dataset
+	* @param totalQualityAvg Average base quality across dataset
+	* @param totalMapqAvg Average mapping quality across dataset  
+	* @param readLengthAvg Average read length across dataset
+	* @param rarity Minimum variant frequency threshold
+	* @param ploidy Expected ploidy level
+	* @param map Scaffold mapping for reference information
+	* @return ByteBuilder with complete formatted variant data
+	*/
+	public ByteBuilder toText(ByteBuilder bb, double properPairRate, double totalQualityAvg, double totalMapqAvg, 
+			double readLengthAvg, double rarity, int ploidy, ScafMap map, CellNet net){
+		useIdentity=true; // Enable identity scoring for output
 		
-		final double readLengthAvg=bases/Tools.max(1.0, reads);
-		sb.append("#fileformat\tVar_"+varFormat+"\n");
-		sb.append("#BBMapVersion\t"+Shared.BBTOOLS_VERSION_STRING+"\n");
-		sb.append("#ploidy\t"+ploidy+"\n");
-		sb.append(Tools.format("#rarity\t%.5f\n", rarity));
-		sb.append(Tools.format("#minAlleleFraction\t%.4f\n", minAlleleFraction));
-		sb.append("#reads\t"+reads+"\n");
-		sb.append("#pairedReads\t"+pairs+"\n");
-		sb.append("#properlyPairedReads\t"+properPairs+"\n");
-		sb.append(Tools.format("#readLengthAvg\t%.2f\n", readLengthAvg));
-		sb.append(Tools.format("#properPairRate\t%.4f\n", properPairRate));
-		sb.append(Tools.format("#totalQualityAvg\t%.4f\n", totalQualityAvg));
-		sb.append(Tools.format("#mapqAvg\t%.2f\n", mapqAvg));
-		if(ref!=null){sb.append("#reference\t"+ref+"\n");}
-		
-		sb.append("#scaf\tstart\tstop\ttype\tcall\tr1p\tr1m\tr2p\tr2m\tpaired\tlengthSum");
-		sb.append("\tmapq\tmapqMax\tbaseq\tbaseqMax\tedist\tedistMax\tid\tidMax");
-		sb.append("\tcov\tminusCov");
-		sb.append("\tnearbyVarCount");
-		sb.append("\tflagged");
-		sb.append("\tcontigEndDist");
-		sb.append("\tphredScore");
-		if(extendedText){
-			sb.append("\treadCount\talleleFraction\trevisedAF\tstrandRatio\tbaseqAvg\tmapqAvg\tedistAvg\tidentityAvg");
-			sb.append("\tedistScore\tidentityScore\tqualityScore\tpairedScore\tbiasScore\tcoverageScore\thomopolymerScore\tscore");
-//			sb.append("\tforced");
-		}
-		return sb.toString();
-	}
-	
-	public static String toBasicHeader(){
-		StringBuilder sb=new StringBuilder();
-		sb.append("#scaf\tstart\tstop\ttype\tcall\tr1p\tr1m\tr2p\tr2m\tpaired\tlengthSum");
-		sb.append("\tmapq\tmapqMax\tbaseq\tbaseqMax\tedist\tedistMax\tid\tidMax");
-		sb.append("\tcov\tminusCov");
-		sb.append("\tnearVarCount");
-		sb.append("\tcontigEndDist");
-		sb.append("\tphredScore");
-		return sb.toString();
-	}
-	
-	public ByteBuilder toText(ByteBuilder bb, double properPairRate, double totalQualityAvg, double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map){
-		useIdentity=true;
+		// Core variant identification
 		bb.append(scafnum).tab();
 		bb.append(start).tab();
 		bb.append(stop).tab();
 		bb.append(typeArray[type()]).tab();
-		for(byte b : allele){bb.append(b);}
+		for(byte b : allele){bb.append(b);} // Output allele sequence
 		bb.tab();
 		
+		// Read count statistics by strand and pair
 		bb.append(r1plus).tab();
 		bb.append(r1minus).tab();
 		bb.append(r2plus).tab();
@@ -1130,6 +959,7 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		bb.append(properPairCount).tab();
 		bb.append(lengthSum).tab();
 
+		// Quality statistics (sums and maximums)
 		bb.append(mapQSum).tab();
 		bb.append(mapQMax).tab();
 		bb.append(baseQSum).tab();
@@ -1139,22 +969,22 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		bb.append(idSum).tab();
 		bb.append(idMax).tab();
 
+		// Coverage and annotation data
 		bb.append(coverage).tab();
 		bb.append(minusCoverage).tab();
 		bb.append(nearbyVarCount).tab();
 		bb.append(flagged ? 1 : 0).tab();
 		
+		// Calculate distance from contig/scaffold ends
 		final int scafEndDist=!doNscan ? nScan : (map==null ? start : contigEndDist(map));
 		bb.append(scafEndDist).tab();
 
-//		bb.append(prevBase<0 ? 'N' : (char)prevBase).tab();
+		// Calculate and output Phred-scaled quality score
+		final double score=score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map, net);
+		bb.append(VarHelper.toPhredScore(score), 2).tab();
 		
-		final double score=score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map);
-//		bb.append(Tools.format("%.2f", toPhredScore(score))).tab();
-		bb.append(toPhredScore(score), 2).tab();
-		
+		// Extended statistics if enabled
 		if(extendedText){
-			
 			bb.append(alleleCount()).tab();
 			final double af=alleleFraction();
 			bb.append(af, 4).tab();
@@ -1165,6 +995,7 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			bb.append(edistAvg(), 2).tab();
 			bb.append(identityAvg(), 2).tab();
 			
+			// Individual scoring components
 			bb.append(edistScore(), 4).tab();
 			bb.append(identityScore(), 4).tab();
 			bb.append(qualityScore(totalQualityAvg, totalMapqAvg), 4).tab();
@@ -1173,133 +1004,68 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			bb.append(coverageScore(ploidy, rarity, readLengthAvg), 4).tab();
 			bb.append(homopolymerScore(map), 4).tab();
 			bb.append(score, 4).tab();
-//			bb.append((forced() ? 1 : 0), 4).tab();
 		}
 		
-		bb.length--;
-		
+		bb.length--; // Remove final tab
 		return bb;
 	}
-
-	public static String toVcfHeader(double properPairRate, double totalQualityAvg, double mapqAvg,
-			double rarity, double minAlleleFraction, int ploidy, long reads, long pairs,
-			long properPairs, long bases, String ref, ScafMap map, String sampleName,
-			boolean trimWhitespace) {
-		StringBuilder sb=new StringBuilder();
-		
-		sb.append("##fileformat=VCFv4.2\n");
-		sb.append("##BBMapVersion="+Shared.BBTOOLS_VERSION_STRING+"\n");
-		sb.append("##ploidy="+ploidy+"\n");
-		sb.append(Tools.format("##rarity=%.5f\n", rarity));
-		sb.append(Tools.format("##minallelefraction=%.5f\n", minAlleleFraction));
-		sb.append("##reads="+reads+"\n");
-		sb.append("##pairedReads="+pairs+"\n");
-		sb.append("##properlyPairedReads="+properPairs+"\n");
-		sb.append(Tools.format("##readLengthAvg=%.3f\n", (bases/Tools.max(reads, 1.0))));
-		sb.append(Tools.format("##properPairRate=%.5f\n", properPairRate));
-		sb.append(Tools.format("##totalQualityAvg=%.3f\n", totalQualityAvg));
-		sb.append(Tools.format("##mapqAvg=%.3f\n", mapqAvg));
-		if(ref!=null){sb.append("##reference="+ref+"\n");}
-		
-		for(Scaffold scaf : map.list){
-			String name=scaf.name;
-			if(trimWhitespace){name=Tools.trimWhitespace(name);}
-			sb.append("##contig=<ID="+name+",length="+scaf.length+">\n");
-		}
-		
-		{
-			sb.append("##FILTER=<ID=FAIL,Description=\"Fail\">\n");
-			sb.append("##FILTER=<ID=PASS,Description=\"Pass\">\n");
-			
-			sb.append("##INFO=<ID=SN,Number=1,Type=Integer,Description=\"Scaffold Number\">\n");
-			sb.append("##INFO=<ID=STA,Number=1,Type=Integer,Description=\"Start\">\n");
-			sb.append("##INFO=<ID=STO,Number=1,Type=Integer,Description=\"Stop\">\n");
-			sb.append("##INFO=<ID=TYP,Number=1,Type=String,Description=\"Type\">\n");
-			
-			sb.append("##INFO=<ID=R1P,Number=1,Type=Integer,Description=\"Read1 Plus Count\">\n");
-			sb.append("##INFO=<ID=R1M,Number=1,Type=Integer,Description=\"Read1 Minus Count\">\n");
-			sb.append("##INFO=<ID=R2P,Number=1,Type=Integer,Description=\"Read2 Plus Count\">\n");
-			sb.append("##INFO=<ID=R2M,Number=1,Type=Integer,Description=\"Read2 Minus Count\">\n");
-			
-			sb.append("##INFO=<ID=AD,Number=1,Type=Integer,Description=\"Allele Depth\">\n");
-			sb.append("##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total Depth\">\n");
-//			sb.append("##INFO=<ID=COV,Number=1,Type=Integer,Description=\"Coverage\">\n");
-			sb.append("##INFO=<ID=MCOV,Number=1,Type=Integer,Description=\"Minus Coverage\">\n");
-			sb.append("##INFO=<ID=PPC,Number=1,Type=Integer,Description=\"Paired Count\">\n");
-
-			sb.append("##INFO=<ID=AF,Number=1,Type=Float,Description=\"Allele Fraction\">\n");
-			sb.append("##INFO=<ID=RAF,Number=1,Type=Float,Description=\"Revised Allele Fraction\">\n");
-			sb.append("##INFO=<ID=LS,Number=1,Type=Integer,Description=\"Length Sum\">\n");
-
-			sb.append("##INFO=<ID=MQS,Number=1,Type=Integer,Description=\"MAPQ Sum\">\n");
-			sb.append("##INFO=<ID=MQM,Number=1,Type=Integer,Description=\"MAPQ Max\">\n");
-			sb.append("##INFO=<ID=BQS,Number=1,Type=Integer,Description=\"Base Quality Sum\">\n");
-			sb.append("##INFO=<ID=BQM,Number=1,Type=Integer,Description=\"Base Quality Max\">\n");
-			
-			sb.append("##INFO=<ID=EDS,Number=1,Type=Integer,Description=\"End Distance Sum\">\n");
-			sb.append("##INFO=<ID=EDM,Number=1,Type=Integer,Description=\"End Distance Max\">\n");
-			sb.append("##INFO=<ID=IDS,Number=1,Type=Integer,Description=\"Identity Sum\">\n");
-			sb.append("##INFO=<ID=IDM,Number=1,Type=Integer,Description=\"Identity Max\">\n");
-
-			sb.append("##INFO=<ID=NVC,Number=1,Type=Integer,Description=\"Nearby Variation Count\">\n");
-			sb.append("##INFO=<ID=FLG,Number=1,Type=Integer,Description=\"Flagged\">\n");
-			sb.append("##INFO=<ID=CED,Number=1,Type=Integer,Description=\"Contig End Distance\">\n");
-			sb.append("##INFO=<ID=HMP,Number=1,Type=Integer,Description=\"Homopolymer Count\">\n");
-			sb.append("##INFO=<ID=SB,Number=1,Type=Float,Description=\"Strand Bias\">\n");
-			sb.append("##INFO=<ID=DP4,Number=4,Type=Integer,Description=\"Ref+, Ref-, Alt+, Alt-\">\n");
-			
-			sb.append("##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n");
-			sb.append("##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n");
-			sb.append("##FORMAT=<ID=AD,Number=1,Type=Integer,Description=\"Allele Depth\">\n");
-			sb.append("##FORMAT=<ID=AF,Number=1,Type=Float,Description=\"Allele Fraction\">\n");
-			sb.append("##FORMAT=<ID=RAF,Number=1,Type=Float,Description=\"Revised Allele Fraction\">\n");
-			sb.append("##FORMAT=<ID=NVC,Number=1,Type=Integer,Description=\"Nearby Variation Count\">\n");
-			sb.append("##FORMAT=<ID=FLG,Number=1,Type=Integer,Description=\"Flagged\">\n");
-			sb.append("##FORMAT=<ID=SB,Number=1,Type=Float,Description=\"Strand Bias\">\n");
-			
-			sb.append("##FORMAT=<ID=SC,Number=1,Type=Float,Description=\"Score\">\n");
-			sb.append("##FORMAT=<ID=PF,Number=1,Type=String,Description=\"Pass Filter\">\n");
-			
-		}
-		
-		sb.append("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
-		if(sampleName!=null){sb.append('\t').append(sampleName);}
-		return sb.toString();
-	}
 	
-	//#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	1323_1066121
-	//ChrIII_A_nidulans_FGSC_A4	133	.	T	C	204	PASS
-	//	DP=27;VDB=1.614640e-01;RPB=9.947863e-01;AF1=0.5;AC1=1;DP4=5,8,6,8;MQ=49;FQ=180;PV4=1,1,0.055,1
-	//	GT:PL:DP:SP:GQ	0/1:234,0,207:27:0:99
+	/**
+	* Generates VCF format output for this variant with comprehensive INFO fields.
+	* Includes all statistical data, quality metrics, and sample-specific information.
+	* Handles coordinate conversion, allele normalization, and proper VCF formatting.
+	* 
+	* @param bb ByteBuilder to append VCF line to
+	* @param properPairRate Dataset proper pair rate for scoring
+	* @param totalQualityAvg Dataset average base quality
+	* @param mapqAvg Dataset average mapping quality
+	* @param readLengthAvg Dataset average read length
+	* @param ploidy Expected organism ploidy level
+	* @param map Scaffold mapping for reference sequence access
+	* @param filter Variant filter for pass/fail determination
+	* @param trimWhitespace Whether to trim scaffold names
+	* @return ByteBuilder with complete VCF line
+	*/
 	public ByteBuilder toVCF(ByteBuilder bb, double properPairRate, double totalQualityAvg, double mapqAvg, double readLengthAvg,
-			int ploidy, ScafMap map, VarFilter filter, boolean trimWhitespace){
+			int ploidy, ScafMap map, VarFilter filter, CellNet net, boolean trimWhitespace){
 		
 		final Scaffold scaf=map.getScaffold(scafnum);
 		final byte[] bases=scaf.bases;
 		final int reflen=reflen(), readlen=readlen(), type=type();
-		final double score=phredScore(properPairRate, totalQualityAvg, mapqAvg, readLengthAvg, filter.rarity, ploidy, map);
+		//TODO: Scoring is done twice here
+		final double score=phredScore(properPairRate, totalQualityAvg, mapqAvg, readLengthAvg, filter.rarity, ploidy, map, net);
 		final boolean pass=(filter==null ? true :
-			filter.passesFilter(this, properPairRate, totalQualityAvg, mapqAvg, readLengthAvg, ploidy, map, true));
+			filter.passesFilter(this, properPairRate, totalQualityAvg, mapqAvg, readLengthAvg, ploidy, map, net, true));
+		
+		// CHROM field
 		bb.append(trimWhitespace ? Tools.trimWhitespace(scaf.name) : scaf.name).tab();
+		
+		// POS field - convert to 1-based VCF coordinates
 		boolean indel=(type==INS || type==DEL);
 		boolean addPrevBase=true;
 		final int vcfStart=start+(indel && addPrevBase ? 0 : 1);
 		bb.append(vcfStart).tab();
+		
+		// ID field
 		bb.append('.').tab();
 		
+		// REF and ALT fields with proper indel handling
 		byte prevBase=(bases==null ? (byte)'N' : bases[Tools.mid(start-1, 0, bases.length-1)]);
 		if(UPPER_CASE_ALLELES){prevBase=(byte) Tools.toUpperCase(prevBase);}
 		
 		if(addPrevBase){
+			// REF field with leading base for indel normalization
 			if(reflen==0 || allele.length<1){bb.append(prevBase);}
 			for(int i=0, rpos=start; i<reflen; i++, rpos++){
 				bb.append(bases==null || rpos<0 || rpos>=bases.length ? (char)'N' : (char)bases[rpos]);
 			}
 			bb.tab();
 
+			// ALT field with leading base
 			if(reflen==0 || allele.length<1){bb.append(prevBase);}
 			bb.append(allele).tab();
 		}else{
+			// REF field without leading base
 			if(reflen==0){
 				bb.append('.');
 			}else{
@@ -1311,24 +1077,29 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			}
 			bb.tab();
 
+			// ALT field
 			if(allele.length<1){
 				bb.append('.').tab();
 			}else{
 				bb.append(allele).tab();
 			}
 		}
-
-//		bb.append(Tools.format("%.2f\t", score));
+		
+		// QUAL field
 		bb.append(score, 2).tab();
+		
+		// FILTER field
 		bb.append(pass ? "PASS\t" : "FAIL\t");
 		
+		// Calculate derived statistics
 		final int scafEndDist=!doNscan ? nScan : (map==null ? start : contigEndDist(map));
 		final int count=alleleCount();
 		final double af=alleleFraction();
 		final double raf=revisedAlleleFraction(af, readLengthAvg);
 		final double strandBias=strandBiasScore(scafEndDist);
 
-		{//INFO
+		// INFO field with comprehensive variant statistics
+		{
 			assert(Scaffold.trackStrand()==(minusCoverage>=0)) : Scaffold.trackStrand()+", "+minusCoverage;
 			final int covMinus=(Scaffold.trackStrand() ? minusCoverage : coverage/2);
 			final int covPlus=Tools.max(0, coverage-covMinus);
@@ -1375,13 +1146,16 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 				bb.append(allelePlusCount()).append(',').append(alleleMinusCount()).append(';');
 			}
 			
-			bb.length--;
+			bb.length--; // Remove final semicolon
 		}
+		
+		// FORMAT field
 		{
 			bb.tab();
 			bb.append("GT:DP:AD:AF:RAF:NVC:FLG:SB:SC:PF");
 			bb.tab();
 
+			// Sample data
 			bb.append(genotype(ploidy, pass));
 			bb.append(':');
 			bb.append(Tools.max(coverage, count));
@@ -1407,74 +1181,119 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		
 		return bb;
 	}
-	
+
+	/**
+	 * Calculates number of variant copies based on allele frequency and ploidy.
+	 * Uses allele frequency thresholds to determine heterozygous vs homozygous calls.
+	 * Ensures minimum variant copy requirements are met.
+	 * 
+	 * @param ploidy Expected organism ploidy level
+	 * @return Number of variant copies (0 to ploidy)
+	 */
 	public int calcCopies(int ploidy){
 		final double af=alleleFraction();
-//		final int count=count();
 		if(ploidy==1){
-			return af<0.4 ? 0 : 1;
+			return af<0.4 ? 0 : 1; // Haploid: threshold at 40%
 		}else if(ploidy==2){
-			if(af<0.2){return 0;}
-			if(af<0.8){return 1;}
-			return 2;
+			if(af<0.2){return 0;} // Homozygous reference
+			if(af<0.8){return 1;} // Heterozygous
+			return 2; // Homozygous variant
 		}
 		
-		int copies=(int)Math.round(ploidy*af);
-		if(af>=0.5){copies=Tools.max(copies, 1);}
-		copies=Tools.mid(MIN_VAR_COPIES, copies, ploidy);
+		// General ploidy handling
+		int copies=(int)Math.round(ploidy*af); // Round to nearest integer
+		if(af>=0.5){copies=Tools.max(copies, 1);} // At least 1 copy if AF >= 50%
+		copies=Tools.mid(MIN_VAR_COPIES, copies, ploidy); // Clamp to valid range
 		return copies;
-	}
-	
-	//TODO: Actually, I should also track the ref coverage.
-	private String genotype(int ploidy, boolean pass) {
+	}/**
+	 * Generates VCF genotype string based on variant copies and filter status.
+	 * Uses allele frequency and ploidy to determine genotype call.
+	 * Can output dot genotype for failed variants if configured.
+	 * 
+	 * @param ploidy Expected organism ploidy level
+	 * @param pass Whether variant passed quality filters
+	 * @return VCF genotype string (e.g., "0/1", "1/1", "./.")
+	 */
+	private String genotype(int ploidy, boolean pass){
+		// Handle failed variants with dot genotype if enabled
 		if(!pass && noPassDotGenotype){
-			if(ploidy==1){return ".";}
-			else if(ploidy==2){return "./.";}
+			if(ploidy==1){return ".";} // Haploid no-call
+			else if(ploidy==2){return "./.";} // Diploid no-call
 			StringBuilder sb=new StringBuilder(ploidy*2-1);
 			sb.append('.');
 			for(int i=1; i<ploidy; i++){
-				sb.append('/').append('.');
+				sb.append('/').append('.'); // Multi-ploid no-call
 			}
 			return sb.toString();
 		}
-		int copies=calcCopies(ploidy);
-		if(ploidy==1){return copies==0 ? "0" : "1";}
-		if(ploidy==2){
-			if(copies==0){return "0/0";}
-			if(copies==1){return "0/1";}
-			return "1/1";
-		}
-		StringBuilder sb=new StringBuilder(ploidy*2);
-		int refCopies=ploidy-copies;
 		
+		int copies=calcCopies(ploidy); // Calculate variant copies
+		
+		// Handle common ploidy cases
+		if(ploidy==1){return copies==0 ? "0" : "1";} // Haploid: 0 or 1
+		if(ploidy==2){
+			if(copies==0){return "0/0";} // Homozygous reference
+			if(copies==1){return "0/1";} // Heterozygous
+			return "1/1"; // Homozygous variant
+		}
+		
+		// General ploidy handling
+		StringBuilder sb=new StringBuilder(ploidy*2);
+		int refCopies=ploidy-copies; // Reference allele copies
+		
+		// Add reference alleles
 		for(int i=0; i<refCopies; i++){
 			sb.append(0).append('/');
 		}
+		// Add variant alleles
 		for(int i=0; i<copies; i++){
 			sb.append(1).append('/');
 		}
-		sb.setLength(sb.length()-1);
+		sb.setLength(sb.length()-1); // Remove final slash
 		return sb.toString();
 	}
 
+	/**
+	 * Computes hash code for this variant based on position and allele.
+	 * Uses position rotation and allele hash combination for good distribution.
+	 * 
+	 * @return Hash code value for this variant
+	 */
 	private int hash(){
 		return scafnum^Integer.rotateLeft(start, 9)^Integer.rotateRight(stop, 9)^hash(allele);
 	}
-	
+
+	/**
+	 * Computes hash code for byte array using position-dependent mixing.
+	 * Provides good hash distribution for allele sequences of varying lengths.
+	 * 
+	 * @param a Byte array to hash (typically allele sequence)
+	 * @return Hash code for the byte array
+	 */
 	public static final int hash(byte[] a){
-		int code=123456789;
+		int code=123456789; // Prime seed
 		for(byte b : a){
-			code=Integer.rotateLeft(code, 3)^codes[b];
+			code=Integer.rotateLeft(code, 3)^codes[b]; // Mix with pre-computed random codes
 		}
-		return code&Integer.MAX_VALUE;
+		return code&Integer.MAX_VALUE; // Ensure positive result
 	}
-	
+
+	/**
+	 * Calculates or retrieves coverage at this variant position.
+	 * Uses cached value if available, otherwise queries scaffold coverage data.
+	 * Also calculates strand-specific coverage if strand tracking is enabled.
+	 * 
+	 * @param map Scaffold mapping containing coverage information
+	 * @return Total coverage depth at this position
+	 */
 	public int calcCoverage(ScafMap map){
-		if(coverage>=0){return coverage;}
+		if(coverage>=0){return coverage;} // Return cached value if available
 		
 		Scaffold scaf=map.getScaffold(scafnum);
-		coverage=scaf.calcCoverage(this);
-		if(Scaffold.trackStrand()){minusCoverage=scaf.minusCoverage(this);}
+		coverage=scaf.calcCoverage(this); // Calculate total coverage
+		if(Scaffold.trackStrand()){
+			minusCoverage=scaf.minusCoverage(this); // Calculate minus strand coverage
+		}
 		return coverage;
 	}
 	
@@ -1482,186 +1301,292 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 	/*----------------        Scoring Methods       ----------------*/
 	/*--------------------------------------------------------------*/
 	
-	public static double toPhredScore(double score){
-		if(score==0){return 0;}
-		score=score*0.998;
-		return 2.5*QualityTools.probErrorToPhredDouble(1-score);
+	/*--------------------------------------------------------------*/
+	/*----------------        Scoring Methods       ----------------*/
+	/*--------------------------------------------------------------*/
+
+	/**
+	 * Calculates Phred-scaled quality score for this variant.
+	 * Converts internal scoring (0.0-1.0) to standard Phred scale for output.
+	 * 
+	 * @param properPairRate Overall proper pair rate for dataset
+	 * @param totalQualityAvg Average base quality across all reads
+	 * @param totalMapqAvg Average mapping quality across all reads
+	 * @param readLengthAvg Average read length across dataset
+	 * @param rarity Minimum variant frequency threshold
+	 * @param ploidy Expected organism ploidy level
+	 * @param map Scaffold mapping for reference sequence access
+	 * @param net Optional CellNet for prediction
+	 * @return Phred-scaled quality score (higher = more confident)
+	 */
+	public double phredScore(double properPairRate, double totalQualityAvg, double totalMapqAvg, 
+			double readLengthAvg, double rarity, int ploidy, ScafMap map, CellNet net){
+		double score=score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map, net);
+		return VarHelper.toPhredScore(score);
 	}
-	
-	public double phredScore(double properPairRate, double totalQualityAvg, double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map){
-		double score=score(properPairRate, totalQualityAvg, totalMapqAvg, readLengthAvg, rarity, ploidy, map);
-		return toPhredScore(score);
-	}
-	
-	public double score(double properPairRate, double totalQualityAvg, double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map){
-		int scafEndDist=(map==null ? start : contigEndDist(map));
+
+	/**
+	 * Calculates composite variant quality score from multiple evidence types.
+	 * Combines coverage, quality, bias, positional, and sequence context scores.
+	 * Uses geometric mean (power 0.2) to balance different evidence types.
+	 * 
+	 * @param properPairRate Dataset-wide proper pair rate for normalization
+	 * @param totalQualityAvg Dataset-wide average base quality
+	 * @param totalMapqAvg Dataset-wide average mapping quality
+	 * @param readLengthAvg Dataset-wide average read length
+	 * @param rarity Minimum expected variant frequency
+	 * @param ploidy Expected number of chromosome copies
+	 * @param map Scaffold map for sequence context analysis
+	 * @param net Optional CellNet for prediction
+	 * @return Composite quality score (0.0 to 1.0, higher = better)
+	 */
+	public double score(double properPairRate, double totalQualityAvg, double totalMapqAvg, double readLengthAvg, double rarity, int ploidy, ScafMap map, CellNet net){
+		int scafEndDist=(map==null ? start : contigEndDist(map)); // Distance from contig ends
 		
-		double cs=coverageScore(ploidy, rarity, readLengthAvg);
-		if(cs==0){return 0;}
-		double es=(useEdist ? edistScore() : 1);
-		double qs=qualityScore(totalQualityAvg, totalMapqAvg);
-		double ps=(usePairing ? pairedScore(properPairRate, scafEndDist) : 1);
-		double bs=(useBias ? biasScore(properPairRate, scafEndDist) : 1);
-		double is=(useIdentity ? identityScore() : 1);
-		double hs=(useHomopolymer ? homopolymerScore(map) : 1);
-		return Math.pow(es*qs*ps*bs*cs*is*hs, 0.2);
+		// Calculate individual scoring components
+		double cs=coverageScore(ploidy, rarity, readLengthAvg); // Coverage adequacy
+		if(cs==0){return 0;} // No coverage = no call
+		double es=(useEdist ? edistScore() : 1); // Distance from read ends
+		double qs=qualityScore(totalQualityAvg, totalMapqAvg); // Base and mapping quality
+		double ps=(usePairing ? pairedScore(properPairRate, scafEndDist) : 1); // Proper pairing rate
+		double bs=(useBias ? biasScore(properPairRate, scafEndDist) : 1); // Strand/read bias
+		double is=(useIdentity ? identityScore() : 1); // Alignment identity
+		double hs=(useHomopolymer ? homopolymerScore(map) : 1); // Homopolymer context
+		
+		// Geometric mean of all components (power 0.2 = 5th root)
+		double gMean=Math.pow(es*qs*ps*bs*cs*is*hs, 0.2);
+		double score=gMean;
+		if(net!=null) {
+			float[] vec=FeatureVectorMaker.toVector(this, properPairRate, totalQualityAvg, 
+					totalMapqAvg, readLengthAvg, ploidy, map);
+			net.applyInput(vec);
+			float output=net.feedForward();
+			
+		}
+		return score;
 	}
-	
+
+	/**
+	 * Scores variant based on distance from read ends.
+	 * Variants near read ends are less reliable due to sequencing quality decline.
+	 * Uses read length and position to calculate confidence penalty.
+	 * 
+	 * @return Score from 0.05 to 1.0 (higher = farther from ends)
+	 */
 	public double edistScore(){
-		double lengthAvg=lengthAvg();
-		double edistAvg=((edistAvg()*2+endDistMax))*0.333333333333;
-		double constant=5+Tools.min(20, lengthAvg*0.1)+lengthAvg*0.01;
-		double weighted=Tools.max(0.05, edistAvg-Tools.min(constant, edistAvg*0.95));
-		weighted=weighted*weighted;
-		return weighted/(weighted+4);
+		double lengthAvg=lengthAvg(); // Average supporting read length
+		double edistAvg=((edistAvg()*2+endDistMax))*0.333333333333; // Weighted distance average
+		double constant=5+Tools.min(20, lengthAvg*0.1)+lengthAvg*0.01; // Length-dependent threshold
+		double weighted=Tools.max(0.05, edistAvg-Tools.min(constant, edistAvg*0.95)); // Apply threshold
+		weighted=weighted*weighted; // Square for non-linear penalty
+		return weighted/(weighted+4); // Normalize to 0-1 range
 	}
-	
+
+	/**
+	 * Scores variant based on alignment identity of supporting reads.
+	 * Higher identity reads provide more reliable variant evidence.
+	 * Adjusts for the variant's own contribution to identity calculation.
+	 * 
+	 * @return Score from 0.75 to 1.0 (higher = better alignment identity)
+	 */
 	public double identityScore(){
-		double lengthAvg=lengthAvg();
-		double idAvg=0.001f*(((identityAvg()+idMax))*0.5f);
-		double weighted=Tools.min(1, (idAvg*lengthAvg+(0.65f*Tools.max(1, readlen())))/lengthAvg); //Diminish impact of this var on itself
-		weighted=0.75f+0.25f*weighted; //Compress the range
+		double lengthAvg=lengthAvg(); // Average read length
+		double idAvg=0.001f*(((identityAvg()+idMax))*0.5f); // Average identity (0-1 scale)
+		// Diminish impact of this variant on overall identity
+		double weighted=Tools.min(1, (idAvg*lengthAvg+(0.65f*Tools.max(1, readlen())))/lengthAvg);
+		weighted=0.75f+0.25f*weighted; // Compress range to 0.75-1.0
 		return weighted;
 	}
-	
+
+	/**
+	 * Combines base quality and mapping quality scores.
+	 * Both quality types contribute to variant reliability assessment.
+	 * 
+	 * @param totalBaseqAvg Dataset average base quality for normalization
+	 * @param totalMapqAvg Dataset average mapping quality for normalization
+	 * @return Combined quality score (product of individual scores)
+	 */
 	public double qualityScore(double totalBaseqAvg, double totalMapqAvg){
 		return baseQualityScore(totalBaseqAvg)*mapQualityScore(totalMapqAvg);
 	}
-	
-//	public double baseQualityScore(double totalBaseqAvg){
-//		double bqAvg=baseQAvg();
-//		final double delta=Tools.max(0, totalBaseqAvg-bqAvg);
-//	}
-	
+
+	/**
+	 * Scores variant based on base quality of supporting reads.
+	 * Compares variant's base quality against dataset average.
+	 * Includes correction for recalibrated quality scores.
+	 * 
+	 * @param totalBaseqAvg Dataset-wide average base quality
+	 * @return Base quality score (0.0 to 1.0)
+	 */
 	public double baseQualityScore(double totalBaseqAvg){
-		double bqAvg=baseQAvg();
+		double bqAvg=baseQAvg(); // This variant's average base quality
 		
-		if(totalBaseqAvg<32 && bqAvg<32){//Fudge factor for recalibrated quality scores, since this was calibrated for raw Illumina scores.
-			//This section is not well-tested, though.
-			double fudgeFactor1=0.75*(32-totalBaseqAvg);
-			double fudgeFactor2=0.75*(32-bqAvg);
+		// Fudge factor for recalibrated quality scores (not well-tested)
+		if(totalBaseqAvg<32 && bqAvg<32){
+			double fudgeFactor1=0.75*(32-totalBaseqAvg); // Dataset adjustment
+			double fudgeFactor2=0.75*(32-bqAvg); // Variant adjustment
 			totalBaseqAvg+=fudgeFactor1;
 			bqAvg+=Tools.min(fudgeFactor1, fudgeFactor2);
 		}
 		
-		//Difference between this variation's quality and average quality.
-		//Positive delta means that this is lower quality
-		final double delta=totalBaseqAvg-bqAvg;
-		if(delta>0){//This is kind of mysterious, but appears to normally reduce bqAvg for low-quality vars
-			bqAvg=Tools.max(bqAvg*0.5, bqAvg-0.5*delta);
+		// Apply penalty if variant quality is below dataset average
+		final double delta=totalBaseqAvg-bqAvg; // Quality deficit
+		if(delta>0){
+			bqAvg=Tools.max(bqAvg*0.5, bqAvg-0.5*delta); // Reduce effective quality
 		}
 		
+		// Transform quality with threshold and multiplier
 		double mult=0.25;
 		double thresh=12;
 		if(bqAvg>thresh){
-			bqAvg=bqAvg-thresh+(thresh*mult);
+			bqAvg=bqAvg-thresh+(thresh*mult); // Linear above threshold
 		}else{
-			bqAvg=bqAvg*mult;
+			bqAvg=bqAvg*mult; // Scaled below threshold
 		}
 		
-		double baseProbAvg=1-Math.pow(10, 0-.1*bqAvg);
-		double d=baseProbAvg*baseProbAvg;
+		// Convert to probability and square for emphasis
+		double baseProbAvg=1-Math.pow(10, 0-.1*bqAvg); // Phred to probability
+		double d=baseProbAvg*baseProbAvg; // Square the probability
 		return d;
 	}
-	
-//	public double mapQualityScore(double totalMapqAvg){
-//		double mqAvg=mapQAvg();
-//		double mqAvg2=(0.25f*(3*mqAvg+mapQMax));
-//		final double delta=totalMapqAvg-mqAvg;
-//		double score=(1-Math.pow(10, 0-.1*(mqAvg2+4)));
-//		if(delta>0){
-//
-//		}else{
-//
-//		}
-//	}
 
+	/**
+	* Scores variant based on distance from read ends.
+	* Variants near read ends are less reliable due to sequencing quality decline.
+	* Uses read length and position to calculate confidence penalty.
+	* 
+	* @return Score from 0.05 to 1.0 (higher = farther from ends)
+	*/
 	public double mapQualityScore(double totalMapqAvg){
-		double mqAvg=0.5f*(mapQAvg()+mapQMax);
-		
-		double mapProbAvg=1-Math.pow(10, 0-.1*(mqAvg+2));
-		double d=mapProbAvg;
+		double mqAvg=0.5f*(mapQAvg()+mapQMax); // Average of mean and max
+		double mapProbAvg=1-Math.pow(10, 0-.1*(mqAvg+2)); // Phred to probability (+2 bonus)
+		double d=mapProbAvg; // Direct probability score
 		return d;
 	}
-	
+
+	/**
+	 * Scores variant based on proper pairing rate of supporting reads.
+	 * Compares variant's pairing rate against dataset baseline.
+	 * Applies positional correction for variants near contig ends.
+	 * 
+	 * @param properPairRate Dataset-wide proper pair rate
+	 * @param scafEndDist Distance from nearest contig end
+	 * @return Pairing score (0.1 to 1.0)
+	 */
 	public double pairedScore(double properPairRate, int scafEndDist){
-		if(properPairRate<0.5){return 0.98;}
+		if(properPairRate<0.5){return 0.98;} // Skip if dataset has poor pairing
 		final double count=alleleCount();
-		if(count==0){return 0;}
-		double rate=properPairCount/count;
-		rate=rate*(count/(0.1+count));
-		if(rate*1.05>=properPairRate){return Tools.max(rate, 1-0.001*properPairRate);}
-		double score=((rate*1.05)/properPairRate)*0.5+0.5;
-		score=Tools.max(0.1, score);
-		return modifyByEndDist(score, scafEndDist);
+		if(count==0){return 0;} // No reads = no score
+		double rate=properPairCount/count; // Variant's pairing rate
+		rate=rate*(count/(0.1+count)); // Weight by read count
+		if(rate*1.05>=properPairRate){ // Good pairing rate
+			return Tools.max(rate, 1-0.001*properPairRate);
+		}
+		double score=((rate*1.05)/properPairRate)*0.5+0.5; // Scale poor pairing
+		score=Tools.max(0.1, score); // Minimum score
+		return modifyByEndDist(score, scafEndDist); // Adjust for position
 	}
-	
+
+	/**
+	 * Adjusts scores based on distance from contig ends.
+	 * Variants near contig ends may have artifacts due to assembly issues.
+	 * Provides score bonus for variants in problematic regions.
+	 * 
+	 * @param x Original score to modify
+	 * @param scafEndDist Distance from nearest contig end
+	 * @return Modified score (may be increased near contig ends)
+	 */
 	public double modifyByEndDist(double x, int scafEndDist){
-		if(x>=0.99 || !doNscan || scafEndDist>=nScan){return x;}
-		if(scafEndDist<minEndDistForBias){return Tools.max(x, 0.98+0.02*x);}
-		double delta=1-x;
-		delta=delta*(scafEndDist*scafEndDist)/(nScan*nScan);
-		return 1-delta;
+		if(x>=0.99 || !doNscan || scafEndDist>=nScan){return x;} // No adjustment needed
+		if(scafEndDist<minEndDistForBias){ // Very close to end
+			return Tools.max(x, 0.98+0.02*x); // Boost score significantly
+		}
+		double delta=1-x; // Score deficit
+		delta=delta*(scafEndDist*scafEndDist)/(nScan*nScan); // Scale by distance squared
+		return 1-delta; // Apply adjusted penalty
 	}
-	
+
+	/**
+	 * Scores variant based on coverage depth and allele fraction.
+	 * Considers expected ploidy and minimum variant frequency thresholds.
+	 * Includes adjustment for insertion length effects on coverage.
+	 * 
+	 * @param ploidy Expected organism ploidy level
+	 * @param rarity Minimum expected variant frequency
+	 * @param readLengthAvg Average read length for insertion adjustments
+	 * @return Coverage adequacy score (0.0 to 1.0)
+	 */
 	public double coverageScore(int ploidy, double rarity, double readLengthAvg){
 		int count=alleleCount();
-		if(count==0){return 0;}
-		double rawScore=count/(lowCoveragePenalty+count); //This may be too severe...
+		if(count==0){return 0;} // No supporting reads
+		double rawScore=count/(lowCoveragePenalty+count); // Coverage adequacy (may be severe)
 		
-//		double ratio=alleleFraction();
-		
-		double ratio=0.98;
+		double ratio=0.98; // Default allele fraction
 		if(coverage>0){
-			double dif=coverage-count;
+			double dif=coverage-count; // Reference read count
 			if(dif>0){
+				// Adjust for expected sequencing errors and biases
 				dif=dif-coverage*.01f-Tools.min(0.5f, coverage*.1f);
 				dif=Tools.max(0.1f, dif);
 			}
-			ratio=(coverage-dif)/coverage;
-			if(type()==SUB && revisedAlleleFraction!=-1 && revisedAlleleFraction<ratio){ratio=revisedAlleleFraction;}
-			else{
-				ratio=adjustForInsertionLength(ratio, readLengthAvg);
+			ratio=(coverage-dif)/coverage; // Adjusted allele fraction
+			
+			// Use revised allele fraction for substitutions if available
+			if(type()==SUB && revisedAlleleFraction!=-1 && revisedAlleleFraction<ratio){
+				ratio=revisedAlleleFraction;
+			}else{
+				ratio=adjustForInsertionLength(ratio, readLengthAvg); // Adjust for insertion artifacts
 			}
+			
+			// Handle rare variants with ploidy considerations
 			if(rarity<1 && ratio>rarity){
-				double minExpected=1f/ploidy;
+				double minExpected=1f/ploidy; // Minimum expected for heterozygote
 				if(ratio<minExpected){
-					ratio=minExpected-((minExpected-ratio)*0.1);
+					ratio=minExpected-((minExpected-ratio)*0.1); // Modest boost for low-frequency variants
 				}
 			}
 		}
 		
-		double ratio2=Tools.min(1, ploidy*ratio);
-		return rawScore*ratio2;
+		double ratio2=Tools.min(1, ploidy*ratio); // Scale by ploidy
+		return rawScore*ratio2; // Combine coverage and fraction scores
 	}
 	
+	/**
+	 * Revises allele fraction for insertions by adjusting nearby substitutions.
+	 * Insertions can create false substitutions when reads span the insertion boundary.
+	 * This method reduces allele fractions of nearby substitutions that may be artifacts.
+	 * Only applies to insertion variants with sufficient length and valid positions.
+	 * 
+	 * @param readLengthAvg Average read length for calculating adjustment factors
+	 * @param scaffold Reference scaffold containing this insertion
+	 * @param map VarMap containing other variants that may need adjustment
+	 */
 	public void reviseAlleleFraction(double readLengthAvg, Scaffold scaffold, VarMap map){
 		assert(type()==INS);
 		final int ilen=readlen();
-		if(ilen<3 || start<1 || start>=scaffold.length-2){return;}
+		if(ilen<3 || start<1 || start>=scaffold.length-2){return;} // Skip short insertions or edge cases
 		final byte[] bases=scaffold.bases;
 		
-		final double afIns=alleleFraction();
-		final double rafIns=revisedAlleleFraction(afIns, readLengthAvg);
-		final double revisedDif=0.55*(rafIns-afIns); //Half on the left and half on the right, on average
-		final double mult=revisedDif/allele.length;
+		// Calculate adjustment based on insertion's revised allele fraction
+		final double afIns=alleleFraction(); // Original insertion AF
+		final double rafIns=revisedAlleleFraction(afIns, readLengthAvg); // Corrected insertion AF
+		final double revisedDif=0.55*(rafIns-afIns); // Half left, half right on average
+		final double mult=revisedDif/allele.length; // Per-base adjustment factor
 		
+		// Adjust substitutions to the right of insertion
 		for(int i=0, j=start; i<allele.length && j<scaffold.bases.length; i++, j++){
 			final byte b=allele[i];
-			if(b!=bases[j]){
+			if(b!=bases[j]){ // Insertion differs from reference
 				Var key=new Var(scaffold.number, j, j+1, b, SUB);
 				Var affectedSub=map.get(key);
-//				System.err.println("At pos "+j+": ref="+(char)bases[j]+", alt="+(char)b);
 				if(affectedSub!=null){
 					assert(key.type()==SUB);
-//					System.err.println("Found "+value);
-					final double subModifier=revisedDif-mult*i;
+					final double subModifier=revisedDif-mult*i; // Distance-dependent adjustment
 					synchronized(affectedSub){
 						double afSub=affectedSub.alleleFraction();
 						double rafSub=affectedSub.revisedAlleleFraction;
-						double modified=afSub-subModifier;
+						double modified=afSub-subModifier; // Reduce substitution AF
 						if(rafSub==-1){
-//							System.err.println("sub="+sub+", old="+old);
 							affectedSub.revisedAlleleFraction=Tools.max(afSub*0.05, modified);
 						}else{
 							affectedSub.revisedAlleleFraction=Tools.min(rafSub, Tools.max(afSub*0.05, modified));
@@ -1671,21 +1596,20 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			}
 		}
 		
+		// Adjust substitutions to the left of insertion (reverse order)
 		for(int i=0, j=start-1; i<allele.length && j>=0; i++, j--){
-			final byte b=allele[allele.length-1-i];
+			final byte b=allele[allele.length-1-i]; // Process insertion sequence backwards
 			if(b!=bases[j]){
 				Var key=new Var(scaffold.number, j, j+1, b, SUB);
 				Var affectedSub=map.get(key);
 				if(affectedSub!=null){
 					assert(key.type()==SUB);
-//					System.err.println("Found "+value);
 					final double subModifier=revisedDif-mult*i;
 					synchronized(affectedSub){
 						double afSub=affectedSub.alleleFraction();
 						double rafSub=affectedSub.revisedAlleleFraction;
 						double modified=afSub-subModifier;
 						if(rafSub==-1){
-//							System.err.println("sub="+sub+", old="+old);
 							affectedSub.revisedAlleleFraction=Tools.max(afSub*0.05, modified);
 						}else{
 							affectedSub.revisedAlleleFraction=Tools.min(rafSub, Tools.max(afSub*0.05, modified));
@@ -1695,39 +1619,72 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 			}
 		}
 	}
-	
+
+	/**
+	 * Gets revised allele fraction, calculating it if not already computed.
+	 * For insertions, adjusts for read length bias where long insertions
+	 * extending beyond read boundaries appear at artificially low frequencies.
+	 * 
+	 * @param af Original allele fraction
+	 * @param readLengthAvg Average read length for insertion length adjustment
+	 * @return Revised allele fraction accounting for technical biases
+	 */
 	public double revisedAlleleFraction(double af, double readLengthAvg){
 		if(revisedAlleleFraction!=-1){
-			return revisedAlleleFraction;
+			return revisedAlleleFraction; // Return cached value
 		}else if(type()==INS){
 			return revisedAlleleFraction=adjustForInsertionLength(af, readLengthAvg);
 		}
-		return af;
+		return af; // No adjustment needed for non-insertions
 	}
-	
+
+	/**
+	 * Adjusts allele fraction for insertion length bias.
+	 * Long insertions near read ends won't be fully captured, causing
+	 * systematic underestimation of insertion allele frequency.
+	 * 
+	 * @param ratio Original allele fraction
+	 * @param rlen0 Average read length from dataset
+	 * @return Adjusted allele fraction accounting for insertion length bias
+	 */
 	public double adjustForInsertionLength(final double ratio, final double rlen0){
-		if(type()!=INS){return ratio;}
+		if(type()!=INS){return ratio;} // Only applies to insertions
 		final int ilen=readlen();
-		if(ilen<2){return ratio;}
+		if(ilen<2){return ratio;} // Skip very short insertions
 		
-		final double rlen=Tools.max(ilen*1.2+6, rlen0);
-		final double sites=rlen+ilen-1;
-		final double goodSites=rlen-ilen*1.1-6;
+		final double rlen=Tools.max(ilen*1.2+6, rlen0); // Effective read length
+		final double sites=rlen+ilen-1; // Total possible observation sites
+		final double goodSites=rlen-ilen*1.1-6; // Sites where insertion fully observable
 		
-		final double expectedFraction=goodSites/sites;
-		final double revisedRatio=Tools.min(ratio/expectedFraction, 1-(1-ratio)*0.1);
+		final double expectedFraction=goodSites/sites; // Expected observable fraction
+		final double revisedRatio=Tools.min(ratio/expectedFraction, 1-(1-ratio)*0.1); // Upward adjustment
 		return revisedRatio;
 	}
-	
+
+	/**
+	 * Calculates homopolymer penalty score for this variant.
+	 * Homopolymer regions are prone to sequencing errors, especially indels.
+	 * Longer homopolymer runs receive progressively lower confidence scores.
+	 * 
+	 * @param map Scaffold mapping for reference sequence access
+	 * @return Homopolymer score (1.0 = no homopolymer, lower = longer homopolymer)
+	 */
 	public double homopolymerScore(ScafMap map){
 		if(map==null){return 1;}
 		
-		int count=homopolymerCount(map);
-//		assert(false) : count;
-		if(count<2){return 1;}
-		return 1f-(count*0.1f/9);
+		int count=homopolymerCount(map); // Get homopolymer length
+		if(count<2){return 1;} // No penalty for short runs
+		return 1f-(count*0.1f/9); // Linear penalty up to count=9
 	}
-	
+
+	/**
+	 * Counts homopolymer run length around this variant position.
+	 * Different calculation methods for substitutions, insertions, and deletions.
+	 * Used to assess likelihood of sequencing errors in repetitive sequence.
+	 * 
+	 * @param map Scaffold mapping for reference sequence access
+	 * @return Length of homopolymer run (0 = no homopolymer)
+	 */
 	public int homopolymerCount(ScafMap map){
 		if(map==null){return 0;}
 		final byte[] bases=map.getScaffold(scafnum).bases;
@@ -1736,248 +1693,241 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		final int type=type();
 		if(type==SUB){
 			assert(start==stop-1) : start+", "+stop;
-			final byte base=allele[0];
-			int x=homopolymerCountSub(bases, start, base);
-//			assert(false) : (char)base+", "+x;
+			final byte base=allele[0]; // Substituted base
+			int x=VarHelper.homopolymerCountSub(bases, start, base);
 			return x;
 		}else if(type==INS){
-			final byte base1=allele[0], base2=allele[allele.length-1];
+			final byte base1=allele[0], base2=allele[allele.length-1]; // First and last inserted bases
 			int i=0;
+			// Check if entire insertion is homopolymer
 			while(i<allele.length && allele[i]==base1){i++;}
 			while(i<allele.length && allele[i]==base2){i++;}
-			if(i<bases.length){return 0;}
-			int left=homopolymerCountLeft(bases, start, base1);
-			int right=homopolymerCountRight(bases, stop+1, base2);
-//			assert(false) : "INS "+(left+right+1)+" "+new String(allele)+" "+new String(bases, start-4, 8);
+			if(i<bases.length){return 0;} // Mixed sequence insertion
+			// Count flanking homopolymer
+			int left=VarHelper.homopolymerCountLeft(bases, start, base1);
+			int right=VarHelper.homopolymerCountRight(bases, stop+1, base2);
 			return left+right+1;
 		}else if(type==DEL){
 			if(start<0 || start+1>=bases.length || stop<=0 || stop>=bases.length){return 0;}
-			final byte base1=bases[start+1], base2=bases[stop-1];
+			final byte base1=bases[start+1], base2=bases[stop-1]; // First and last deleted bases
 			int pos=start+1;
+			// Check if entire deletion is homopolymer
 			while(pos<=stop && bases[pos]==base1){pos++;}
 			while(pos<=stop && bases[pos]==base2){pos++;}
-			if(pos<=stop){return 0;}
-			int left=homopolymerCountLeft(bases, start, base1);
-			int right=homopolymerCountRight(bases, stop, base2);
-//			assert(false || reflen()>10) : "DEL "+(left+right+1)+" "+new String(allele)+" "+new String(bases, start-4, stop-start+8);
+			if(pos<=stop){return 0;} // Mixed sequence deletion
+			// Count flanking homopolymer
+			int left=VarHelper.homopolymerCountLeft(bases, start, base1);
+			int right=VarHelper.homopolymerCountRight(bases, stop, base2);
 			return left+right+1;
 		}else{
-//			assert(false) : type();
-			return 0;
+			return 0; // No homopolymer analysis for other types
 		}
 	}
-	
-	public static int homopolymerCountSub(final byte[] bases, final int pos, final byte base){
-//		System.err.println("A:"+pos+", "+bases.length+", "+(char)base);
-		if(pos<0 || pos>=bases.length){return 0;}
-		if(!AminoAcid.isFullyDefined(base)){return 0;}
-//		System.err.println("B:"+pos+", "+bases.length);
-		
-		int count1=0;
-		for(int i=pos-1, lim=Tools.max(0, pos-4); i>=lim; i--){
-			if(bases[i]==base){count1++;}
-			else{break;}
-		}
-//		System.err.println("C:"+pos+", "+bases.length+", "+count1);
-		
-		int count2=0;
-		for(int i=pos+1, lim=Tools.min(bases.length, pos+5); i<lim; i++){
-			if(bases[i]==base){count2++;}
-			else{break;}
-		}
-//		System.err.println("D:"+pos+", "+bases.length+", "+count2);
-//		System.err.println("E:"+new String(bases, pos-4, 9));
-		assert(count1+count2<=8) : count1+", "+count2;
-		
-		return count1+count2+(count1>0 && count2>0 ? 1 : 0);
-	}
-	
-	public static int homopolymerCountLeft(final byte[] bases, final int pos, final byte base){
-		if(pos<0 || bases[pos]!=base){return 0;}
-		if(!AminoAcid.isFullyDefined(base)){return 0;}
-		
-		int count=0;
-		for(int i=pos, lim=Tools.max(0, pos-3); i>=lim; i--){
-			if(bases[i]==base){count++;}
-			else{break;}
-		}
-		return count;
-	}
-	
-	public static int homopolymerCountRight(final byte[] bases, final int pos, final byte base){
-		if(pos<0 || bases[pos]!=base){return 0;}
-		if(!AminoAcid.isFullyDefined(base)){return 0;}
-		
-		int count=0;
-		for(int i=pos, lim=Tools.min(bases.length, pos+4); i<lim; i++){
-			if(bases[i]==base){count++;}
-			else{break;}
-		}
-		return count;
-	}
-	
+
+	/**
+	 * Calculates combined bias score from strand and read biases.
+	 * Uses geometric mean (square root of product) to balance both bias types.
+	 * 
+	 * @param properPairRate Dataset proper pair rate for read bias calculation
+	 * @param scafEndDist Distance from contig ends for positional adjustment
+	 * @return Combined bias score (0.0 to 1.0, higher = less biased)
+	 */
 	public double biasScore(double properPairRate, int scafEndDist){
-		double strandBias=strandBiasScore(scafEndDist);
-		double readBias=readBiasScore(properPairRate);
-		return Math.sqrt(strandBias*readBias);
+		double strandBias=strandBiasScore(scafEndDist); // Plus vs minus strand bias
+		double readBias=readBiasScore(properPairRate); // Read 1 vs read 2 bias
+		return Math.sqrt(strandBias*readBias); // Geometric mean
 	}
-	
+
+	/**
+	 * Calculates strand bias score using statistical significance testing.
+	 * Tests whether plus/minus strand distribution is significantly skewed.
+	 * Includes special handling for high-coverage variants with mild bias.
+	 * 
+	 * @param scafEndDist Distance from contig ends for positional correction
+	 * @return Strand bias score (0.0 to 1.0, higher = less biased)
+	 */
 	public double strandBiasScore(int scafEndDist){
-		int plus=allelePlusCount();
-		int minus=alleleMinusCount();
-		final double x=eventProb(plus, minus);
-		final double x2=modifyByEndDist(x, scafEndDist);
-		
-		//TODO:
-		//This should correct strand bias based on whether the overall read distribution is biased,
-		//for homozygous variations when minus coverage is being tracked
+		int plus=allelePlusCount(); // Plus strand supporting reads
+		int minus=alleleMinusCount(); // Minus strand supporting reads
+		final double x=VarProb.eventProb(plus, minus); // Statistical significance of bias
+		final double x2=modifyByEndDist(x, scafEndDist); // Adjust for position
 		
 		double result=x2;
-		if(plus+minus>=20 && x2<0.9){//This block added based on analyzing NIST GIAB diff
+		// Relaxed stringency for high-coverage variants seen on both strands
+		if(plus+minus>=20 && x2<0.9){
 			int min=Tools.min(plus, minus);
 			int max=Tools.max(plus, minus);
-			if(min>1 && min>0.06f*max){//Seen on both strands; relax stringency
-				double y=0.15+(0.2*min)/max; //Higher constants (maximum of 1.0 combined) push the end result closer to 1
-				result=y+(1-y)*x2;
+			if(min>1 && min>0.06f*max){ // Present on both strands
+				double y=0.15+(0.2*min)/max; // Relaxation factor
+				result=y+(1-y)*x2; // Blend with original score
 			}
 		}
-//		if(start==15699277){System.err.println(plus+", "+minus+", "+x+", "+x2+", "+result);}
 		return result;
 	}
-	
-	//This seems to cause trouble with some NIST GIAB Illumina data...  not clear why
+
+	/**
+	 * Calculates read bias score (Read 1 vs Read 2 distribution).
+	 * Tests whether variant appears preferentially in one read of pair.
+	 * Includes relaxed scoring for high-coverage variants.
+	 * 
+	 * @param properPairRate Dataset proper pair rate (affects scoring)
+	 * @return Read bias score (0.0 to 1.0, higher = less biased)
+	 */
 	public double readBiasScore(double properPairRate){
-		if(properPairRate<0.5){return 0.95f;}
-		final int r1=r1AlleleCount(), r2=r2AlleleCount();
-		final double x=eventProb(r1, r2);
+		if(properPairRate<0.5){return 0.95f;} // Skip for unpaired data
+		final int r1=r1AlleleCount(), r2=r2AlleleCount(); // Read 1 vs Read 2 counts
+		final double x=VarProb.eventProb(r1, r2); // Statistical significance
 		
-		//This block added based on analyzing NIST GIAB diff
-		final double x2=0.10+0.90*x;
+		final double x2=0.10+0.90*x; // Compress range
 		double result=x2;
+		// Relaxed stringency for high-coverage variants
 		if(r1+r2>=20 && x2<0.9){
 			int min=Tools.min(r1, r2);
 			int max=Tools.max(r1, r2);
-			if(min>1 && min>0.07f*max){//Seen on both reads; relax stringency
-				double y=0.15+(0.2*min)/max; //Higher constants (maximum of 1.0 combined) push the end result closer to 1
+			if(min>1 && min>0.07f*max){ // Present in both reads
+				double y=0.15+(0.2*min)/max;
 				result=y+(1-y)*x2;
 			}
 		}
 		return result;
 	}
-	
-	/** Adjusted probability of a binomial event being at least this lopsided. */
-	public static double eventProb(int a, int b){
-		
-		double allowedBias=0.75;
-		double slopMult=0.95;
-		
-		double n=a+b;
-		double k=Tools.min(a, b);
-		
-		double slop=n*(allowedBias*0.5);
-		double dif=n-k*2;
-		dif=dif-(Tools.min(slop, dif)*slopMult);
-		n=k*2+dif;
-//		k=n*0.5-dif;
-		assert(k<=n*0.5) : a+", "+b+", "+n+", "+k+", "+slop+", "+dif;
-		
-		if(n>PROBLEN){
-			double mult=PROBLEN/n;
-			n=PROBLEN;
-			k=(int)(k*mult);
-		}
 
-		int n2=(int)Math.round(n);
-		int k2=Tools.min(n2/2, (int)(k+1));
-		
-
-//		if(a+b>3){
-//			System.err.println(n+", "+k+", "+n2+", "+k2);
-//		}
-		
-		double result=prob[n2][k2];
-		if(result<1 || a==b || a+1==b || a==b+1){return result;}
-		
-		double slope=Tools.min(a, b)/(double)Tools.max(a, b);
-		return (0.998+slope*0.002);
-	}
-	
 	/*--------------------------------------------------------------*/
 	/*----------------           Getters            ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/** Returns count of supporting reads on plus strand */
 	public int allelePlusCount(){return r1plus+r2plus;}
+	/** Returns count of supporting reads on minus strand */
 	public int alleleMinusCount(){return r1minus+r2minus;}
+	/** Returns count of supporting reads from Read 1 */
 	public int r1AlleleCount(){return r1plus+r1minus;}
+	/** Returns count of supporting reads from Read 2 */
 	public int r2AlleleCount(){return r2plus+r2minus;}
+	/** Returns total count of reads supporting this variant */
 	public int alleleCount(){return r1plus+r1minus+r2plus+r2minus;}
 
+	/**
+	* Calculates allele fraction (variant reads / total coverage).
+	* Uses maximum of variant count and total coverage for robustness.
+	* 
+	* @return Allele fraction (0.0 to 1.0)
+	*/
 	public double alleleFraction(){
 		int count=alleleCount();
-		int cov=Tools.max(count, coverage, 1);
+		int cov=Tools.max(count, coverage, 1); // Avoid division by zero
 		return count/(double)cov;
 	}
-	
+
+	/**
+	 * Calculates strand ratio balance (minority strand / majority strand).
+	 * Perfect balance returns 1.0, complete bias approaches 0.0.
+	 * 
+	 * @return Strand balance ratio (0.0 to 1.0)
+	 */
 	public double strandRatio(){
 		int plus=allelePlusCount();
 		int minus=alleleMinusCount();
-		if(plus==minus){return 1;}
+		if(plus==minus){return 1;} // Perfect balance
 		return (Tools.min(plus,  minus)+1)/(double)Tools.max(plus, minus);
 	}
+
+	/** Returns average base quality of supporting reads */
 	public double baseQAvg(){return baseQSum/(double)alleleCount();}
+	/** Returns average mapping quality of supporting reads */
 	public double mapQAvg(){return mapQSum/(double)alleleCount();}
+	/** Returns average distance from read ends */
 	public double edistAvg(){return endDistSum/(double)alleleCount();}
+	/** Returns average alignment identity of supporting reads */
 	public double identityAvg(){return idSum/(double)alleleCount();}
+	/** Returns average length of supporting reads */
 	public double lengthAvg(){return lengthSum/(double)alleleCount();}
+	/** Returns fraction of supporting reads that are properly paired */
 	public double properPairRate(){return properPairCount/(double)alleleCount();}
-	
-	
+
+	/**
+	 * Sets coverage values for this variant position.
+	 * @param coverage_ Total depth of coverage
+	 * @param minusCoverage_ Coverage on minus strand
+	 */
 	public void setCoverage(int coverage_, int minusCoverage_){
 		coverage=coverage_;
 		minusCoverage=minusCoverage_;
 	}
-	
+
+	/**
+	 * Returns total coverage at this position.
+	 * @return Coverage depth (must be calculated first)
+	 */
 	public int coverage(){
 		assert(coverage>-1) : coverage+", "+this;
 		return coverage;
 	}
-	
+
+	/**
+	 * Checks if coverage has been calculated for this variant.
+	 * @return True if coverage data is available
+	 */
 	public boolean hasCoverage(){
 		return coverage>-1;
 	}
-	
+
+	/**
+	 * Calculates distance from nearest contig end.
+	 * Variants near contig ends may be less reliable due to assembly issues.
+	 * Scans for runs of N bases to identify true contig boundaries.
+	 * 
+	 * @param map Scaffold mapping for sequence access
+	 * @return Distance to nearest contig end (in bases)
+	 */
 	public int contigEndDist(ScafMap map){
 		Scaffold scaf=map.getScaffold(scafnum);
 		int len=scaf.length;
 		byte[] bases=scaf.bases;
 		
-		int scafEndDist=Tools.max(0, Tools.min(start, len-stop));
+		int scafEndDist=Tools.max(0, Tools.min(start, len-stop)); // Distance to scaffold end
 		if(bases==null || nScan<1){return scafEndDist;}
 		int limit=Tools.min(nScan, scafEndDist);
-		int contigEndDist=leftContigEndDist(bases, limit);
+		int contigEndDist=leftContigEndDist(bases, limit); // Check left side for N runs
 		limit=Tools.min(limit, contigEndDist);
-		contigEndDist=rightContigEndDist(bases, limit);
+		contigEndDist=rightContigEndDist(bases, limit); // Check right side for N runs
 		return Tools.min(scafEndDist, contigEndDist);
 	}
-	
+
+	/**
+	 * Calculates distance to nearest contig end on the left side.
+	 * Searches for runs of 10+ N bases indicating contig boundaries.
+	 * 
+	 * @param bases Reference sequence
+	 * @param maxDist Maximum distance to search
+	 * @return Distance to left contig end
+	 */
 	public int leftContigEndDist(byte[] bases, int maxDist){
 		if(start>=bases.length){return Tools.min(bases.length, maxDist+1);}
-		int ns=0;
+		int ns=0; // Count of consecutive Ns
 		for(int i=start, lim=Tools.max(0, start-maxDist); i>=lim; i--){
 			if(AminoAcid.isFullyDefined(bases[i])){
-				ns=0;
+				ns=0; // Reset N count
 			}else{
 				ns++;
-				if(ns>=10){
+				if(ns>=10){ // Found contig boundary
 					int x=start-i-ns+1;
 					assert(x>=0);
 					return x;
 				}
 			}
 		}
-		return maxDist+1;
+		return maxDist+1; // No boundary found
 	}
-	
+
+	/**
+	 * Calculates distance to nearest contig end on the right side.
+	 * Searches for runs of 10+ N bases indicating contig boundaries.
+	 * 
+	 * @param bases Reference sequence
+	 * @param maxDist Maximum distance to search
+	 * @return Distance to right contig end
+	 */
 	public int rightContigEndDist(byte[] bases, int maxDist){
 		if(stop<0){return Tools.min(bases.length, maxDist+1);}
 		int ns=0;
@@ -1995,277 +1945,315 @@ public class Var implements Comparable<Var>, Serializable, Cloneable {
 		}
 		return maxDist+1;
 	}
-	
+
+	/**
+	 * Gets scaffold name using default scaffold mapping.
+	 * @return Scaffold/chromosome name
+	 */
 	public String scafName(){
 		return scafName(ScafMap.defaultScafMap());
 	}
-	
+
+	/**
+	 * Gets scaffold name using specified mapping.
+	 * @param map Scaffold mapping to use
+	 * @return Scaffold/chromosome name
+	 */
 	public String scafName(ScafMap map){
 		return map.getScaffold(scafnum).name;
 	}
 
+	/** Sets forced variant status (from input VCF) */
 	public Var setForced(boolean b){forced=b; return this;}
+	/** Returns whether this variant was forced from input */
 	public boolean forced(){return forced;}
-	
+
+	/** Sets flagged status for this variant */
 	public Var setFlagged(boolean b){flagged=b; return this;}
+	/** Returns whether this variant has been flagged */
 	public boolean flagged(){return flagged;}
 
-
+	/** Returns true if this is an insertion */
 	public final boolean ins(){return type==INS;}
+	/** Returns true if this is a deletion */
 	public final boolean del(){return type==DEL;}
+	/** Returns true if this is an insertion or deletion */
 	public final boolean indel(){return type==INS || type==DEL;}
+	/** Returns true if this is a substitution */
 	public final boolean sub(){return type==SUB;}
+	/** Returns true if this is a complex variant */
 	public final boolean complex(){return type==COMPLEX;}
+	/** 
+	 * Returns true if this variant causes a frameshift.
+	 * Frameshifts occur when indel length is not divisible by 3.
+	 */
 	public final boolean frameshift(){
-		int delta=Tools.absdif(reflen(), readlen());
-		return delta%3!=0;
+		int delta=Tools.absdif(reflen(), readlen()); // Length difference
+		return delta%3!=0; // Not divisible by 3
 	}
 	
 	/*--------------------------------------------------------------*/
 	/*----------------         Final Fields         ----------------*/
 	/*--------------------------------------------------------------*/
-	
+
+	/** Scaffold/chromosome number for this variant */
 	public final int scafnum;
+	/** Start position of variant (0-based, inclusive) */
 	public final int start;
-	public final int stop; //Half-open, so stop is always after start except for insertions
+	/** Stop position of variant (0-based, exclusive) */
+	public final int stop;
+	/** Alternative allele sequence */
 	public final byte[] allele;
+	/** Pre-computed hash code for efficient storage and comparison */
 	public final int hashcode;
+	/** Variant type constant (SUB, INS, DEL, etc.) */
 	public final int type;
-	
+
 	/*--------------------------------------------------------------*/
 	/*----------------        Mutable Fields        ----------------*/
 	/*--------------------------------------------------------------*/
 
-	private int coverage=-1;
-	private int minusCoverage=-1;
-	
+	/** Total coverage depth at this position (-1 = not calculated) */
+	int coverage=-1;
+	/** Coverage on minus strand (-1 = not calculated) */
+	int minusCoverage=-1;
+
+	/** Count of Read 1 supporting reads on plus strand */
 	int r1plus;
+	/** Count of Read 1 supporting reads on minus strand */
 	int r1minus;
+	/** Count of Read 2 supporting reads on plus strand */
 	int r2plus;
+	/** Count of Read 2 supporting reads on minus strand */
 	int r2minus;
+	/** Count of properly paired supporting reads */
 	int properPairCount;
-	
+
+	/** Sum of mapping qualities from supporting reads */
 	long mapQSum;
+	/** Maximum mapping quality among supporting reads */
 	public int mapQMax;
-	
+
+	/** Sum of base qualities from supporting reads */
 	long baseQSum;
+	/** Maximum base quality among supporting reads */
 	public int baseQMax;
-	
+
+	/** Sum of distances from read ends for supporting reads */
 	long endDistSum;
+	/** Maximum distance from read ends among supporting reads */
 	public int endDistMax;
-	
+
+	/** Sum of alignment identity scores from supporting reads */
 	long idSum;
+	/** Maximum alignment identity among supporting reads */
 	int idMax;
-	
+
+	/** Sum of read lengths from supporting reads */
 	long lengthSum;
-	
+
+	/** Count of nearby variants within scanning distance (-1 = not calculated) */
 	int nearbyVarCount=-1;
-	
+
+	/** Revised allele fraction accounting for technical biases (-1 = not calculated) */
 	double revisedAlleleFraction=-1;
+	/** Whether this variant was forced from input VCF file */
 	private boolean forced=false;
-	private boolean flagged=false;
-	
+	/** Whether this variant has been flagged for special attention */
+	boolean flagged=false;
+
 	/*--------------------------------------------------------------*/
 	/*----------------        Static Fields         ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Enable calling of insertion variants */
 	public static boolean CALL_INS=true;
+	/** Enable calling of deletion variants */
 	public static boolean CALL_DEL=true;
+	/** Enable calling of substitution variants */
 	public static boolean CALL_SUB=true;
+	/** Enable calling of no-call variants (all N bases) */
 	public static boolean CALL_NOCALL=false;
+	/** Enable calling of junction variants from clipped reads */
 	public static boolean CALL_JUNCTION=false;
-	
-	public static boolean extendedText=true;
-	
-	public static boolean noPassDotGenotype=false;
-	
-	public static boolean useHomopolymer=true;
-	public static boolean useIdentity=true;
-	public static boolean usePairing=true;
-	public static boolean useBias=true;
-	public static boolean useEdist=true;
-	public static boolean doNscan=true;
-	public static double lowCoveragePenalty=0.8;
-	public static int nScan=600;
-	public static int minEndDistForBias=200;
-	
-	public static int MIN_VAR_COPIES=0;
-	
-	final static int PROBLEN=100;
-	public static final boolean UPPER_CASE_ALLELES=true;
-	/** Verify that there are no variants with alt equal to ref */
-	private static final boolean TEST_REF_VARIANTS=false;
-	
-//	static final String[] typeArray=new String[] {"NOCALL","SUB","DEL","INS"};
-//	static final int NOCALL=0, SUB=1, DEL=2, INS=3;
 
+	/** Include extended statistics in text output */
+	public static boolean extendedText=true;
+
+	/** Use dot genotype for variants that fail filters */
+	public static boolean noPassDotGenotype=false;
+
+	/** Enable homopolymer context scoring */
+	public static boolean useHomopolymer=true;
+	/** Enable alignment identity scoring */
+	public static boolean useIdentity=true;
+	/** Enable proper pairing rate scoring */
+	public static boolean usePairing=true;
+	/** Enable strand/read bias scoring */
+	public static boolean useBias=true;
+	/** Enable distance from read ends scoring */
+	public static boolean useEdist=true;
+	/** Enable scanning for nearby N bases (contig ends) */
+	public static boolean doNscan=true;
+	/** Penalty factor for low coverage variants */
+	public static double lowCoveragePenalty=0.8;
+	/** Maximum distance to scan for contig ends */
+	public static int nScan=600;
+	/** Minimum distance from contig ends before applying bias penalties */
+	public static int minEndDistForBias=200;
+
+	/** Minimum number of variant copies required for calling */
+	public static int MIN_VAR_COPIES=0;
+
+	/** Convert allele sequences to uppercase in output */
+	public static final boolean UPPER_CASE_ALLELES=true;
+	/** Verify that variants don't match reference (debugging) */
+	private static final boolean TEST_REF_VARIANTS=false;
+
+	/** Semicolon character for VCF INFO field separation */
 	private static final byte colon=';';
+	/** Tab character for field separation */
 	private static final byte tab='\t';
+
+	/** Human-readable names for variant types */
 	public static final String[] typeArray=new String[] {"INS","NOCALL","SUB","DEL","LJUNCT","RJUNCT","BJUNCT","MULTI","COMPLEX"};
-	/** Insertion */
+
+	/** Insertion variant type constant */
 	public static final int INS=0;
-	/** No-call (length-neutral, ref N) */
+	/** No-call variant type (length-neutral, reference N) */
 	public static final int NOCALL=1;
-	/** Substitution (length-neutral) */
+	/** Substitution variant type (length-neutral) */
 	public static final int SUB=2;
-	/** Deletion */
+	/** Deletion variant type */
 	public static final int DEL=3;
-	/** Left-junction (left side clipped, right side normal) */
+	/** Left-junction variant (left side clipped, right side normal) */
 	public static final int LJUNCT=4;
-	/** Right-junction (right side clipped, left side normal) */
+	/** Right-junction variant (right side clipped, left side normal) */
 	public static final int RJUNCT=5;
 	/** Bidirectional junction (both sides clipped) */
 	public static final int BJUNCT=6;
-	/** Multiallelic (dominates all other types) */
+	/** Multiallelic variant (dominates all other types) */
 	public static final int MULTI=7;
-	/** Left-junction (left-side clipped, right side normal) */
+	/** Complex variant type */
 	public static final int COMPLEX=8;
-	
-	/** Number of variant types; same as typeArray.length */
+
+	/** Total number of variant types */
 	public static final int VAR_TYPES=COMPLEX+1;
-	
-	/** Initial letter for abbreviating type names */
+
+	/** Maps type initial letters to type constants for parsing */
 	static final byte[] typeInitialArray=new byte[128];
-	
+
+	/** Pre-allocated empty allele array for deletions */
 	static final byte[] AL_0=new byte[0];
+	/** Pre-allocated single A allele */
 	static final byte[] AL_A=new byte[] {(byte)'A'};
+	/** Pre-allocated single C allele */
 	static final byte[] AL_C=new byte[] {(byte)'C'};
+	/** Pre-allocated single G allele */
 	static final byte[] AL_G=new byte[] {(byte)'G'};
+	/** Pre-allocated single T allele */
 	static final byte[] AL_T=new byte[] {(byte)'T'};
+	/** Pre-allocated single N allele */
 	static final byte[] AL_N=new byte[] {(byte)'N'};
+	/** Maps ASCII codes to pre-allocated allele arrays */
 	static final byte[][] AL_MAP=makeMap();
+	/** Random codes for hash function */
 	static final int[] codes=makeCodes();
 
-	//For 64-bit hash keys
+	/*--------------------------------------------------------------*/
+	/*----------------     Bit Packing Constants    ----------------*/
+	/*--------------------------------------------------------------*/
+
+	/** Number of bits for variant type in hash keys */
 	private static final int typeBits=2;
+	/** Number of bits for allele hash in hash keys */
 	private static final int alleleBits=6;
+	/** Number of bits for scaffold number in hash keys */
 	private static final int scafBits=16;
+	/** Number of bits for length in hash keys */
 	private static final int lenBits=8;
 
+	/** Bit shift for allele hash in hash keys */
 	private static final int alleleShift=typeBits;
+	/** Bit shift for scaffold number in hash keys */
 	private static final int scafShift=alleleShift+alleleBits;
+	/** Bit shift for length in hash keys */
 	private static final int lenShift=scafShift+scafBits;
+	/** Bit shift for start position in hash keys */
 	private static final int startShift=lenShift+lenBits;
-	
-	
-//	public static ScafMap scafMap;
-	
+
+	/*--------------------------------------------------------------*/
+	/*----------------    Static Initialization     ----------------*/
+	/*--------------------------------------------------------------*/
+
+	/**
+	 * Generates array of random integers for hash function.
+	 * Uses fixed seed for reproducible hash codes across runs.
+	 * 
+	 * @return Array of 256 random integers for hash mixing
+	 */
 	static final int[] makeCodes(){
-		Random randy=new Random(1);
+		Random randy=new Random(1); // Fixed seed for reproducibility
 		int[] array=new int[256];
 		for(int i=0; i<array.length; i++){
-			array[i]=randy.nextInt();
+			array[i]=randy.nextInt(); // Generate random hash codes
 		}
 		return array;
 	}
-	
+
+	/**
+	 * Creates mapping from ASCII codes to pre-allocated allele arrays.
+	 * Avoids repeated allocation of single-base allele sequences.
+	 * Maps both uppercase and lowercase bases to same arrays.
+	 * 
+	 * @return Mapping array where AL_MAP[ascii_code] = allele_array
+	 */
 	static final byte[][] makeMap(){
 		byte[][] map=new byte[128][];
-		map[0]=map['.']=map['\t']=AL_0;
+		
+		// Map special characters and empty alleles
+		map[0]=map['.']=map['\t']=AL_0; // Empty allele for deletions
+		
+		// Map DNA bases (both upper and lowercase)
 		map['A']=map['a']=AL_A;
 		map['C']=map['c']=AL_C;
 		map['G']=map['g']=AL_G;
 		map['T']=map['t']=AL_T;
 		map['N']=map['n']=AL_N;
+		
+		// Fill remaining entries with single-byte arrays
 		for(int i=0; i<map.length; i++){
-			if(map[i]==null){map[i]=new byte[(byte)i];}
+			if(map[i]==null){
+				map[i]=new byte[]{(byte)i}; // Single-byte array for unmapped characters
+			}
 		}
 		return map;
 	}
-	
-	/** factorial[n]=n! */
-	private static final double[] factorial=makeFactorialArray(PROBLEN+1);
-	/** binomial[n][k] = combinations in n pick k (no replacement, order-insensitive) */
-	private static final double[][] binomial=makeBinomialMatrix(PROBLEN+1);
-	/** prob[n][k] = probability of an event this lopsided or worse. */
-	private static final double[][] prob=makeProbMatrix(PROBLEN+1);
 
-	private static double[] makeFactorialArray(int len) {
-		double[] x=new double[len];
-		x[0]=1;
-		for(int i=1; i<len; i++){
-			x[i]=x[i-1]*i;
-		}
-		return x;
-	}
-
-	private static double[][] makeBinomialMatrix(int len) {
-		double[][] matrix=new double[len][];
-		for(int n=0; n<len; n++){
-			final int kmax=n/2;
-			final double nf=factorial[n];
-			matrix[n]=new double[kmax+1];
-			for(int k=0; k<=kmax; k++){
-				final double kf=factorial[k];
-				final double nmkf=factorial[n-k];
-				double combinations=nf/kf;
-				combinations=combinations/nmkf;
-				matrix[n][k]=combinations;
-			}
-		}
-		return matrix;
-	}
-	
-	/** Combinations in n pick k, allowing somewhat higher max values... perhaps? */
-	private static double bigBinomial(int n, int k){
-		
-		double combinations=1;
-		for(int a=-1, b=-1, c=-1; a<=n || b<=k || c<=n-k; ) {
-			double mult=1;
-			if(combinations<1000000000 && a<=n){//Increase combinations
-				a++;
-				mult=Tools.max(1, a);
-			}else if(b<=k){//Decrease combinations
-				b++;
-				mult=1.0/Tools.max(1, a);
-			}else if(c<=n-k){//Decrease combinations
-				c++;
-				mult=1.0/Tools.max(1, a);
-			}else{
-				assert(false) : a+", "+b+", "+c+", "+n+", "+k+", "+(n-k)+", "+combinations;
-			}
-			combinations*=mult;
-			assert(combinations<Double.MAX_VALUE) : a+", "+b+", "+c+", "+n+", "+k+", "+(n-k)+", "+combinations;
-		}
-		
-		return combinations;
-	}
-
-	private static double[][] makeProbMatrix(int len) {
-		double[][] matrix=new double[len][];
-		double mult=2;
-		for(int n=0; n<len; n++){
-			final int kmax=n/2;
-			final double[] array=matrix[n]=new double[kmax+1];
-			for(int k=0; k<=kmax; k++){
-				final double combinations=binomial[n][k];
-				array[k]=combinations*mult;
-			}
-//			if(n<=12){System.err.println(Arrays.toString(array));}
-			for(int k=0; k<=kmax; k++){
-				array[k]=Tools.min(1, (k==0 ? 0 : array[k-1])+array[k]);
-			}
-//			if(n<=12){System.err.println(Arrays.toString(array));}
-//			assert(array[kmax]==1) : Arrays.toString(array);
-			mult*=0.5;
-//			if(n<=12){System.err.println();}
-		}
-		return matrix;
-	}
-	
+	/**
+	 * Static initialization block for type parsing arrays.
+	 * Maps variant type initial letters to type constants.
+	 */
 	static {
-		Arrays.fill(typeInitialArray, (byte)-1);
-		typeInitialArray['I']=INS;
-		typeInitialArray['N']=NOCALL;
-		typeInitialArray['S']=SUB;
-		typeInitialArray['D']=DEL;
-		typeInitialArray['L']=LJUNCT;
-		typeInitialArray['R']=RJUNCT;
-		typeInitialArray['B']=BJUNCT;
-		typeInitialArray['M']=MULTI;
-		typeInitialArray['C']=COMPLEX;
+		Arrays.fill(typeInitialArray, (byte)-1); // Initialize to invalid
+		
+		// Map type initial letters to constants
+		/**
+		* Static initialization block for type parsing arrays.
+		* Maps variant type initial letters to type constants.
+		*/
+		typeInitialArray['I']=INS; // Insertion
+		typeInitialArray['N']=NOCALL; // No-call
+		typeInitialArray['S']=SUB; // Substitution
+		typeInitialArray['D']=DEL; // Deletion
+		typeInitialArray['L']=LJUNCT; // Left junction
+		typeInitialArray['R']=RJUNCT; // Right junction
+		typeInitialArray['B']=BJUNCT; // Bidirectional junction
+		typeInitialArray['M']=MULTI; // Multiallelic
+		typeInitialArray['C']=COMPLEX; // Complex
 	}
-	
-	public static final String varFormat="1.3";
-}
 
+	/** Version string for VAR format output */
+	public static final String varFormat="1.3";
+
+}

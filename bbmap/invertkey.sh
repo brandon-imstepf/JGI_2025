@@ -7,7 +7,7 @@ Last modified October 2, 2017
 
 Description:  Inverts a sketch key, given a matching reference.
 
-Usage:  invertsketch.sh in=<reference> key=<key> k=<31>
+Usage:  invertkey.sh in=<reference> key=<key> k=<31>
 
 I/O parameters:
 out=<file>      Output file.
@@ -26,6 +26,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -66,7 +67,7 @@ calcXmx () {
 calcXmx "$@"
 
 makepolymers() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP sketch.InvertKey $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP sketch.InvertKey $@"
 	echo $CMD >&2
 	eval $CMD
 }

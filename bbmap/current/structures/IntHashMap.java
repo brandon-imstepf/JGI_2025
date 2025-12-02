@@ -10,6 +10,7 @@ import shared.Primes;
 import shared.Shared;
 import shared.Timer;
 import shared.Tools;
+import shared.Vector;
 
 /**
  * @author Brian Bushnell
@@ -30,6 +31,11 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 		bench(size);
 	}
 	
+	/**
+	 * Benchmarks IntHashMap performance against HashMap<Integer,Integer>.
+	 * Creates maps, populates them with sequential key-value pairs, and measures timing.
+	 * @param size Number of key-value pairs to insert during benchmark
+	 */
 	private static void bench(int size){
 		System.gc();
 		Timer t=new Timer();
@@ -69,14 +75,23 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 	/*----------------        Initialization        ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Creates an IntHashMap with default initial size of 256 */
 	public IntHashMap(){
 		this(256);
 	}
 	
+	/** Creates an IntHashMap with specified initial size and default load factor.
+	 * @param initialSize Initial capacity for the hash table */
 	public IntHashMap(int initialSize){
 		this(initialSize, 0.7f);
 	}
 	
+	/**
+	 * Creates an IntHashMap with specified initial size and load factor.
+	 * Load factor is clamped to the range [0.25, 0.90] for performance.
+	 * @param initialSize Initial capacity for the hash table
+	 * @param loadFactor_ Target load factor (ratio of occupied to total slots)
+	 */
 	public IntHashMap(int initialSize, float loadFactor_){
 		invalid=randy.nextInt()|MINMASK;
 		assert(invalid<0);
@@ -107,6 +122,8 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 	@Override
 	public int put(int key, int value){return set(key, value);}
 	
+	/** Copies all key-value mappings from the specified map to this map.
+	 * @param map IntHashMap whose mappings are to be copied */
 	public void putAll(IntHashMap map) {
 		for(int i=0; i<map.keys.length; i++) {
 			if(map.keys[i]!=map.invalid) {
@@ -152,6 +169,11 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 		return value;
 	}
 	
+	/**
+	 * Increments all keys in this map by the corresponding values from another map.
+	 * For each key-value pair in the source map, adds that value to the current value.
+	 * @param map IntHashMap containing increment values for each key
+	 */
 	public void incrementAll(IntHashMap map) {
 		for(int i=0; i<map.keys.length; i++) {
 			if(map.keys[i]!=map.invalid) {
@@ -160,6 +182,11 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 		}
 	}
 	
+	/**
+	 * Sets each key to the maximum of its current value and the value from another map.
+	 * Only updates keys that exist in the source map.
+	 * @param map IntHashMap containing values to compare against
+	 */
 	public void setToMax(IntHashMap map) {
 		for(int i=0; i<map.keys.length; i++) {
 			final int key=map.keys[i];
@@ -187,6 +214,11 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 	/*----------------        Private Methods       ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Rehashes all entries following a deletion to maintain clustering properties.
+	 * Scans from the deletion point forward, then wraps around to maintain probe sequences.
+	 * @param initial Cell position where rehashing should begin
+	 */
 	private void rehashFrom(int initial){
 		if(size<1){return;}
 		final int limit=keys.length;
@@ -218,53 +250,36 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 		return true;
 	}
 	
+	/**
+	 * Generates a new invalid marker value when the current one conflicts with a key.
+	 * Scans existing keys to ensure the new invalid value doesn't collide.
+	 * Updates all empty cells to use the new invalid marker.
+	 */
 	private void resetInvalid(){
 		final int old=invalid;
 		int x=invalid;
 		while(x==old || contains(x)){x=randy.nextInt()|MINMASK;}
 		assert(x<0);
 		invalid=x;
-		for(int i=0; i<keys.length; i++){
-			if(keys[i]==old){
-				keys[i]=invalid;
-//				assert(volues[i]==0); //TODO: slow
-			}
-		}
+		Vector.changeAll(keys, old, x);
 	}
 
 	@Override
 	int findCell(final int key){
-		if(key==invalid){return -1;}
-		
-		final int limit=keys.length, initial=(int)((key&MASK)%modulus);
-		for(int cell=initial; cell<limit; cell++){
-			final int x=keys[cell];
-			if(x==key){return cell;}
-			if(x==invalid){return -1;}
-		}
-		for(int cell=0; cell<initial; cell++){
-			final int x=keys[cell];
-			if(x==key){return cell;}
-			if(x==invalid){return -1;}
-		}
-		return -1;
+//		if(key==invalid){return -1;}
+		final int initial=((key&MASK)%modulus);
+		return Vector.findKeyScalar(keys, key, initial, invalid);
 	}
 	
 	private int findCellOrEmpty(final int key){
 		assert(key!=invalid) : "Collision - this should have been intercepted.";
-		
-		final int limit=keys.length, initial=(int)((key&MASK)%modulus);
-		for(int cell=initial; cell<limit; cell++){
-			final int x=keys[cell];
-			if(x==key || x==invalid){return cell;}
-		}
-		for(int cell=0; cell<initial; cell++){
-			final int x=keys[cell];
-			if(x==key || x==invalid){return cell;}
-		}
-		throw new RuntimeException("No empty cells - size="+size+", limit="+limit);
+		final int initial=(int)((key&MASK)%modulus);
+		return Vector.findKeyOrInvalid(keys, key, initial, invalid);
 	}
 	
+	/**
+	 * Doubles the hash table capacity when the load factor threshold is exceeded
+	 */
 	private final void resize(){
 		assert(size>=sizeLimit);
 		resize(keys.length*2L+1);
@@ -280,7 +295,8 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 		modulus=(int)newPrime;
 		
 		final int size3=(int)(newPrime+extra);
-		sizeLimit=(int)(modulus*loadFactor);
+		final float lf=(size3<0x60000000 ? loadFactor : Math.max(loadFactor, 0.80f));
+		sizeLimit=(int)(modulus*lf);
 		final int[] oldK=keys;
 		final int[] oldV=values;
 		keys=KillSwitch.allocInt1D(size3);
@@ -336,15 +352,22 @@ public final class IntHashMap extends AbstractIntHashMap implements Serializable
 	/*----------------            Fields            ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/** Array storing hash table keys; empty slots contain the invalid marker */
 	private int[] keys;
+	/** Array storing hash table values corresponding to keys array */
 	private int[] values;
+	/** Number of key-value pairs currently stored in the map */
 	private int size=0;
 	/** Value for empty cells */
 	private int invalid;
+	/** Prime number used for hash function modulo operation */
 	private int modulus;
+	/** Maximum entries before triggering a resize (capacity * loadFactor) */
 	private int sizeLimit;
+	/** Target ratio of occupied to total slots for resize triggering */
 	private final float loadFactor;
 	
+	/** Random number generator for creating invalid marker values */
 	private static final Random randy=new Random(1);
 	
 }

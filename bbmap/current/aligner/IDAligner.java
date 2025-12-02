@@ -4,8 +4,8 @@ package aligner;
  *Interface for aligners that can calculate pairwise identity.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
- *@date April 24, 2024
+ *@contributor Isla
+ *@date April 24, 2025
  */
 public interface IDAligner {
 	
@@ -51,7 +51,11 @@ public interface IDAligner {
 	 */
 	public float align(byte[] q, byte[] r, int[] posVector, int minScore);
 	
+	/** Returns the number of alignment loops performed.
+	 * @return Loop count as long value */
 	public long loops();
+	/** Sets the loop counter for alignment operations.
+	 * @param i Loop count value to set */
 	public void setLoops(long i);
 	
 }

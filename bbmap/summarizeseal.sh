@@ -33,6 +33,7 @@ ignoresamelocation=f   Ignore secondary hits sharing a sampling site.
 totaldenominator=f     (td) Use all bases as denominator rather than mapped bases.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -66,7 +67,7 @@ calcXmx () {
 calcXmx "$@"
 
 summarizeseal() {
-	local CMD="java $EA $EOOM $z -cp $CP driver.SummarizeSealStats $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP driver.SummarizeSealStats $@"
 #	echo $CMD >&2
 	eval $CMD
 }

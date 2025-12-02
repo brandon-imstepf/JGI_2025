@@ -12,15 +12,15 @@ Usage:  taxserver.sh tree=<taxtree file> table=<gitable file> port=<number>
 Usage examples:
 taxserver.sh tree=tree.taxtree.gz table=gitable.int1d.gz port=1234
 
-On Genepool:
+At LBL:
 taxserver.sh tree=auto table=auto port=1234
 
-For accession number support, add accession=<something>  E.g.:
+For accession number support, add accession=<file,file>  E.g.:
 
 External:
 taxserver.sh -Xmx45g tree=tree.taxtree.gz table=gitable.int1d.gz accession=prot.accession2taxid.gz,nucl_wgs.accession2taxid.gz port=1234
 
-On Genepool:
+At LBL:
 taxserver.sh tree=auto table=auto accession=auto port=1234
 
 If all expected files are in some specific location, you can also do this:
@@ -75,6 +75,7 @@ Java Parameters:
 -da                 Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -109,7 +110,7 @@ calcXmx () {
 calcXmx "$@"
 
 taxserver() {
-	local CMD="java $EA $EOOM $z $z2 -cp $CP tax.TaxServer $@"
+	local CMD="java $EA $SIMD $EOOM $z $z2 -cp $CP tax.TaxServer $@"
 	echo $CMD >&2
 	eval $CMD
 }

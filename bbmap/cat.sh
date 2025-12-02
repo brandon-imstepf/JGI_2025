@@ -5,7 +5,9 @@ echo "
 Written by Brian Bushnell
 Last modified January 20, 2025
 
-Description:  Concatenates and recompresses files.
+Description:  Concatenates and recompresses text files.
+Compressed files (gz and bz2) are decompressed first.
+Do not use with binary files, it replaces \r\n with \n.
 
 Usage:  cat.sh *.fna out=catted.fa.gz
 
@@ -28,6 +30,7 @@ Java Parameters:
 -da             Disable assertions.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 
@@ -62,7 +65,7 @@ calcXmx () {
 calcXmx "$@"
 
 catFiles() {
-	local CMD="java $EA $EOOM $z -cp $CP fileIO.Concatenate $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP fileIO.Concatenate $@"
 	echo $CMD >&2
 	eval $CMD
 }

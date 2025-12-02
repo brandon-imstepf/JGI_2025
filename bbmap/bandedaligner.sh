@@ -25,6 +25,7 @@ iterations      Optional integer for benchmarking multiple iterations.
 simd            Enable SIMD mode.  Needs a large band to be effective.
 
 Please contact Brian Bushnell at bbushnell@lbl.gov if you encounter any problems.
+For documentation and the latest version, visit: https://bbmap.org
 "
 }
 

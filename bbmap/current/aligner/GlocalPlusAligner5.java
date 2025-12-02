@@ -1,9 +1,9 @@
 package aligner;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 import shared.Shared;
-import shared.Timer;
 
 /**
  *Aligns two sequences to return ANI.
@@ -13,7 +13,7 @@ import shared.Timer;
  *Limited to length 2Mbp with 21 position bits.
  *
  *@author Brian Bushnell
- *@contributor Isla (Highly-customized Claude instance)
+ *@contributor Isla
  *@date May 5, 2025
  */
 public class GlocalPlusAligner5 implements IDAligner{
@@ -30,6 +30,7 @@ public class GlocalPlusAligner5 implements IDAligner{
 	/*----------------             Init             ----------------*/
 	/*--------------------------------------------------------------*/
 
+	/** Default constructor for GlocalPlusAligner5 instance */
 	public GlocalPlusAligner5() {}
 	
 	/*--------------------------------------------------------------*/
@@ -72,6 +73,7 @@ public class GlocalPlusAligner5 implements IDAligner{
 		assert(ref.length<=POSITION_MASK) : "Ref is too long: "+ref.length+">"+POSITION_MASK;
 		final int qLen=query.length;
 		final int rLen=ref.length;
+		long mloops=0;
 		Visualizer viz=(output==null ? null : new Visualizer(output, POSITION_BITS, DEL_BITS));
 		
 		// Banding parameters
@@ -104,8 +106,7 @@ public class GlocalPlusAligner5 implements IDAligner{
 			final long q=query[i-1];
 			
 			if(Shared.SIMD) {
-				shared.SIMDAlign.alignBandVectorDel(q, ref, bandStart, bandEnd, prev, curr, 
-						MATCH, N_SCORE, SUB, INS, DEL_INCREMENT);
+				shared.SIMDAlign.alignBandVectorDel(q, ref, bandStart, bandEnd, prev, curr);
 			}else {
 
 				// Process only cells within the band
@@ -143,7 +144,7 @@ public class GlocalPlusAligner5 implements IDAligner{
 			}
 			
 			if(viz!=null) {viz.print(curr, bandStart, bandEnd, rLen);}
-			if(loops>=0) {loops+=(bandEnd-bandStart+1);}
+			mloops+=(bandEnd-bandStart+1);
 
 			// Swap rows
 			long[] temp=prev;
@@ -151,9 +152,22 @@ public class GlocalPlusAligner5 implements IDAligner{
 			curr=temp;
 		}
 		if(viz!=null) {viz.shutdown();}
+		loops.addAndGet(mloops);
 		return postprocess(prev, qLen, bandStart, bandEnd, posVector);
 	}
 
+	/**
+	 * Post-processes alignment matrix to extract identity score and positions.
+	 * Finds optimal score, extracts bit-packed alignment information,
+	 * and calculates match/substitution/indel counts using system of equations.
+	 *
+	 * @param prev Final row of alignment matrix
+	 * @param qLen Query sequence length
+	 * @param bandStart Start of alignment band
+	 * @param bandEnd End of alignment band
+	 * @param posVector Optional int[2] to receive {rStart, rStop} positions
+	 * @return Identity score between 0.0 and 1.0
+	 */
 	private static final float postprocess(long[] prev, int qLen, int bandStart, int bandEnd, int[] posVector) {
 		// Find best score outside of main loop
 		long maxScore=Long.MIN_VALUE;
@@ -202,7 +216,7 @@ public class GlocalPlusAligner5 implements IDAligner{
 			System.err.println("refAlnLength="+refAlnLength);
 			System.err.println("rawScore="+rawScore);
 			System.err.println("deletions="+deletions);
-			System.err.println("matches="+matches);
+			System.err.println("matches="+matches); //Possible bug: duplicate print statement
 			System.err.println("substitutions="+substitutions);
 			System.err.println("insertions="+insertions);
 			System.err.println("identity="+identity);
@@ -235,9 +249,14 @@ public class GlocalPlusAligner5 implements IDAligner{
 		return id;
 	}
 	
-	static long loops=-1; //-1 disables.  Be sure to disable this prior to release!
-	public long loops() {return loops;}
-	public void setLoops(long x) {loops=x;}
+	/** Counter for total alignment loop iterations across all threads */
+	private static AtomicLong loops=new AtomicLong(0);
+	/** Gets the current loop counter value */
+	public long loops() {return loops.get();}
+	/** Sets the loop counter value.
+	 * @param x New loop counter value */
+	public void setLoops(long x) {loops.set(x);}
+	/** Output file path for visualization data (null disables visualization) */
 	public static String output=null;
 
 	/*--------------------------------------------------------------*/
@@ -245,26 +264,41 @@ public class GlocalPlusAligner5 implements IDAligner{
 	/*--------------------------------------------------------------*/
 
 	// Bit field definitions
+	/** Number of bits allocated for position information in bit-packed scores */
 	private static final int POSITION_BITS=21;
+	/** Number of bits allocated for deletion count in bit-packed scores */
 	private static final int DEL_BITS=21;
+	/** Bit shift amount to access score portion of bit-packed values */
 	private static final int SCORE_SHIFT=POSITION_BITS+DEL_BITS;
 
 	// Masks
+	/** Bit mask for extracting position information from bit-packed scores */
 	private static final long POSITION_MASK=(1L << POSITION_BITS)-1;
+	/** Bit mask for extracting deletion count from bit-packed scores */
 	private static final long DEL_MASK=((1L << DEL_BITS)-1) << POSITION_BITS;
+	/** Bit mask for extracting raw score from bit-packed values */
 	private static final long SCORE_MASK=~(POSITION_MASK | DEL_MASK);
 
 	// Scoring constants
+	/** Bit-packed score increment for sequence matches */
 	private static final long MATCH=1L << SCORE_SHIFT;
+	/** Bit-packed score penalty for substitutions */
 	private static final long SUB=(-1L) << SCORE_SHIFT;
+	/** Bit-packed score penalty for insertions */
 	private static final long INS=(-1L) << SCORE_SHIFT;
+	/** Bit-packed score penalty for deletions */
 	private static final long DEL=(-1L) << SCORE_SHIFT;
+	/** Bit-packed score for ambiguous base matches (neither penalty nor reward) */
 	private static final long N_SCORE=0L;
+	/** Sentinel value representing invalid/impossible alignment scores */
 	private static final long BAD=Long.MIN_VALUE/2;
+	/** Combined increment for deletions including position tracking */
 	private static final long DEL_INCREMENT=(1L<<POSITION_BITS)+DEL;
 
 	// Run modes
+	/** Debug flag for printing alignment operation details */
 	private static final boolean PRINT_OPS=false;
+	/** Flag to enable global alignment mode instead of glocal */
 	public static boolean GLOBAL=false;
 
 }

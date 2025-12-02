@@ -13,8 +13,6 @@ import dna.Data;
 import fileIO.ByteFile;
 import fileIO.ReadWrite;
 import fileIO.TextFile;
-import shared.LineParser1;
-import shared.LineParserS1;
 import shared.Parse;
 import shared.Parser;
 import shared.PreParser;
@@ -351,6 +349,7 @@ public class TaxTree implements Serializable{
 //		outstream.println("Assigned "+substrains+" substrains.");
 	}
 	
+	/** @deprecated Legacy strain assignment method */
 	@Deprecated
 	private void assignStrainsOld(){
 
@@ -1659,11 +1658,21 @@ public class TaxTree implements Serializable{
 		return getNode(mergedMap.get(id), true);
 	}
 	
+	/**
+	 * Get the taxonomic level of a TaxID.
+	 * @param id TaxID
+	 * @return Taxonomic level or -1 if not found
+	 */
 	public int toLevel(int id) {
 		TaxNode tn=getNode(id);
 		return tn==null ? -1 : tn.level;
 	}
 	
+	/**
+	 * Resolve merged TaxID to current TaxID.
+	 * @param id TaxID to resolve
+	 * @return Current TaxID
+	 */
 	public int resolveID(int id) {
 		if(mergedMap==null) {return id;}
 		int x=mergedMap.get(id);
@@ -1684,20 +1693,48 @@ public class TaxTree implements Serializable{
 		return getNode(mergedMap.get(id), true);
 	}
 	
+	/**
+	 * Get node at specified minimum level.
+	 * @param id TaxID
+	 * @param minLevel Minimum level
+	 * @return Node at appropriate level
+	 */
 	public TaxNode getNodeAtLevel(int id, int minLevel){
 		return getNodeAtLevel(id, minLevel, DOMAIN);
 	}
 	
+	/**
+	 * Get node at specified minimum extended level.
+	 * @param id TaxID
+	 * @param minLevelE Minimum extended level
+	 * @return Node at appropriate level
+	 */
 	public TaxNode getNodeAtLevelExtended(int id, int minLevelE){
 		return getNodeAtLevelExtended(id, minLevelE, DOMAIN_E);
 	}
 	
+	/**
+	 * Get node at specified level range.
+	 *
+	 * @param id TaxID
+	 * @param minLevel Minimum level
+	 * @param maxLevel Maximum level
+	 * @return Node at appropriate level
+	 */
 	public TaxNode getNodeAtLevel(int id, int minLevel, int maxLevel){
 		final int minLevelExtended=levelToExtended(minLevel);
 		final int maxLevelExtended=levelToExtended(maxLevel);
 		return getNodeAtLevelExtended(id, minLevelExtended, maxLevelExtended);
 	}
 	
+	/**
+	 * Get node at specified extended level range.
+	 *
+	 * @param id TaxID
+	 * @param minLevelE Minimum extended level
+	 * @param maxLevelE Maximum extended level
+	 * @return Node at appropriate level
+	 */
 	public TaxNode getNodeAtLevelExtended(int id, int minLevelE, int maxLevelE){
 		TaxNode tn=getNode(id);
 		while(tn!=null && tn.pid!=tn.id && tn.levelExtended<minLevelE){
@@ -1708,6 +1745,12 @@ public class TaxTree implements Serializable{
 		return tn;
 	}
 	
+	/**
+	 * Get TaxID at specified extended level.
+	 * @param taxID Starting TaxID
+	 * @param taxLevelExtended Desired extended level
+	 * @return TaxID at specified level
+	 */
 	public int getIdAtLevelExtended(int taxID, int taxLevelExtended){
 		if(taxLevelExtended<0){return taxID;}
 		TaxNode tn=getNode(taxID);
@@ -1769,6 +1812,12 @@ public class TaxTree implements Serializable{
 		return map;
 	}
 	
+	/**
+	 * Internal method for name-based node lookup.
+	 * @param s Name to search for
+	 * @param lowercase Use lowercase matching
+	 * @return List of matching nodes
+	 */
 	private List<TaxNode> getNodesByName(String s, boolean lowercase){
 		if(s==null){return null;}
 		if(s.indexOf('_')>=0){s=s.replace('_', ' ');}
@@ -1800,6 +1849,11 @@ public class TaxTree implements Serializable{
 		}
 		return hits;
 	}
+	/**
+	 * Get all ancestors of a node.
+	 * @param id TaxID
+	 * @return List of ancestor nodes
+	 */
 	public ArrayList<TaxNode> getAncestors(int id){
 		TaxNode current=getNode(id);
 		ArrayList<TaxNode> list=new ArrayList<TaxNode>();
@@ -1811,6 +1865,12 @@ public class TaxTree implements Serializable{
 		return list;
 	}
 	
+	/**
+	 * Increment counts for multiple TaxIDs.
+	 * @param ids List of TaxIDs
+	 * @param counts Corresponding counts
+	 * @param sync Use synchronization
+	 */
 	public void increment(IntList ids, IntList counts, boolean sync){
 		
 		ids.sort();
@@ -1833,12 +1893,18 @@ public class TaxTree implements Serializable{
 		}
 	}
 	
+	/**
+	 * Increment raw count for a TaxID.
+	 * @param id TaxID
+	 * @param amt Amount to increment
+	 */
 	public void incrementRaw(int id, long amt){
 		assert(id>=0 && id<nodes.length) : "TaxID "+id+" is out of range."+(id<0 ? "" : "  Possibly the taxonomy data needs to be updated.");
 		assert(nodes[id]!=null) : "No node for TaxID "+id+"; possibly the taxonomy data needs to be updated.";
 		nodes[id].incrementRaw(amt);
 	}
 	
+	/** Percolate counts upward through the entire tree */
 	public void percolateUp(){
 		for(int i=0; i<treeLevelsExtended.length; i++){
 			percolateUp(i);
@@ -2108,12 +2174,22 @@ public class TaxTree implements Serializable{
 	/*----------------             IMG              ----------------*/
 	/*--------------------------------------------------------------*/
 	
+	/**
+	 * Convert IMG ID to TaxID.
+	 * @param img IMG identifier
+	 * @return TaxID or -1 if not found
+	 */
 	public static int imgToTaxid(long img){
 		ImgRecord ir=imgMap.get(img);
 //		assert(false) : "\n"+img+"\n"+imgMap.get(img)+"\n"+562+"\n"+imgMap.get(562)+"\n"+imgMap.size()+"\n"+IMGHQ+"\n"+defaultImgFile()+"\n";
 		return ir==null ? -1 : ir.taxID;
 	}
 	
+	/**
+	 * Convert IMG ID to TaxNode.
+	 * @param img IMG identifier
+	 * @return TaxNode or null if not found
+	 */
 	public TaxNode imgToTaxNode(long img){
 		int tid=imgToTaxid(img);
 		return tid<1 ? null : getNode(tid);
@@ -2131,6 +2207,14 @@ public class TaxTree implements Serializable{
 //		return x;
 //	}
 	
+	/**
+	 * Load IMG mapping data from file.
+	 *
+	 * @param fname IMG file name
+	 * @param storeName Store organism names
+	 * @param outstream Print stream for output
+	 * @return Number of records loaded
+	 */
 	public static int loadIMG(String fname, boolean storeName, PrintStream outstream){
 		assert(imgMap==null);
 		if(fname==null){return 0;}
@@ -2143,6 +2227,11 @@ public class TaxTree implements Serializable{
 		return x;
 	}
 	
+	/**
+	 * Load IMG mapping data from array.
+	 * @param array Array of IMG records
+	 * @return Number of records loaded
+	 */
 	public static int loadIMG(ImgRecord[] array){
 		assert(imgMap==null);
 		imgMap=new HashMap<Long, ImgRecord>((int)(array.length*1.5));
@@ -2152,6 +2241,11 @@ public class TaxTree implements Serializable{
 		return imgMap.size();
 	}
 	
+	/**
+	 * @deprecated Parse taxonomic level string
+	 * @param b Level string
+	 * @return Level number
+	 */
 	@Deprecated
 	public static int parseLevel(String b){
 		final int level;
@@ -2164,6 +2258,11 @@ public class TaxTree implements Serializable{
 		return level;
 	}
 	
+	/**
+	 * Parse extended taxonomic level string.
+	 * @param b Level string
+	 * @return Extended level number
+	 */
 	public static int parseLevelExtended(String b){
 		final int level;
 		if(b==null){level=-1;}
@@ -2175,6 +2274,11 @@ public class TaxTree implements Serializable{
 		return level;
 	}
 	
+	/**
+	 * Check if TaxID represents unclassified organism.
+	 * @param tid TaxID to check
+	 * @return true if unclassified
+	 */
 	public boolean isUnclassified(int tid){
 		TaxNode tn=getNode(tid);
 		while(tn!=null && tn.id!=tn.pid){
@@ -2185,6 +2289,11 @@ public class TaxTree implements Serializable{
 		return false;
 	}
 	
+	/**
+	 * Check if TaxID represents environmental sample.
+	 * @param tid TaxID to check
+	 * @return true if environmental sample
+	 */
 	public boolean isEnvironmentalSample(int tid){
 		TaxNode tn=getNode(tid);
 		while(tn!=null && tn.id!=tn.pid){
@@ -2195,6 +2304,11 @@ public class TaxTree implements Serializable{
 		return false;
 	}
 	
+	/**
+	 * Check if TaxID represents a virus.
+	 * @param tid TaxID to check
+	 * @return true if virus
+	 */
 	public boolean isVirus(int tid){
 		TaxNode tn=getNode(tid);
 		while(tn!=null && tn.id!=tn.pid){
@@ -2205,6 +2319,11 @@ public class TaxTree implements Serializable{
 		return false;
 	}
 	
+	/**
+	 * Get bit mask of defined taxonomic levels for TaxID.
+	 * @param tid TaxID
+	 * @return Bitmask of defined levels
+	 */
 	public long definedLevels(int tid){
 		long levels=0;
 		TaxNode tn=getNode(tid);
@@ -2214,6 +2333,11 @@ public class TaxTree implements Serializable{
 		return levels;
 	}
 	
+	/**
+	 * Get bit mask of defined extended taxonomic levels for TaxID.
+	 * @param tid TaxID
+	 * @return Bitmask of defined extended levels
+	 */
 	public long definedLevelsExtended(int tid){
 		long levels=0;
 		TaxNode tn=getNode(tid);
@@ -2230,6 +2354,12 @@ public class TaxTree implements Serializable{
 	 * @return Correct name for this node.
 	 */
 	public String mononomial(int tid){return mononomial(getNode(tid));}
+	/**
+	 * Generates the mononomial name for this taxonomic level based on the scientific name.
+	 * For example, "Homo sapiens" -> "Sapiens"
+	 * @param tn TaxNode
+	 * @return Correct name for this node
+	 */
 	public String mononomial(TaxNode tn){
 		if(tn==null){return null;}
 		String name=tn.name;
@@ -2271,8 +2401,10 @@ public class TaxTree implements Serializable{
 	HashMap<String, ArrayList<TaxNode>> nameMapLower;
 	/** Map of nodes to child nodes */
 	HashMap<TaxNode, ArrayList<TaxNode>> childMap;
+	/** Get the name map */
 	public HashMap<String, ArrayList<TaxNode>> nameMap(){return nameMap;}
 	
+	/** @deprecated Minimum valid taxa count */
 	@Deprecated
 	public int minValidTaxa=0; //TODO: Remove (will break serialization)
 	
@@ -2282,6 +2414,7 @@ public class TaxTree implements Serializable{
 	public boolean reassign=true;
 	/** Discard no-rank nodes */
 	public boolean skipNorank=false;
+	/** Maximum level for rank inference */
 	public int inferRankLimit=0;//levelMap.get("species");
 	
 	//Node Statistics
@@ -2309,7 +2442,9 @@ public class TaxTree implements Serializable{
 	/** Probably unnecessary at this point...  present for legacy reasons */
 	public static boolean CRASH_IF_NO_GI_TABLE=true;
 
+	/** Enable verbose output */
 	public static boolean verbose=false;
+	/** Show warning messages */
 	public static boolean SHOW_WARNINGS=false;
 	
 	/** Maps IMG IDs to records from the dump file */
@@ -2325,6 +2460,9 @@ public class TaxTree implements Serializable{
 	
 	/** A simpler and probably less safe version of sharedTree(...) */
 	public static TaxTree getTree(){return sharedTree;}
+	
+	/** A simpler and probably less safe version of sharedTree(...) */
+	public static TaxTree sharedTree(){return sharedTree(defaultTreeFile(), true, true, System.err);}
 	
 	/**
 	 * Fetch the shared tree, loading it from file if not present.
@@ -2409,7 +2547,17 @@ public class TaxTree implements Serializable{
 
 	/** Get the number for the normal level of this name */
 	public static final int stringToLevel(String s){return altLevelMap.get(s);}
+	/**
+	 * Get the number for the short level name.
+	 * @param s Short level name
+	 * @return Level number
+	 */
 	public static final int shortStringToLevel(String s){return shortLevelMap.get(s);}
+	/**
+	 * Check if extended level map contains this name.
+	 * @param s Level name
+	 * @return true if contained
+	 */
 	public static final boolean levelMapExtendedContains(String s){return levelMapExtended.containsKey(s);}
 	/** Get the number for the extended level of this name */
 	public static final int stringToLevelExtended(String s){return levelMapExtended.get(s);}
@@ -2612,7 +2760,7 @@ public class TaxTree implements Serializable{
 					Shared.IGBVM ? defaultTaxPathIGBVM : 
 						Shared.DORI ? defaultTaxPathDori : 
 							(Shared.PERLMUTTER || Shared.NERSC) ? defaultTaxPathNersc :
-								Data.ROOT()+"/resources/";
+								Data.ROOT().replace("/current/", "/resources/");//TODO:  Need replacelast.
 	}
 
 	/** 16S consensus sequences per TaxID */

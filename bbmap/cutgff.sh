@@ -11,8 +11,7 @@ to a new fasta.  Features are output in their sense strand.
 Usage:  cutgff.sh in=<fna file> gff=<gff file> out=<fna file>
 
 in= is optional, and gff filenames will be automaitically assumed based on
-the fasta name if not specified.  This allows running on multiple files
-like this:
+the fasta name if not specified.  This allows running on multiple files:
 
 cutgff.sh types=rRNA out=16S.fa minlen=1440 maxlen=1620 attributes=16S bacteria/*.fna.gz
 
@@ -82,7 +81,7 @@ calcXmx () {
 calcXmx "$@"
 
 gff() {
-	local CMD="java $EA $EOOM $z -cp $CP gff.CutGff $@"
+	local CMD="java $EA $SIMD $EOOM $z -cp $CP gff.CutGff $@"
 #	echo $CMD >&2
 	eval $CMD
 }
