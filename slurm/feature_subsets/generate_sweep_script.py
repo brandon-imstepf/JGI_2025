@@ -1,44 +1,63 @@
 #!/usr/bin/env python3
+import argparse
 import gzip
 import shlex
+from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 PROJECT_ROOT = Path("/clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf")
 TRAIN_SCRIPT = PROJECT_ROOT / "bbmap" / "train.sh"
 TRAINING_ROOT = PROJECT_ROOT / "training_datasets"
 LOG_ROOT = PROJECT_ROOT / "logs" / "hparam_sweep"
-NET_ROOT = PROJECT_ROOT / "comparison_models" / "hparam_sweep_nets"
+NET_ROOT = PROJECT_ROOT / "networks" / "hparam_sweep_nets"
 SCRIPT_DIR = Path(__file__).parent
 
-DATASET_BASES = [
-    {
-        "name": "ncbi_sorted",
-        "train_dir": "NCBI_Datasets_10-23_SORTED_ncbi_truth_slurm_19888055_subsets",
-        "prefix": "NCBI_Datasets_10-23_SORTED.ncbi_truth",
+COHORT_CONFIGS: Dict[str, Dict[str, Dict[str, str]]] = {
+    "october": {
+        "label": "ncbi_training",
+        "truth_modes": {
+            "ncbi": {
+                "train_dir": "NCBI_Datasets_Training_ncbi_truth_slurm_19888056_subsets",
+                "prefix": "NCBI_Datasets_Training.ncbi_truth",
+            },
+            "ncbi_intersect": {
+                "train_dir": "NCBI_Datasets_Training_intersect_truth_slurm_19888054_subsets",
+                "prefix": "NCBI_Datasets_Training.intersect_truth",
+            },
+        },
     },
-    {
-        "name": "ncbi_sorted_intersect",
-        "train_dir": "NCBI_Datasets_10-23_SORTED_intersect_truth_slurm_19888052_subsets",
-        "prefix": "NCBI_Datasets_10-23_SORTED.intersect_truth",
+    "july": {
+        "label": "ncbi_sorted",
+        "truth_modes": {
+            "ncbi": {
+                "train_dir": "NCBI_Datasets_10-23_SORTED_ncbi_truth_slurm_19888055_subsets",
+                "prefix": "NCBI_Datasets_10-23_SORTED.ncbi_truth",
+            },
+            "ncbi_intersect": {
+                "train_dir": "NCBI_Datasets_10-23_SORTED_intersect_truth_slurm_19888052_subsets",
+                "prefix": "NCBI_Datasets_10-23_SORTED.intersect_truth",
+            },
+        },
     },
-    {
-        "name": "ncbi_training",
-        "train_dir": "NCBI_Datasets_Training_ncbi_truth_slurm_19888056_subsets",
-        "prefix": "NCBI_Datasets_Training.ncbi_truth",
-    },
-    {
-        "name": "ncbi_training_intersect",
-        "train_dir": "NCBI_Datasets_Training_intersect_truth_slurm_19888054_subsets",
-        "prefix": "NCBI_Datasets_Training.intersect_truth",
-    },
+}
+
+DEFAULT_SUBSETS = [
+    "full",
+    "floats_only",
+    "onehot_only",
+    "floats_plus_onehot_no_middle",
 ]
 
-SUBSETS = ["full", "floats_only", "onehot_only", "floats_plus_onehot_no_middle"]
-
 VALIDATION_CONFIG = {
-    "dir": "Validation_NCBI_10_ncbi_truth_20251120_122824_subsets",
-    "prefix": "Validation_NCBI_10.ncbi_truth",
+    "ncbi": {
+        "dir": "Validation_NCBI_10_ncbi_truth_20251120_122824_subsets",
+        "prefix": "Validation_NCBI_10.ncbi_truth",
+    },
+    "ncbi_intersect": {
+        "dir": "Validation_NCBI_10_intersect_truth_20251120_123017_subsets",
+        "prefix": "Validation_NCBI_10.intersect_truth",
+    },
 }
 
 FALLBACK_INPUTS = 356
@@ -85,16 +104,6 @@ LEGACY_OFFSET_PARAMS = {
 }
 
 TRIAGE_VALUES = [0.008, 0.01, 0.012]
-
-WBCE_PARAMS = {
-    "lossposweight": 1.0,
-    "lossnegweight": 1.0,
-}
-
-TVERSKY_PARAMS = {
-    "lossalpha": 0.3,
-    "lossbeta": 0.7,
-}
 
 SBATCH_ARGS = [
     "-A",
@@ -190,17 +199,18 @@ def build_base_cmd(train_path: Path, validate_path: Path, net_dir: Path, input_c
     )
 
 
-def build_job_lines(base_cmd: str, log_dir: Path) -> List[str]:
+def build_job_lines(base_cmd: str, log_dir: Path, run_id: str) -> List[str]:
     lines: List[str] = []
 
     def add_job(name: str, extra):
-        cmd = format_command(base_cmd, log_dir, extra, name)
+        dated_name = f"{run_id}_{name}"
+        cmd = format_command(base_cmd, log_dir, extra, dated_name)
         sbatch_cmd = " ".join(
             [
                 "sbatch",
                 *SBATCH_ARGS,
-                f"--output={log_dir / (name + '.slurm.out')}",
-                f"--error={log_dir / (name + '.slurm.err')}",
+                f"--output={log_dir / (dated_name + '.slurm.out')}",
+                f"--error={log_dir / (dated_name + '.slurm.err')}",
                 f"--wrap={shlex.quote(cmd)}",
             ]
         )
@@ -289,64 +299,72 @@ def build_job_lines(base_cmd: str, log_dir: Path) -> List[str]:
                 ],
             )
 
-    for param, default in WBCE_PARAMS.items():
-        for delta, tag in ((1.2, "high"), (0.8, "low")):
-            value = default * delta
-            add_job(
-                f"{param}_{encode_value_token(format_value(value))}",
-                [
-                    "loss=wbce",
-                    f"{param}={format_value(value)}",
-                    "losslegacyweighting=f",
-                ],
-            )
-
-    for param, default in TVERSKY_PARAMS.items():
-        for delta, tag in ((1.2, "high"), (0.8, "low")):
-            value = default * delta
-            add_job(
-                f"{param}_{encode_value_token(format_value(value))}",
-                [
-                    "loss=tversky",
-                    f"{param}={format_value(value)}",
-                    "losslegacyweighting=f",
-                ],
-            )
-
     return lines
 
 
-def collect_dataset_configs():
+def collect_dataset_configs(cohort: str, truth_mode: str, subsets: List[str]):
     configs = []
     missing = []
-    validation_dir = TRAINING_ROOT / VALIDATION_CONFIG["dir"]
-    for base in DATASET_BASES:
-        train_root = TRAINING_ROOT / base["train_dir"]
-        for subset in SUBSETS:
-            train_file = train_root / subset / f"{base['prefix']}.all.subset_{subset}.tsv.gz"
-            if not train_file.exists():
-                missing.append(f"{base['name']}:{subset} (training missing)")
-                continue
-            validate_file = (
-                validation_dir / subset / f"{VALIDATION_CONFIG['prefix']}.all.subset_{subset}.tsv.gz"
-            )
-            if not validate_file.exists():
-                missing.append(f"{base['name']}:{subset} (validation missing)")
-                continue
-            input_count = infer_input_count(train_file, FALLBACK_INPUTS)
-            configs.append(
-                {
-                    "name": f"{base['name']}_{subset}",
-                    "train": train_file,
-                    "validate": validate_file,
-                    "inputs": input_count,
-                }
-            )
+    cohort_cfg = COHORT_CONFIGS[cohort]
+    truth_cfg = cohort_cfg["truth_modes"][truth_mode]
+    train_root = TRAINING_ROOT / truth_cfg["train_dir"]
+    val_cfg = VALIDATION_CONFIG[truth_mode]
+    validation_dir = TRAINING_ROOT / val_cfg["dir"]
+    base_name = f"{cohort_cfg['label']}_{truth_mode}"
+
+    for subset in subsets:
+        train_file = train_root / subset / f"{truth_cfg['prefix']}.all.subset_{subset}.tsv.gz"
+        if not train_file.exists():
+            missing.append(f"{base_name}:{subset} (training missing)")
+            continue
+        validate_file = validation_dir / subset / f"{val_cfg['prefix']}.all.subset_{subset}.tsv.gz"
+        if not validate_file.exists():
+            missing.append(f"{base_name}:{subset} (validation missing)")
+            continue
+        input_count = infer_input_count(train_file, FALLBACK_INPUTS)
+        configs.append(
+            {
+                "name": f"{base_name}_{subset}",
+                "train": train_file,
+                "validate": validate_file,
+                "inputs": input_count,
+            }
+        )
     return configs, missing
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Generate hparam sweep scripts per cohort/truth.")
+    parser.add_argument(
+        "--cohort",
+        choices=sorted(COHORT_CONFIGS.keys()),
+        default="october",
+        help="Dataset cohort to target.",
+    )
+    parser.add_argument(
+        "--truth-mode",
+        choices=sorted(VALIDATION_CONFIG.keys()),
+        default="ncbi_intersect",
+        help="Truth mode to use.",
+    )
+    parser.add_argument(
+        "--subsets",
+        nargs="+",
+        default=DEFAULT_SUBSETS,
+        help="Feature subsets to include (default: all).",
+    )
+    parser.add_argument(
+        "--run-id",
+        default=datetime.now().strftime("%Y%m%d_%H%M%S"),
+        help="Identifier prepended to every log/network file (default: timestamp).",
+    )
+    return parser.parse_args()
+
+
 def main():
-    configs, missing = collect_dataset_configs()
+    args = parse_args()
+    subsets = args.subsets
+    configs, missing = collect_dataset_configs(args.cohort, args.truth_mode, subsets)
     if not configs:
         print("No dataset/subset combinations are ready. Nothing to do.")
         if missing:
@@ -359,7 +377,7 @@ def main():
         log_dir = LOG_ROOT / cfg["name"]
         net_dir = NET_ROOT / cfg["name"]
         base_cmd = build_base_cmd(cfg["train"], cfg["validate"], net_dir, cfg["inputs"])
-        lines = build_job_lines(base_cmd, log_dir)
+        lines = build_job_lines(base_cmd, log_dir, args.run_id)
         script_path = SCRIPT_DIR / f"run_hparam_sweep_{cfg['name']}.sh"
         with open(script_path, "w") as out:
             out.write("#!/bin/bash\n")

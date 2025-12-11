@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -A grp-org-gt-ga
 #SBATCH -q jgi_normal
-#SBATCH -t 12:00:00
+#SBATCH -t 48:00:00
 #SBATCH -c 16
 #SBATCH --mem=64G
 #SBATCH -J base_subset
@@ -10,17 +10,13 @@
 
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo "Usage: sbatch baseline_subset.slurm <dataset_name> <subset> <truth_mode>" >&2
-  echo " dataset_name: ncbi_sorted | ncbi_sorted_intersect | ncbi_training | ncbi_training_intersect" >&2
-  echo " subset: full | floats_only | onehot_only | floats_plus_onehot_no_middle" >&2
-  echo " truth_mode: ncbi | ncbi_intersect" >&2
-  exit 1
+DATASET_NAME="${1:-ncbi_sorted}"
+SUBSET="${2:-full}"
+if [[ "${DATASET_NAME}" == *"intersect"* ]]; then
+  TRUTH="ncbi_intersect"
+else
+  TRUTH="ncbi"
 fi
-
-DATASET_NAME="$1"
-SUBSET="$2"
-TRUTH="$3"
 
 PROJECT_ROOT="/clusterfs/jgi/scratch/gentech/genome_analysis/brandonimstepf"
 TRAIN_SCRIPT="${PROJECT_ROOT}/bbmap/train.sh"
